@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Electron / build output
+dist/
+out/
+release/
+*.exe
+*.dmg
+*.AppImage
+
+# Debug
+*.pem

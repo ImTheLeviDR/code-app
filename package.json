@@ -1,0 +1,13 @@
+{
+  "name": "code-app",
+  "version": "1.0.0",
+  "description": "Code app desktop",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --inspect"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
