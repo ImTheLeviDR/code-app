@@ -112,6 +112,7 @@ const PROJECTS = [
       { id: 'l1', title: 'Troubleshoot ECONNREFUSED', time: '1mo' },
       { id: 'l2', title: 'Find DATABASE_URL usage', time: '1mo' },
       { id: 'l3', title: 'Fix deprecation warnings', time: '1mo' },
+      { id: 'l6', title: 'Verify JWT middleware', time: '2w' },
       { id: 'l4', title: 'Update deployment docs', time: '1mo' },
       { id: 'l5', title: 'Fix vercel.json for multi-sites', time: '1mo' },
     ],
@@ -200,6 +201,36 @@ const CHAT_MESSAGES = {
         },
       ],
       content: 'Authentication failed, the password in your `DATABASE_URL` doesn\'t match the PostgreSQL user\'s actual password.\n\n**Fix the connection string in `.env`:**\n\n```bash\n# Format: postgresql://USER:PASSWORD@HOST:PORT/DBNAME\nDATABASE_URL="postgresql://postgres:yourpassword@localhost:5432/mydb"\n```\n\nIf you\'ve forgotten the postgres password, reset it:\n\n```bash\nsudo -u postgres psql\nALTER USER postgres PASSWORD \'newpassword\';\n\\q\n```\n\nThen update your `.env` with the new password.',
+    },
+  ],
+
+  l6: [
+    {
+      id: 'l6m1',
+      role: 'user',
+      content: 'Can you verify my JWT middleware implementation? Requests with valid tokens still return 401.',
+    },
+    {
+      id: 'l6m2',
+      role: 'assistant',
+      toolCalls: [
+        {
+          id: 'tc13',
+          name: 'search_codebase',
+          args: { query: 'jwt middleware verify' },
+          result: 'Found in src/middleware/auth.ts',
+          status: 'complete',
+        },
+        {
+          id: 'tc14',
+          name: 'read_file',
+          args: { path: 'src/middleware/auth.ts' },
+          result: 'const token = req.headers.authorization;\nconst payload = jwt.verify(token, process.env.JWT_SECRET);',
+          status: 'complete',
+        },
+      ],
+      content:
+        "JWT middleware usually validates the `Authorization` header, decodes the token, and attaches the user to `req`. The typical failure modes are clock skew, wrong secret, or reading from the wrong header.\n\nI'll search the repo for how your app wires this up.\n\nFound it in `src/middleware/auth.ts`. The middleware reads `req.headers.authorization` but never strips the `Bearer ` prefix:\n\n```typescript\nconst token = req.headers.authorization;\nconst payload = jwt.verify(token, process.env.JWT_SECRET);\n```\n\n**Fix:**\n```typescript\nconst header = req.headers.authorization;\nif (!header?.startsWith('Bearer ')) return res.status(401).end();\nconst token = header.slice(7);\nconst payload = jwt.verify(token, process.env.JWT_SECRET);\n```",
     },
   ],
 
@@ -332,63 +363,225 @@ const AI_RESPONSE_TEMPLATES = [
   {
     match: /fix|bug|error|crash|fail|broken|issue|problem/i,
     response: {
-      toolCalls: [
-        { name: 'read_file', args: { path: 'src/handler.ts' }, duration: 1800 },
-        { name: 'search_codebase', args: { query: 'async await patterns' }, duration: 1400 },
+      phases: [
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'read_file', args: { path: 'src/handler.ts' }, duration: 1800 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Found it — the async function isn't being awaited. Let me check if this pattern appears anywhere else.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'search_codebase', args: { query: 'async await patterns' }, duration: 1400 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Only in `handler.ts`. Here's the fix:\n\n```typescript\n// Before (buggy)\nfunction handleRequest(req: Request) {\n  const data = fetchData(); // missing await!\n  return processData(data);\n}\n\n// After (fixed)\nasync function handleRequest(req: Request) {\n  const data = await fetchData();\n  return processData(data);\n}\n```\n\nI also noticed you're not handling the rejection case. Adding a try/catch will prevent unhandled promise rejections from crashing the process.",
+        },
       ],
-      text: "I've identified the issue. Here's what I found and how to fix it:\n\n**Root cause:** The error occurs because the async function isn't properly awaited, causing a race condition when multiple requests hit simultaneously.\n\n**Fix:**\n\n```typescript\n// Before (buggy)\nfunction handleRequest(req: Request) {\n  const data = fetchData(); // missing await!\n  return processData(data);\n}\n\n// After (fixed)\nasync function handleRequest(req: Request) {\n  const data = await fetchData();\n  return processData(data);\n}\n```\n\nI also noticed you're not handling the rejection case. Adding a try/catch will prevent unhandled promise rejections from crashing the process.",
     },
   },
   {
     match: /create|make|build|generate|add|new/i,
     response: {
-      toolCalls: [
-        { name: 'create_file', args: { path: 'src/components/Component.tsx' }, duration: 1200 },
-        { name: 'write_file', args: { path: 'src/components/Component.tsx' }, duration: 2000 },
-        { name: 'edit_file', args: { path: 'src/index.ts' }, duration: 900 },
+      phases: [
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'create_file', args: { path: 'src/components/Component.tsx' }, duration: 1200 },
+            { name: 'write_file', args: { path: 'src/components/Component.tsx' }, duration: 2000 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Component created. Now wiring it into the main export.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'edit_file', args: { path: 'src/index.ts' }, duration: 900 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Done! Here's what was generated:\n\n```typescript\nexport interface ComponentProps {\n  title: string;\n  description?: string;\n  onAction: () => void;\n  variant?: 'primary' | 'secondary' | 'ghost';\n}\n\nexport const Component: React.FC<ComponentProps> = ({\n  title,\n  description,\n  onAction,\n  variant = 'primary',\n}) => {\n  return (\n    <div className={`component component--${variant}`}>\n      <h2>{title}</h2>\n      {description && <p>{description}</p>}\n      <button onClick={onAction}>Action</button>\n    </div>\n  );\n};\n```\n\nThe component is exported from `index.ts` and has full TypeScript types.",
+        },
       ],
-      text: "Done! I've created the implementation. Here's a summary of what was generated:\n\n```typescript\nexport interface ComponentProps {\n  title: string;\n  description?: string;\n  onAction: () => void;\n  variant?: 'primary' | 'secondary' | 'ghost';\n}\n\nexport const Component: React.FC<ComponentProps> = ({\n  title,\n  description,\n  onAction,\n  variant = 'primary',\n}) => {\n  return (\n    <div className={`component component--${variant}`}>\n      <h2>{title}</h2>\n      {description && <p>{description}</p>}\n      <button onClick={onAction}>Action</button>\n    </div>\n  );\n};\n```\n\nThe component is exported from `index.ts` and has full TypeScript types. Tests are in `Component.test.tsx`.",
     },
   },
   {
     match: /refactor|improve|optimize|clean|rename|move/i,
     response: {
-      toolCalls: [
-        { name: 'read_file', args: { path: 'src/utils/helpers.ts' }, duration: 1600 },
-        { name: 'search_codebase', args: { query: 'getData usages' }, duration: 1300 },
-        { name: 'edit_file', args: { path: 'src/hooks/useDataFetching.ts' }, duration: 2200 },
+      phases: [
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'read_file', args: { path: 'src/utils/helpers.ts' }, duration: 1600 },
+            { name: 'search_codebase', args: { query: 'getData usages' }, duration: 1300 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "`getData` is called in 3 places with identical logic each time. Extracting it into a shared hook.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'edit_file', args: { path: 'src/hooks/useDataFetching.ts' }, duration: 2200 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Refactoring complete:\n\n1. **Extracted shared logic** into a `useDataFetching` hook, eliminates 3 duplicate implementations\n2. **Renamed** `getData` → `fetchUserProfile` for clarity\n3. **Simplified** the conditional chain using early returns\n4. **Removed** 2 unused imports\n\nBefore: 87 lines | After: **52 lines** (-40%)\n\nAll 14 tests still pass.",
+        },
       ],
-      text: "Refactoring complete. Here are the key changes made:\n\n1. **Extracted shared logic** into a `useDataFetching` hook, eliminates 3 duplicate implementations\n2. **Renamed** `getData` → `fetchUserProfile` for clarity  \n3. **Simplified** the conditional chain using early returns\n4. **Removed** 2 unused imports\n\nBefore: 87 lines | After: **52 lines** (-40%)\n\nAll 14 tests still pass. The API surface is unchanged so no callers need updating.",
     },
   },
   {
     match: /explain|what|how|why|understand|tell me/i,
     response: {
-      toolCalls: [
-        { name: 'read_file', args: { path: 'src/services/eventBus.ts' }, duration: 1500 },
+      phases: [
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'read_file', args: { path: 'src/services/eventBus.ts' }, duration: 1500 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Here's a breakdown of how this works:\n\n**Architecture overview:**\n\nThe system uses an event-driven architecture where each component communicates through a central message bus. This decouples producers from consumers.\n\n```\nClient Request\n     ↓\n  API Gateway  →  Rate Limiter\n     ↓\n  Message Bus (Redis Pub/Sub)\n     ↓\n  Workers (auto-scaled)\n     ↓\n  Database\n```\n\n**Key design decisions:**\n- **Stateless workers**, each request is independent, enabling horizontal scaling\n- **Redis** for the message bus, low latency, supports pub/sub natively\n- **Idempotency keys** on all mutations, safe to retry on failure\n\nThis pattern handles ~50k requests/min on modest hardware.",
+        },
       ],
-      text: "Here's a breakdown of how this works:\n\n**Architecture overview:**\n\nThe system uses an event-driven architecture where each component communicates through a central message bus. This decouples producers from consumers.\n\n```\nClient Request\n     ↓\n  API Gateway  →  Rate Limiter\n     ↓\n  Message Bus (Redis Pub/Sub)\n     ↓\n  Workers (auto-scaled)\n     ↓\n  Database\n```\n\n**Key design decisions:**\n- **Stateless workers**, each request is independent, enabling horizontal scaling\n- **Redis** for the message bus, low latency, supports pub/sub natively\n- **Idempotency keys** on all mutations, safe to retry on failure\n\nThis pattern handles ~50k requests/min on modest hardware.",
     },
   },
   {
     match: /test|spec|jest|vitest|playwright/i,
     response: {
-      toolCalls: [
-        { name: 'read_file', args: { path: 'src/components/SignIn.tsx' }, duration: 1100 },
-        { name: 'create_file', args: { path: 'src/components/SignIn.test.tsx' }, duration: 900 },
-        { name: 'write_file', args: { path: 'src/components/SignIn.test.tsx' }, duration: 1700 },
+      phases: [
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'read_file', args: { path: 'src/components/SignIn.tsx' }, duration: 1100 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Got the component shape. Writing the test file now.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'create_file', args: { path: 'src/components/SignIn.test.tsx' }, duration: 900 },
+            { name: 'write_file', args: { path: 'src/components/SignIn.test.tsx' }, duration: 1700 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Done. Here's the test suite:\n\n```typescript\ndescribe('UserAuth', () => {\n  it('signs in with valid credentials', async () => {\n    const { getByRole, user } = render(<SignIn />);\n    await user.type(getByRole('textbox', { name: /email/i }), 'user@test.com');\n    await user.type(getByRole('textbox', { name: /password/i }), 'password123');\n    await user.click(getByRole('button', { name: /sign in/i }));\n    expect(mockSignIn).toHaveBeenCalledWith({\n      email: 'user@test.com',\n      password: 'password123',\n    });\n  });\n\n  it('shows error on invalid credentials', async () => {\n    mockSignIn.mockRejectedValueOnce(new Error('Invalid credentials'));\n    expect(screen.getByText(/invalid credentials/i)).toBeInTheDocument();\n  });\n});\n```\n\n**Coverage:** 8 test cases, branches: 94%, lines: 98%",
+        },
       ],
-      text: "I've written a comprehensive test suite covering the main scenarios:\n\n```typescript\ndescribe('UserAuth', () => {\n  it('signs in with valid credentials', async () => {\n    const { getByRole, user } = render(<SignIn />);\n    await user.type(getByRole('textbox', { name: /email/i }), 'user@test.com');\n    await user.type(getByRole('textbox', { name: /password/i }), 'password123');\n    await user.click(getByRole('button', { name: /sign in/i }));\n    expect(mockSignIn).toHaveBeenCalledWith({\n      email: 'user@test.com',\n      password: 'password123',\n    });\n  });\n\n  it('shows error on invalid credentials', async () => {\n    mockSignIn.mockRejectedValueOnce(new Error('Invalid credentials'));\n    // ...\n    expect(screen.getByText(/invalid credentials/i)).toBeInTheDocument();\n  });\n\n  it('disables submit while loading', async () => { /* ... */ });\n});\n```\n\n**Coverage:** 8 test cases, branches: 94%, lines: 98%",
+    },
+  },
+  {
+    match: /verify|double-check|confirm (this|the|my)|check (my|the) (work|implementation|code)/i,
+    response: {
+      textBefore:
+        "Based on the symptoms, this is most likely a missing `await` on an async database call. The handler returns before the query finishes, so the response goes out with empty data.\n\nLet me verify that in your codebase before suggesting a concrete patch.",
+      toolCalls: [
+        { name: 'read_file', args: { path: 'src/api/users.ts' }, duration: 1500 },
+        { name: 'search_codebase', args: { query: 'getUserById' }, duration: 1300 },
+      ],
+      text:
+        "Confirmed — `getUserById` is called without `await` on line 42 of `src/api/users.ts`:\n\n```typescript\n// Before\nconst user = getUserById(id);\nreturn res.json(user);\n\n// After\nconst user = await getUserById(id);\nreturn res.json(user);\n```\n\nI also found the same pattern in `src/api/posts.ts` (line 28). Worth fixing both to avoid the same bug elsewhere.",
+    },
+  },
+  {
+    match: /look up in (the )?(code|repo)|search the (code|repo) for/i,
+    response: {
+      textBefore:
+        "JWT middleware usually validates the `Authorization` header, decodes the token, and attaches the user to `req`. The typical failure modes are clock skew, wrong secret, or reading from the wrong header.\n\nI'll search the repo for how your app wires this up.",
+      toolCalls: [
+        { name: 'search_codebase', args: { query: 'jwt middleware verify' }, duration: 1400 },
+        { name: 'read_file', args: { path: 'src/middleware/auth.ts' }, duration: 1600 },
+      ],
+      text:
+        "Found it in `src/middleware/auth.ts`. The middleware reads `req.headers.authorization` but never strips the `Bearer ` prefix:\n\n```typescript\nconst token = req.headers.authorization;\nconst payload = jwt.verify(token, process.env.JWT_SECRET);\n```\n\n**Fix:**\n```typescript\nconst header = req.headers.authorization;\nif (!header?.startsWith('Bearer ')) return res.status(401).end();\nconst token = header.slice(7);\nconst payload = jwt.verify(token, process.env.JWT_SECRET);\n```\n\nThat matches how the login route signs tokens in `src/routes/auth.ts`.",
+    },
+  },
+  {
+    match: /deep dive|investigate further|trace (through|the) code/i,
+    response: {
+      phases: [
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'read_file', args: { path: 'src/routes/orders.ts' }, duration: 1300 },
+            { name: 'read_file', args: { path: 'src/services/OrderService.ts' }, duration: 1500 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Hmm, the service calls `checkInventory()` without awaiting it. That means orders can slip through even when stock is zero. Let me find everywhere this function is used before I patch it.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'search_codebase', args: { query: 'checkInventory' }, duration: 1200 },
+            { name: 'edit_file', args: { path: 'src/services/OrderService.ts' }, duration: 1400 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Fixed. `checkInventory` is only called in `OrderService.create()`, so I added `await` there. Orders will now correctly block when inventory runs out.\n\n```typescript\n// before\ncheckInventory(items);\n\n// after\nawait checkInventory(items);\n```",
+        },
+      ],
+    },
+  },
+  {
+    match: /suggest.*then (check|search|verify)|outline.*then (read|check|look)/i,
+    response: {
+      textBefore:
+        "I'd start by adding a typed config module instead of reading `process.env` inline. That gives you validation at startup and clearer errors when a variable is missing.\n\nChecking how env vars are currently loaded…",
+      toolCalls: [
+        { name: 'read_file', args: { path: 'src/config.ts' }, duration: 1200 },
+        { name: 'list_directory', args: { path: 'src/' }, duration: 900 },
+      ],
+      text:
+        "There's no central config yet — `DATABASE_URL` and `JWT_SECRET` are read in three different files. Here's a minimal `src/config.ts` you can add:\n\n```typescript\nimport { z } from 'zod';\n\nconst env = z.object({\n  DATABASE_URL: z.string().url(),\n  JWT_SECRET: z.string().min(32),\n  PORT: z.coerce.number().default(3000),\n}).parse(process.env);\n\nexport const config = env;\n```\n\nImport `config` everywhere instead of `process.env` for type-safe access.",
     },
   },
   {
     match: /.*/,
     response: {
-      toolCalls: [
-        { name: 'read_file', args: { path: 'src/app.ts' }, duration: 1400 },
-        { name: 'search_codebase', args: { query: 'project structure' }, duration: 1100 },
+      phases: [
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'read_file', args: { path: 'src/app.ts' }, duration: 1400 },
+            { name: 'search_codebase', args: { query: 'project structure' }, duration: 1100 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Hmm, the project structure looks a bit scattered — config, utilities, and business logic are all mixed together in `src/`. Let me check the entry point to understand how it's wired up.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'read_file', args: { path: 'src/index.ts' }, duration: 1200 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "Got it. Based on what I can see, the best approach here would be to:\n\n1. **Start with the interface**, define the contract before the implementation\n2. **Write incrementally**, small, testable units rather than one large change\n3. **Check types**, the TypeScript compiler will catch most issues at compile time\n\nWould you like me to start implementing, or would you prefer I break down the approach further first?",
+        },
       ],
-      text: "I've analyzed your codebase and have some suggestions.\n\nBased on what I can see, the best approach here would be to:\n\n1. **Start with the interface**, define the contract before the implementation\n2. **Write incrementally**, small, testable units rather than one large change\n3. **Check types**, the TypeScript compiler will catch most issues at compile time\n\nWould you like me to start implementing, or would you prefer I break down the approach further first?",
     },
   },
 ];

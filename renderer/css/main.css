@@ -955,7 +955,51 @@ body.physics-motion .tool-working.expanded .tool-working-chevron {
   user-select: text;
 }
 
-/* Message content - markdown styles */
+.assistant-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.assistant-meta:empty {
+  display: none;
+}
+
+/* Streaming cursor (inline at end of text while generating) */
+.md-stream-wrap {
+  display: inline;
+  line-height: 1.65;
+}
+
+.md-content.is-streaming .md-stream-body {
+  display: inline;
+}
+
+.md-content.is-streaming .streaming-cursor {
+  display: inline-block;
+  vertical-align: text-bottom;
+  transform: translateY(4px);
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-left: 5px;
+  vertical-align: text-bottom;
+  transform: translateY(4px);
+}
+
+.md-content-segment {
+  margin-bottom: 0;
+}
+
+.md-content-segment + .assistant-meta + .md-content {
+  margin-top: 0;
+}
+
 .md-content p {
   margin-bottom: 10px;
 }
@@ -1122,7 +1166,7 @@ body.physics-motion .tool-working.expanded .tool-working-chevron {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 2px 0 14px;
+  margin: 4px 0 10px;
   min-height: 0;
 }
 
@@ -1166,7 +1210,7 @@ body.physics-motion .tool-working.expanded .tool-working-chevron {
 
 /* Collapsed "Working" summary after tools finish */
 .tool-working {
-  margin: 2px 0 12px;
+  margin: 2px 0 4px;
   border-radius: var(--radius-sm);
 }
 

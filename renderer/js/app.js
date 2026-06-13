@@ -435,7 +435,9 @@ function renderMessage(msg, animate = true) {
       <div class="message-wrapper">
         ${assistantAvatarHTML()}
         <div class="assistant-body">
-          ${msg.toolCalls && msg.toolCalls.length ? renderToolCallsHTML(msg.toolCalls, msg.id) : ''}
+          <div class="assistant-meta">
+            ${msg.toolCalls && msg.toolCalls.length ? renderToolCallsHTML(msg.toolCalls, msg.id) : ''}
+          </div>
           <div class="md-content" id="content-${msg.id}">${msg.content ? parseMarkdown(msg.content) : ''}</div>
           ${msg.content ? renderMessageActionsHTML() : ''}
         </div>
@@ -569,39 +571,103 @@ function showWorkingDropdown(msgId, toolCalls) {
   const msgEl = document.getElementById(`msg-${msgId}`);
   if (!msgEl) return;
 
-  const activity = msgEl.querySelector('.tool-activity');
+  const body = msgEl.querySelector('.assistant-body');
+  const meta = getActiveToolMeta(body);
+  if (!meta) return;
+
+  const activity = meta.querySelector('.tool-activity');
   if (activity) activity.remove();
 
-  const body = msgEl.querySelector('.assistant-body');
-  const content = body?.querySelector('.md-content');
-  if (!body || !content || body.querySelector('.tool-working')) return;
+  let workingEl = meta.querySelector('.tool-working');
+  if (!workingEl) {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = renderWorkingDropdownHTML(toolCalls, msgId, false);
+    workingEl = wrap.firstElementChild;
+    meta.insertBefore(workingEl, meta.firstChild);
+    bindWorkingDropdown(body);
+  } else {
+    updateWorkingDropdown(workingEl, toolCalls);
+  }
+}
 
-  const wrap = document.createElement('div');
-  wrap.innerHTML = renderWorkingDropdownHTML(toolCalls, msgId, false);
-  const workingEl = wrap.firstElementChild;
-  body.insertBefore(workingEl, content);
-  bindWorkingDropdown(body);
-  Physics.lineIn(workingEl);
+function getActiveToolMeta(body) {
+  if (!body) return null;
+  const contentEl = body.querySelector('.md-content:not(.md-content-segment)');
+  if (contentEl) {
+    let sibling = contentEl.previousElementSibling;
+    while (sibling) {
+      if (sibling.classList.contains('assistant-meta')) return sibling;
+      sibling = sibling.previousElementSibling;
+    }
+  }
+  const metas = body.querySelectorAll('.assistant-meta');
+  return metas[metas.length - 1] || null;
+}
+
+function updateWorkingDropdown(workingEl, toolCalls) {
+  const count = toolCalls.length;
+  const countLabel = count === 1 ? '1 step' : `${count} steps`;
+  const countEl = workingEl.querySelector('.tool-working-count');
+  if (countEl) countEl.textContent = countLabel;
+
+  const itemsEl = workingEl.querySelector('.tool-working-items');
+  if (itemsEl) {
+    itemsEl.innerHTML = toolCalls
+      .map(
+        (tc) =>
+          `<div class="tool-working-item">${escapeHtml(getToolActivityLabelDone(tc))}</div>`
+      )
+      .join('');
+  }
 }
 
 function renderToolCallsHTML(toolCalls, msgId) {
   if (!toolCalls?.length) return '';
-  if (toolCalls.every((tc) => (tc.status || 'complete') === 'complete')) {
+  const allComplete = toolCalls.every((tc) => (tc.status || 'complete') === 'complete');
+  if (allComplete) {
     return renderWorkingDropdownHTML(toolCalls, msgId, false);
   }
   return '<div class="tool-activity"></div>';
 }
 
+function ensureWorkingDropdownAfterTools(msgId, msg) {
+  if (!msg?.toolCalls?.length) return false;
+  const allComplete = msg.toolCalls.every(
+    (tc) => (tc.status || 'complete') === 'complete'
+  );
+  if (!allComplete) return false;
+  showWorkingDropdown(msgId, msg.toolCalls);
+  return true;
+}
+
+function clearToolActivityUI(msgId) {
+  const msgEl = document.getElementById(`msg-${msgId}`);
+  const meta = getActiveToolMeta(msgEl?.querySelector('.assistant-body'));
+  const activity = meta?.querySelector('.tool-activity');
+  if (activity) activity.remove();
+}
+
 function getToolActivityContainer(msgId) {
   const msgEl = document.getElementById(`msg-${msgId}`);
   if (!msgEl) return null;
-  let container = msgEl.querySelector('.tool-activity');
+
+  const body = msgEl.querySelector('.assistant-body');
+  if (!body) return null;
+
+  let meta = getActiveToolMeta(body);
+  if (!meta) {
+    meta = document.createElement('div');
+    meta.className = 'assistant-meta';
+    const content = body.querySelector('.md-content');
+    if (content) body.insertBefore(meta, content);
+    else body.prepend(meta);
+  }
+
+  let container = meta.querySelector('.tool-activity');
   if (!container) {
     container = document.createElement('div');
     container.className = 'tool-activity';
-    const body = msgEl.querySelector('.assistant-body');
-    const content = body?.querySelector('.md-content');
-    if (body && content) body.insertBefore(container, content);
+    meta.appendChild(container);
   }
   return container;
 }
@@ -610,33 +676,25 @@ function showToolActivityLine(tc, msgId) {
   const container = getToolActivityContainer(msgId);
   if (!container) return;
 
-  let line = document.getElementById(`tc-${tc.id}`);
-  if (!line) {
-    line = document.createElement('div');
-    line.className = 'tool-activity-line running';
-    line.id = `tc-${tc.id}`;
-    line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabel(tc))}</span>`;
-    container.appendChild(line);
-    Physics.lineIn(line);
-  } else {
-    line.classList.add('running');
-    line.querySelector('.tool-activity-text').textContent = getToolActivityLabel(tc);
-  }
+  container.querySelectorAll('.tool-activity-line').forEach((el) => el.remove());
+
+  const line = document.createElement('div');
+  line.className = 'tool-activity-line running';
+  line.id = `tc-${tc.id}`;
+  line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabel(tc))}</span>`;
+  container.appendChild(line);
 }
 
 function completeToolActivityLine(tcId, msgId) {
   const line = document.getElementById(`tc-${tcId}`);
   if (!line) return;
 
+  const tc = findToolCallById(tcId);
   line.classList.remove('running');
   line.classList.add('done');
-
-  Physics.lineOut(line, () => {
-    line.remove();
-    const msgEl = document.getElementById(`msg-${msgId}`);
-    const container = msgEl?.querySelector('.tool-activity');
-    if (container && !container.children.length) container.remove();
-  });
+  if (tc) {
+    line.querySelector('.tool-activity-text').textContent = getToolActivityLabelDone(tc);
+  }
 }
 
 function renderMessageActionsHTML() {
@@ -715,21 +773,14 @@ function sendMessage(text) {
 
 function simulateAIResponse(chatId, userMessage) {
   const template = getAITemplate(userMessage);
-  const toolCalls = template.toolCalls.map((tc, i) => ({
-    id: `tc-${Date.now()}-${i}`,
-    name: tc.name,
-    args: tc.args || {},
-    result: null,
-    status: 'pending',
-    duration: tc.duration,
-  }));
+  const phases = normalizeResponsePhases(template);
+  const startsWithTools = phases[0]?.type === 'tools';
 
-  // Create assistant message placeholder
   const assistantMsgId = `msg-${state.nextMsgId++}`;
   const assistantMsg = {
     id: assistantMsgId,
     role: 'assistant',
-    toolCalls: toolCalls,
+    toolCalls: startsWithTools ? mapToolCalls(phases[0].toolCalls, 0) : [],
     content: '',
   };
   state.chatMessages[chatId].push(assistantMsg);
@@ -742,20 +793,115 @@ function simulateAIResponse(chatId, userMessage) {
   setTimeout(() => {
     thinkingEl.remove();
 
-    // Render assistant shell without re-animating the avatar (thinking already showed it)
     const msgEl = renderMessage(assistantMsg, false);
-    scrollToEnd(false);
-
-    // Run tool calls sequentially
-    runToolCallsSequentially(toolCalls, msgEl, assistantMsgId, chatId, () => {
-      // After all tools done, stream the response text
-      streamText(template.text, assistantMsgId, chatId, () => {
-        state.isGenerating = false;
-        disableSend(false);
-        focusInput(dom.chatInput);
-      });
+    runResponsePhases(phases, assistantMsgId, chatId, msgEl, () => {
+      state.isGenerating = false;
+      disableSend(false);
+      focusInput(dom.chatInput);
     });
   }, 600);
+}
+
+function normalizeResponsePhases(template) {
+  if (template.phases?.length) {
+    return template.phases.map((phase) => {
+      if (phase.type === 'tools') {
+        return { type: 'tools', toolCalls: phase.toolCalls || [] };
+      }
+      return { type: 'stream', text: phase.text || '', append: Boolean(phase.append) };
+    });
+  }
+
+  const phases = [];
+  if (template.textBefore) {
+    phases.push({ type: 'stream', text: template.textBefore });
+  }
+  if (template.toolCalls?.length) {
+    phases.push({ type: 'tools', toolCalls: template.toolCalls });
+  }
+  if (template.text) {
+    phases.push({
+      type: 'stream',
+      text: template.text,
+      append: Boolean(template.textBefore),
+    });
+  }
+  return phases;
+}
+
+function mapToolCalls(toolCalls, phaseKey = 0) {
+  const stamp = Date.now();
+  return toolCalls.map((tc, i) => ({
+    id: `tc-${stamp}-${phaseKey}-${i}`,
+    name: tc.name,
+    args: tc.args || {},
+    result: null,
+    status: 'pending',
+    duration: tc.duration,
+  }));
+}
+
+function runResponsePhases(phases, msgId, chatId, msgEl, onDone) {
+  let phaseIdx = 0;
+
+  function runNextPhase() {
+    if (phaseIdx >= phases.length) {
+      onDone();
+      return;
+    }
+
+    const phase = phases[phaseIdx++];
+    if (phase.type === 'stream') {
+      const hasMoreStreams = phases.slice(phaseIdx).some((p) => p.type === 'stream');
+      streamText(phase.text, msgId, chatId, runNextPhase, {
+        append: phase.append,
+        showActions: !hasMoreStreams,
+      });
+    } else {
+      startToolsPhase(phase.toolCalls, msgId, chatId, msgEl, phaseIdx - 1, runNextPhase);
+    }
+  }
+
+  runNextPhase();
+}
+
+function startToolsPhase(toolCallsTemplate, msgId, chatId, msgEl, phaseKey, onDone) {
+  if (!toolCallsTemplate?.length) {
+    onDone();
+    return;
+  }
+
+  const toolCalls = mapToolCalls(toolCallsTemplate, phaseKey);
+  const msg = state.chatMessages[chatId]?.find((m) => m.id === msgId);
+  if (msg) msg.toolCalls = toolCalls;
+
+  const body = msgEl.querySelector('.assistant-body');
+  const contentEl = document.getElementById(`content-${msgId}`);
+  const hasPriorText = Boolean(contentEl?.innerHTML.trim());
+
+  if (hasPriorText) {
+    const prior = document.createElement('div');
+    prior.className = 'md-content md-content-segment';
+    prior.innerHTML = contentEl.innerHTML;
+    body.insertBefore(prior, contentEl);
+    contentEl.innerHTML = '';
+    contentEl.classList.remove('is-streaming');
+
+    const meta = document.createElement('div');
+    meta.className = 'assistant-meta';
+    meta.innerHTML = renderToolCallsHTML(toolCalls, msgId);
+    body.insertBefore(meta, contentEl);
+  } else {
+    let meta = body.querySelector('.assistant-meta');
+    if (!meta) {
+      meta = document.createElement('div');
+      meta.className = 'assistant-meta';
+      body.insertBefore(meta, contentEl);
+    }
+    meta.innerHTML = renderToolCallsHTML(toolCalls, msgId);
+  }
+
+  runToolCallsSequentially(toolCalls, msgEl, msgId, chatId, onDone);
 }
 
 function runToolCallsSequentially(toolCalls, msgEl, msgId, chatId, onDone) {
@@ -763,7 +909,7 @@ function runToolCallsSequentially(toolCalls, msgEl, msgId, chatId, onDone) {
 
   function runNext() {
     if (idx >= toolCalls.length) {
-      showWorkingDropdown(msgId, toolCalls);
+      clearToolActivityUI(msgId);
       onDone();
       return;
     }
@@ -771,18 +917,14 @@ function runToolCallsSequentially(toolCalls, msgEl, msgId, chatId, onDone) {
     const tc = toolCalls[idx];
     idx++;
 
-    // Set to running
     tc.status = 'running';
     updateToolCallUI(tc.id, 'running', msgId);
-    scrollToEnd(false);
 
     setTimeout(() => {
       tc.status = 'complete';
       tc.result = generateToolResult(tc.name, chatId);
       updateToolCallUI(tc.id, 'complete', msgId);
-      scrollToEnd(false);
-
-      setTimeout(runNext, 200);
+      runNext();
     }, tc.duration);
   }
 
@@ -828,41 +970,83 @@ function generateToolResult(toolName, chatId) {
    TEXT STREAMING
    ============================================================ */
 
-function streamText(fullText, msgId, chatId, onDone) {
+function streamText(fullText, msgId, chatId, onDone, options = {}) {
+  const { append = false, showActions = true } = options;
   const contentEl = document.getElementById(`content-${msgId}`);
   if (!contentEl) { onDone(); return; }
+
+  const msgs = state.chatMessages[chatId];
+  const msgInState = msgs?.find((m) => m.id === msgId);
+
+  const body = contentEl.parentElement;
+  const hasSegment = Boolean(body?.querySelector('.md-content-segment'));
+
+  let prefix = '';
+  let part1Text = '';
+  let separator = '';
+
+  if (append && msgInState?.content) {
+    if (hasSegment) {
+      part1Text = msgInState.content;
+      if (part1Text && fullText) {
+        separator = part1Text.endsWith('\n') ? '\n' : '\n\n';
+      }
+    } else {
+      prefix = msgInState.content;
+      if (prefix && fullText && !prefix.endsWith('\n')) prefix += '\n\n';
+    }
+  }
+
+  const finalContent = hasSegment && append
+    ? part1Text + separator + fullText
+    : prefix + fullText;
 
   let streamBody = contentEl.querySelector('.md-stream-body');
   let cursor = contentEl.querySelector('.streaming-cursor');
 
   if (!streamBody) {
     contentEl.classList.add('is-streaming');
-    streamBody = document.createElement('div');
+    contentEl.innerHTML = '';
+    const streamWrap = document.createElement('span');
+    streamWrap.className = 'md-stream-wrap';
+    streamBody = document.createElement('span');
     streamBody.className = 'md-stream-body';
     cursor = document.createElement('span');
     cursor.className = 'streaming-cursor';
-    contentEl.innerHTML = '';
-    contentEl.appendChild(streamBody);
-    contentEl.appendChild(cursor);
+    streamWrap.appendChild(streamBody);
+    streamWrap.appendChild(cursor);
+    contentEl.appendChild(streamWrap);
+    if (prefix && !hasSegment) streamBody.innerHTML = parseMarkdown(prefix);
   }
 
   scrollToEnd(false);
 
   const words = fullText.split(/(\s+)/);
-  let currentText = '';
+  let currentText = hasSegment && append ? '' : prefix;
   let wordIdx = 0;
   const baseDelay = 18;
+  let workingDropdownShown = false;
 
-  const msgs = state.chatMessages[chatId];
-  const msgInState = msgs?.find((m) => m.id === msgId);
-  if (msgInState) msgInState.content = fullText;
+  function showWorkingOnceAfterTools() {
+    if (workingDropdownShown) return;
+    if (!ensureWorkingDropdownAfterTools(msgId, msgInState)) return;
+    workingDropdownShown = true;
+  }
 
   function finishStream() {
     contentEl.classList.remove('is-streaming');
-    contentEl.innerHTML = parseMarkdown(fullText);
-    const actionsWrapper = document.createElement('div');
-    actionsWrapper.innerHTML = renderMessageActionsHTML();
-    contentEl.parentElement.appendChild(actionsWrapper.firstElementChild);
+    if (hasSegment && append) {
+      contentEl.innerHTML = parseMarkdown(fullText);
+      if (msgInState) msgInState.content = finalContent;
+    } else {
+      contentEl.innerHTML = parseMarkdown(finalContent);
+      if (msgInState) msgInState.content = finalContent;
+    }
+    if (showActions && !body.querySelector('.message-actions')) {
+      const actionsWrapper = document.createElement('div');
+      actionsWrapper.innerHTML = renderMessageActionsHTML();
+      body.appendChild(actionsWrapper.firstElementChild);
+    }
     onDone();
   }
 
@@ -877,7 +1061,14 @@ function streamText(fullText, msgId, chatId, onDone) {
       currentText += words[wordIdx++];
     }
 
-    streamBody.innerHTML = parseMarkdown(currentText);
+    streamBody.innerHTML = parseMarkdown(closeOpenFences(currentText));
+    if (msgInState) {
+      msgInState.content = hasSegment && append
+        ? part1Text + separator + currentText
+        : currentText;
+    }
+
+    showWorkingOnceAfterTools();
 
     if (!state.userHasScrolledUp) {
       scrollToEnd(false);
@@ -887,7 +1078,7 @@ function streamText(fullText, msgId, chatId, onDone) {
     setTimeout(addNextChunk, delay);
   }
 
-  setTimeout(addNextChunk, 100);
+  setTimeout(addNextChunk, append ? 50 : 100);
 }
 
 /* ============================================================
@@ -983,6 +1174,16 @@ function disableSend(disabled) {
 /* ============================================================
    MARKDOWN PARSER (simple)
    ============================================================ */
+
+function closeOpenFences(text) {
+  // Count ``` occurrences to detect an unclosed code block
+  const fences = text.match(/```/g);
+  if (fences && fences.length % 2 !== 0) {
+    // Unclosed fence — close it so the parser renders a proper block
+    return text + '\n```';
+  }
+  return text;
+}
 
 function parseMarkdown(text) {
   let html = escapeHtml(text);
