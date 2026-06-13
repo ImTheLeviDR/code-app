@@ -55,6 +55,45 @@
   --transition-slow:   0.3s ease;
 }
 
+/* Spring-driven motion (renderer/js/physics.js) */
+.spring-driven {
+  transition: none !important;
+  animation: none !important;
+}
+
+body.physics-motion .welcome-content,
+body.physics-motion .message,
+body.physics-motion .scroll-to-bottom,
+body.physics-motion .search-overlay,
+body.physics-motion .search-modal,
+body.physics-motion .settings-overlay,
+body.physics-motion .settings-modal,
+body.physics-motion .tool-activity-line,
+body.physics-motion .tool-working,
+body.physics-motion .tool-working-item,
+body.physics-motion .toast {
+  animation: none !important;
+}
+
+body.physics-motion .model-dropdown-menu {
+  transition: none !important;
+}
+
+body.physics-motion .send-btn:not(:disabled):hover,
+body.physics-motion .send-btn:not(:disabled):active,
+body.physics-motion .scroll-to-bottom:hover {
+  transform: none;
+}
+
+body.physics-motion .welcome-screen,
+body.physics-motion .chat-screen,
+body.physics-motion .welcome-input-area,
+body.physics-motion .chat-input-area,
+body.physics-motion .input-box,
+body.physics-motion .message-input {
+  transform: none !important;
+}
+
 /* ============================================================
    SCROLLBARS
    ============================================================ */
@@ -323,7 +362,6 @@ textarea {
 
 .project-chats {
   overflow: hidden;
-  transition: max-height var(--transition-normal);
 }
 
 .project-chats.collapsed {
@@ -331,7 +369,12 @@ textarea {
 }
 
 .project-chats.expanded {
-  max-height: 2000px;
+  max-height: none;
+}
+
+body.physics-motion .project-header.expanded .project-expand-icon,
+body.physics-motion .tool-working.expanded .tool-working-chevron {
+  transform: none;
 }
 
 .chat-item {
@@ -1014,24 +1057,33 @@ textarea {
   background: rgba(255,255,255,0.02);
 }
 
-/* Streaming cursor */
+/* Streaming cursor (inline at end of text while generating) */
+.md-content.is-streaming {
+  display: inline;
+}
+
+.md-content.is-streaming .md-stream-body {
+  display: inline;
+}
+
+.md-content.is-streaming .streaming-cursor {
+  display: inline-block;
+  vertical-align: text-bottom;
+  transform: translateY(4px);
+}
+
 .streaming-cursor {
   display: inline-block;
-  width: 2px;
+  width: 14px;
   height: 14px;
   background: var(--accent);
-  border-radius: 1px;
-  margin-left: 2px;
+  border-radius: 50%;
+  margin-left: 5px;
   vertical-align: text-bottom;
-  animation: cursor-blink 0.8s ease-in-out infinite;
+  transform: translateY(4px);
 }
 
-@keyframes cursor-blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
-}
-
-/* Thinking indicator */
+/* Thinking indicator (brief bubble below user message) */
 .thinking-indicator {
   display: flex;
   align-items: center;
@@ -1079,7 +1131,6 @@ textarea {
   align-items: center;
   font-size: 12.5px;
   line-height: 1.4;
-  animation: tool-line-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .tool-activity-line.running .tool-activity-text {
@@ -1101,7 +1152,7 @@ textarea {
 }
 
 .tool-activity-line.done {
-  animation: tool-line-out 0.28s ease forwards;
+  pointer-events: none;
 }
 
 .tool-activity-text {
@@ -1113,29 +1164,10 @@ textarea {
   100% { background-position: -100% center; }
 }
 
-@keyframes tool-line-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes tool-line-out {
-  to {
-    opacity: 0;
-    transform: translateY(-3px);
-  }
-}
-
 /* Collapsed "Working" summary after tools finish */
 .tool-working {
   margin: 2px 0 12px;
   border-radius: var(--radius-sm);
-  animation: tool-line-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .tool-working-trigger {

@@ -256,6 +256,11 @@ const SettingsStore = (() => {
     `;
 
     bindProviderEvents(body);
+    Physics.stagger(body.querySelector('.settings-providers-list'), '.settings-provider-card', {
+      opacity: 0,
+      y: 10,
+      scale: 0.98,
+    }, { preset: 'gentle', delay: 35 });
   }
 
   function bindProviderEvents(container) {
@@ -359,18 +364,21 @@ const SettingsStore = (() => {
     document.body.appendChild(overlayEl);
     overlayEl.querySelector('#settingsCloseBtn').addEventListener('click', close);
 
+    const panel = overlayEl.querySelector('.settings-modal');
+    Physics.modalIn(overlayEl, panel);
+
     isOpen = true;
     render();
   }
 
   function close() {
     if (!overlayEl) return;
-    overlayEl.classList.add('fade-out');
+    const panel = overlayEl.querySelector('.settings-modal');
     isOpen = false;
-    setTimeout(() => {
+    Physics.modalOut(overlayEl, panel, () => {
       overlayEl?.remove();
       overlayEl = null;
-    }, 200);
+    });
   }
 
   function getIsOpen() {

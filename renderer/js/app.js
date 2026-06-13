@@ -47,10 +47,11 @@ const dom = {
    ============================================================ */
 
 function init() {
+  Physics.init();
   renderSidebar();
   initModelDropdowns();
   window.addEventListener('settings-changed', refreshModelDropdowns);
-  showWelcomeScreen();
+  showWelcomeScreen({ animateWelcome: true });
   bindEvents();
   setupWindowControls();
   animateWelcomeInputPlaceholders();
@@ -68,8 +69,8 @@ function getModelLabel(modelId) {
   return getAvailableModels().find((m) => m.id === modelId)?.label ?? modelId;
 }
 
-function closeAllModelDropdowns() {
-  modelDropdowns.forEach((dropdown) => dropdown.close());
+function closeAllModelDropdowns(instant = false) {
+  modelDropdowns.forEach((dropdown) => dropdown.close(instant));
   openModelDropdown = null;
 }
 
@@ -132,20 +133,43 @@ function createModelDropdown(container) {
   `;
 
   const trigger = container.querySelector('.model-selector-trigger');
+  const menu = container.querySelector('.model-dropdown-menu');
   const labelEl = container.querySelector('.model-selected-label');
   const options = Array.from(container.querySelectorAll('.model-option'));
 
-  function close() {
-    container.classList.remove('open');
-    trigger.setAttribute('aria-expanded', 'false');
-    if (openModelDropdown === api) openModelDropdown = null;
+  menu.style.visibility = 'hidden';
+
+  function close(instant = false) {
+    if (!container.classList.contains('open')) return;
+
+    const finish = () => {
+      container.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+      menu.style.visibility = 'hidden';
+      if (openModelDropdown === api) openModelDropdown = null;
+    };
+
+    if (instant) {
+      finish();
+      return;
+    }
+
+    Physics.animate(menu, { opacity: 0, y: 6, scale: 0.97 }, {
+      preset: 'stiff',
+      onComplete: finish,
+    });
   }
 
   function open() {
-    closeAllModelDropdowns();
+    closeAllModelDropdowns(true);
     container.classList.add('open');
     trigger.setAttribute('aria-expanded', 'true');
     openModelDropdown = api;
+    menu.style.visibility = 'visible';
+    Physics.animate(menu, { opacity: 1, y: 0, scale: 1 }, {
+      from: { opacity: 0, y: 6, scale: 0.97 },
+      preset: 'snappy',
+    });
     const selected = options.find((opt) => opt.classList.contains('selected'));
     (selected || options[0])?.focus();
   }
@@ -294,17 +318,23 @@ function toggleProject(projectId) {
   const isExpanded = state.expandedProjects.has(projectId);
   const chatsEl = document.getElementById(`chats-${projectId}`);
   const header = document.querySelector(`[data-project-id="${projectId}"] .project-header`);
+  const chevron = header?.querySelector('.project-expand-icon');
 
   if (isExpanded) {
     state.expandedProjects.delete(projectId);
-    chatsEl.classList.remove('expanded');
-    chatsEl.classList.add('collapsed');
-    header.classList.remove('expanded');
+    Physics.rotate(chevron, 0);
+    Physics.expandVertical(chatsEl, false, () => {
+      chatsEl.classList.remove('expanded');
+      chatsEl.classList.add('collapsed');
+      header.classList.remove('expanded');
+    });
   } else {
     state.expandedProjects.add(projectId);
     chatsEl.classList.remove('collapsed');
     chatsEl.classList.add('expanded');
     header.classList.add('expanded');
+    Physics.rotate(chevron, 90);
+    Physics.expandVertical(chatsEl, true);
   }
 
   state.selectedProjectId = projectId;
@@ -327,21 +357,30 @@ function updateProjectSelection() {
    SCREEN SWITCHING
    ============================================================ */
 
-function showWelcomeScreen() {
-  dom.welcomeScreen.style.display = 'flex';
-  dom.chatScreen.style.display = 'none';
+function showWelcomeScreen(options = {}) {
   state.selectedChatId = null;
   updateActiveChat();
   updateNavActive();
   setRandomWelcomeSubtitle();
+
+  Physics.switchScreens(dom.welcomeScreen, dom.chatScreen);
+
+  if (options.animateWelcome) {
+    const content = dom.welcomeScreen.querySelector('.welcome-content');
+    Physics.stagger(content, '.welcome-icon, .welcome-title, .welcome-subtitle', {
+      opacity: 0,
+      y: 14,
+      scale: 0.98,
+    }, { preset: 'gentle', delay: 50 });
+  }
+
   focusInput(dom.welcomeInput);
 }
 
 function showChatScreen(chatId, chatTitle, projectId) {
-  dom.welcomeScreen.style.display = 'none';
-  dom.chatScreen.style.display = 'flex';
   dom.chatTitle.textContent = chatTitle;
   updateNavActive();
+  Physics.switchScreens(dom.chatScreen, dom.welcomeScreen);
 
   renderMessages(chatId);
   scrollToEnd(true);
@@ -363,7 +402,7 @@ function updateActiveChat() {
 }
 
 function updateNavActive() {
-  const onWelcome = dom.chatScreen.style.display === 'none';
+  const onWelcome = state.selectedChatId === null;
   document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
     item.classList.toggle('active', item.dataset.action === 'new-chat' && onWelcome);
   });
@@ -383,7 +422,6 @@ function renderMessages(chatId) {
 function renderMessage(msg, animate = true) {
   const el = document.createElement('div');
   el.className = `message ${msg.role}`;
-  if (!animate) el.style.animation = 'none';
   el.id = `msg-${msg.id}`;
 
   if (msg.role === 'user') {
@@ -407,6 +445,7 @@ function renderMessage(msg, animate = true) {
   }
 
   dom.messagesList.appendChild(el);
+  if (animate) Physics.messageIn(el);
   return el;
 }
 
@@ -518,6 +557,8 @@ function bindWorkingDropdown(root) {
       const wrap = trigger.closest('.tool-working');
       const isExpanded = wrap.classList.toggle('expanded');
       trigger.setAttribute('aria-expanded', String(isExpanded));
+      const chevron = wrap.querySelector('.tool-working-chevron');
+      Physics.rotate(chevron, isExpanded ? 180 : 0);
     });
   });
 }
@@ -537,8 +578,10 @@ function showWorkingDropdown(msgId, toolCalls) {
 
   const wrap = document.createElement('div');
   wrap.innerHTML = renderWorkingDropdownHTML(toolCalls, msgId, false);
-  body.insertBefore(wrap.firstElementChild, content);
+  const workingEl = wrap.firstElementChild;
+  body.insertBefore(workingEl, content);
   bindWorkingDropdown(body);
+  Physics.lineIn(workingEl);
 }
 
 function renderToolCallsHTML(toolCalls, msgId) {
@@ -574,6 +617,7 @@ function showToolActivityLine(tc, msgId) {
     line.id = `tc-${tc.id}`;
     line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabel(tc))}</span>`;
     container.appendChild(line);
+    Physics.lineIn(line);
   } else {
     line.classList.add('running');
     line.querySelector('.tool-activity-text').textContent = getToolActivityLabel(tc);
@@ -587,12 +631,12 @@ function completeToolActivityLine(tcId, msgId) {
   line.classList.remove('running');
   line.classList.add('done');
 
-  setTimeout(() => {
+  Physics.lineOut(line, () => {
     line.remove();
     const msgEl = document.getElementById(`msg-${msgId}`);
     const container = msgEl?.querySelector('.tool-activity');
     if (container && !container.children.length) container.remove();
-  }, 280);
+  });
 }
 
 function renderMessageActionsHTML() {
@@ -623,8 +667,11 @@ function renderMessageActionsHTML() {
 function sendMessage(text) {
   if (!text.trim() || state.isGenerating) return;
 
+  let newChatFromWelcome = false;
+
   // If on welcome screen, create a new chat
   if (!state.selectedChatId) {
+    newChatFromWelcome = true;
     const project = state.projects.find((p) => p.id === state.selectedProjectId) || state.projects[0];
     const newChatId = `new-${Date.now()}`;
     const newChat = {
@@ -654,11 +701,10 @@ function sendMessage(text) {
     content: text.trim(),
   };
   state.chatMessages[chatId].push(userMsg);
-  renderMessage(userMsg, true);
+  renderMessage(userMsg, !newChatFromWelcome);
 
   // Animate send button
-  dom.chatSendBtn.classList.add('sending');
-  setTimeout(() => dom.chatSendBtn.classList.remove('sending'), 300);
+  Physics.pulse(newChatFromWelcome ? dom.welcomeSendBtn : dom.chatSendBtn);
 
   scrollToEnd(false);
   state.isGenerating = true;
@@ -696,8 +742,8 @@ function simulateAIResponse(chatId, userMessage) {
   setTimeout(() => {
     thinkingEl.remove();
 
-    // Render assistant message shell with tool calls in shimmer state
-    const msgEl = renderMessage(assistantMsg, true);
+    // Render assistant shell without re-animating the avatar (thinking already showed it)
+    const msgEl = renderMessage(assistantMsg, false);
     scrollToEnd(false);
 
     // Run tool calls sequentially
@@ -786,44 +832,53 @@ function streamText(fullText, msgId, chatId, onDone) {
   const contentEl = document.getElementById(`content-${msgId}`);
   if (!contentEl) { onDone(); return; }
 
-  // Add cursor
-  const cursor = document.createElement('span');
-  cursor.className = 'streaming-cursor';
-  contentEl.appendChild(cursor);
+  let streamBody = contentEl.querySelector('.md-stream-body');
+  let cursor = contentEl.querySelector('.streaming-cursor');
+
+  if (!streamBody) {
+    contentEl.classList.add('is-streaming');
+    streamBody = document.createElement('div');
+    streamBody.className = 'md-stream-body';
+    cursor = document.createElement('span');
+    cursor.className = 'streaming-cursor';
+    contentEl.innerHTML = '';
+    contentEl.appendChild(streamBody);
+    contentEl.appendChild(cursor);
+  }
+
   scrollToEnd(false);
 
-  // Split by words for smooth streaming
   const words = fullText.split(/(\s+)/);
   let currentText = '';
   let wordIdx = 0;
   const baseDelay = 18;
 
-  // Update the message in state to final text
   const msgs = state.chatMessages[chatId];
   const msgInState = msgs?.find((m) => m.id === msgId);
   if (msgInState) msgInState.content = fullText;
 
+  function finishStream() {
+    contentEl.classList.remove('is-streaming');
+    contentEl.innerHTML = parseMarkdown(fullText);
+    const actionsWrapper = document.createElement('div');
+    actionsWrapper.innerHTML = renderMessageActionsHTML();
+    contentEl.parentElement.appendChild(actionsWrapper.firstElementChild);
+    onDone();
+  }
+
   function addNextChunk() {
     if (wordIdx >= words.length) {
-      cursor.remove();
-      // Add message actions
-      const actionsWrapper = document.createElement('div');
-      actionsWrapper.innerHTML = renderMessageActionsHTML();
-      contentEl.parentElement.appendChild(actionsWrapper.firstElementChild);
-      onDone();
+      finishStream();
       return;
     }
 
-    // Add 1-3 words at a time for more natural feel
     const chunkSize = wordIdx === 0 ? 1 : Math.floor(Math.random() * 3) + 1;
     for (let i = 0; i < chunkSize && wordIdx < words.length; i++) {
       currentText += words[wordIdx++];
     }
 
-    contentEl.innerHTML = parseMarkdown(currentText);
-    contentEl.appendChild(cursor);
+    streamBody.innerHTML = parseMarkdown(currentText);
 
-    // Auto-scroll if near bottom
     if (!state.userHasScrolledUp) {
       scrollToEnd(false);
     }
@@ -867,20 +922,28 @@ function createThinkingIndicator() {
 
 function scrollToEnd(instant) {
   const list = dom.messagesList;
+  const target = list.scrollHeight - list.clientHeight;
   if (instant) {
     list.scrollTop = list.scrollHeight;
   } else {
-    list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+    Physics.animateScroll(list, target, { preset: 'gentle' });
   }
   state.userHasScrolledUp = false;
-  dom.scrollToBottom.style.display = 'none';
+  if (dom.scrollToBottom.style.display !== 'none') {
+    Physics.hide(dom.scrollToBottom);
+  }
 }
 
 function onMessagesScroll() {
   const list = dom.messagesList;
   const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
   state.userHasScrolledUp = distanceFromBottom > 80;
-  dom.scrollToBottom.style.display = state.userHasScrolledUp && state.isGenerating ? 'flex' : 'none';
+  const shouldShow = state.userHasScrolledUp && state.isGenerating;
+  if (shouldShow && dom.scrollToBottom.style.display === 'none') {
+    Physics.show(dom.scrollToBottom);
+  } else if (!shouldShow && dom.scrollToBottom.style.display !== 'none') {
+    Physics.hide(dom.scrollToBottom);
+  }
 }
 
 /* ============================================================
@@ -1061,6 +1124,14 @@ function openSearch() {
 
   document.body.appendChild(overlay);
 
+  const panel = overlay.querySelector('.search-modal');
+  Physics.modalIn(overlay, panel);
+  Physics.stagger(overlay.querySelector('.search-results'), '.search-result-item', {
+    opacity: 0,
+    y: 8,
+    scale: 0.98,
+  }, { preset: 'snappy', delay: 30 });
+
   const field = document.getElementById('searchField');
   field.focus();
 
@@ -1070,8 +1141,12 @@ function openSearch() {
       c.title.toLowerCase().includes(query) || c.projectName.toLowerCase().includes(query)
     );
     document.getElementById('searchResults').innerHTML = renderSearchResults(filtered, query);
-    // Re-bind click handlers
     bindSearchResults(overlay);
+    Physics.stagger(document.getElementById('searchResults'), '.search-result-item', {
+      opacity: 0,
+      y: 6,
+      scale: 0.98,
+    }, { preset: 'snappy', delay: 25 });
   });
 
   document.addEventListener('keydown', searchKeyHandler);
@@ -1103,9 +1178,9 @@ function bindSearchResults(overlay) {
 }
 
 function closeSearch(overlay) {
-  overlay.classList.add('fade-out');
+  const panel = overlay.querySelector('.search-modal');
   document.removeEventListener('keydown', searchKeyHandler);
-  setTimeout(() => overlay.remove(), 200);
+  Physics.modalOut(overlay, panel, () => overlay.remove());
 }
 
 function searchKeyHandler(e) {
@@ -1299,14 +1374,18 @@ function showToast(message) {
   toast.textContent = message;
   document.body.appendChild(toast);
 
-  // Animate in
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => toast.classList.add('toast-visible'));
+  Physics.animate(toast, { opacity: 1, y: 0 }, {
+    from: { opacity: 0, y: 14 },
+    preset: 'bouncy',
+    anchorX: 'center',
   });
 
   setTimeout(() => {
-    toast.classList.remove('toast-visible');
-    setTimeout(() => toast.remove(), 300);
+    Physics.animate(toast, { opacity: 0, y: 10 }, {
+      preset: 'stiff',
+      anchorX: 'center',
+      onComplete: () => toast.remove(),
+    });
   }, 2500);
 }
 
