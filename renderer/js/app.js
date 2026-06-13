@@ -24,10 +24,12 @@ let modelDropdownClickBound = false;
 /* ---- DOM refs ---- */
 const $ = (id) => document.getElementById(id);
 const dom = {
+  appBody:          $('appBody'),
   sidebar:          $('sidebar'),
   projectsList:     $('projectsList'),
   welcomeScreen:    $('welcomeScreen'),
   chatScreen:       $('chatScreen'),
+  settingsScreen:   $('settingsScreen'),
   welcomeInput:     $('welcomeInput'),
   welcomeSendBtn:   $('welcomeSendBtn'),
   welcomeTitle:     $('welcomeTitle'),
@@ -357,12 +359,35 @@ function updateProjectSelection() {
    SCREEN SWITCHING
    ============================================================ */
 
+function hideAllScreens() {
+  dom.welcomeScreen.style.display = 'none';
+  dom.chatScreen.style.display = 'none';
+  dom.settingsScreen.style.display = 'none';
+}
+
+function showSettingsScreen() {
+  hideAllScreens();
+  dom.settingsScreen.style.display = 'flex';
+  dom.appBody.classList.add('settings-open');
+  updateNavActive();
+}
+
+function hideSettingsScreen() {
+  dom.settingsScreen.style.display = 'none';
+  dom.appBody.classList.remove('settings-open');
+  const prev = state.selectedChatId ? dom.chatScreen : dom.welcomeScreen;
+  prev.style.display = 'flex';
+  updateNavActive();
+}
+
 function showWelcomeScreen(options = {}) {
   state.selectedChatId = null;
   updateActiveChat();
   updateNavActive();
   setRandomWelcomeSubtitle();
 
+  dom.settingsScreen.style.display = 'none';
+  dom.appBody.classList.remove('settings-open');
   Physics.switchScreens(dom.welcomeScreen, dom.chatScreen);
 
   if (options.animateWelcome) {
@@ -380,6 +405,8 @@ function showWelcomeScreen(options = {}) {
 function showChatScreen(chatId, chatTitle, projectId) {
   dom.chatTitle.textContent = chatTitle;
   updateNavActive();
+  dom.settingsScreen.style.display = 'none';
+  dom.appBody.classList.remove('settings-open');
   Physics.switchScreens(dom.chatScreen, dom.welcomeScreen);
 
   renderMessages(chatId);
@@ -403,9 +430,12 @@ function updateActiveChat() {
 
 function updateNavActive() {
   const onWelcome = state.selectedChatId === null;
+  const onSettings = SettingsStore.getIsOpen();
   document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
-    item.classList.toggle('active', item.dataset.action === 'new-chat' && onWelcome);
+    item.classList.toggle('active', item.dataset.action === 'new-chat' && onWelcome && !onSettings);
   });
+  const settingsBtn = document.querySelector('.footer-btn[data-action="settings"]');
+  if (settingsBtn) settingsBtn.classList.toggle('active', onSettings);
 }
 
 /* ============================================================
@@ -1557,6 +1587,12 @@ function bindEvents() {
         const overlay = document.getElementById('searchOverlay');
         if (!overlay) showWelcomeScreen();
       }
+    }
+    // Cmd/Ctrl+, for settings
+    if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+      e.preventDefault();
+      if (SettingsStore.getIsOpen()) closeSettings();
+      else openSettings();
     }
   });
 }
