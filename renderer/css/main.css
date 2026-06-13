@@ -205,21 +205,22 @@ textarea {
 
 /* Top nav */
 .sidebar-nav {
-  padding: 8px 6px 4px;
+  padding: 4px 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 12.5px;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 0;
+  border-left: 2px solid transparent;
+  font-size: 12px;
   color: var(--text-secondary);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
   text-align: left;
   width: 100%;
 }
@@ -232,12 +233,13 @@ textarea {
 .nav-item.active {
   background: var(--accent-glow);
   color: var(--accent);
+  border-left-color: var(--accent);
 }
 
 .sidebar-divider {
   height: 1px;
   background: var(--border);
-  margin: 6px 10px;
+  margin: 4px 0;
 }
 
 /* Projects */
@@ -245,34 +247,32 @@ textarea {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 4px 0;
+  padding: 0;
 }
 
 .projects-label {
-  font-size: 10.5px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text-muted);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 6px 14px 4px;
+  padding: 8px 12px 4px;
 }
 
 .project-group {
-  margin-bottom: 2px;
+  margin-bottom: 0;
 }
 
 .project-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
-  border-radius: var(--radius-sm);
-  margin: 0 4px;
+  padding: 4px 12px;
+  border-radius: 0;
+  margin: 0;
   cursor: pointer;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 500;
-  transition: all var(--transition-fast);
+  font-weight: 400;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .project-header:hover {
@@ -285,8 +285,8 @@ textarea {
 }
 
 .project-expand-icon {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -300,14 +300,14 @@ textarea {
 }
 
 .project-icon {
-  width: 16px;
-  height: 16px;
-  border-radius: var(--radius-xs);
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
   background: linear-gradient(135deg, #4f46e5, #7c3aed);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 8px;
+  font-size: 7px;
   font-weight: 700;
   color: white;
   flex-shrink: 0;
@@ -323,30 +323,29 @@ textarea {
 
 .project-chats {
   overflow: hidden;
-  transition: all var(--transition-normal);
+  transition: max-height var(--transition-normal);
 }
 
 .project-chats.collapsed {
   max-height: 0;
-  opacity: 0;
 }
 
 .project-chats.expanded {
   max-height: 2000px;
-  opacity: 1;
 }
 
 .chat-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 10px 5px 32px;
-  border-radius: var(--radius-sm);
-  margin: 0 4px;
+  padding: 4px 12px 4px 28px;
+  border-radius: 0;
+  border-left: 2px solid transparent;
+  margin: 0;
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 11.5px;
-  transition: all var(--transition-fast);
+  font-size: 12px;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
   position: relative;
 }
 
@@ -356,8 +355,9 @@ textarea {
 }
 
 .chat-item.active {
-  background: var(--bg-active);
+  background: var(--accent-glow);
   color: var(--text-primary);
+  border-left-color: var(--accent);
 }
 
 .chat-item-title {
@@ -371,20 +371,26 @@ textarea {
   font-size: 10px;
   color: var(--text-muted);
   flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.chat-item:hover .chat-item-time {
+  opacity: 1;
 }
 
 .show-more-btn {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px 4px 32px;
+  padding: 4px 12px 4px 28px;
   font-size: 11px;
   color: var(--text-muted);
-  transition: color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
   cursor: pointer;
-  margin: 0 4px;
-  border-radius: var(--radius-sm);
-  width: calc(100% - 8px);
+  margin: 0;
+  border-radius: 0;
+  width: 100%;
   text-align: left;
 }
 
@@ -395,22 +401,22 @@ textarea {
 
 /* Sidebar footer */
 .sidebar-footer {
-  padding: 8px 8px 10px;
+  padding: 4px 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   border-top: 1px solid var(--border);
 }
 
 .footer-btn {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 0;
   font-size: 12px;
   color: var(--text-secondary);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
   flex: 1;
 }
 
@@ -1077,11 +1083,13 @@ textarea {
 }
 
 .tool-activity-line.running .tool-activity-text {
+  color: transparent;
   background: linear-gradient(
     90deg,
     var(--text-muted) 0%,
     var(--text-muted) 35%,
-    #c4b5fd 50%,
+    var(--accent) 50%,
+    #c4b5fd 55%,
     var(--text-muted) 65%,
     var(--text-muted) 100%
   );
@@ -1151,7 +1159,7 @@ textarea {
 
 .tool-working-label {
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--accent);
 }
 
 .tool-working-count {

@@ -332,6 +332,7 @@ function showWelcomeScreen() {
   dom.chatScreen.style.display = 'none';
   state.selectedChatId = null;
   updateActiveChat();
+  updateNavActive();
   setRandomWelcomeSubtitle();
   focusInput(dom.welcomeInput);
 }
@@ -340,6 +341,7 @@ function showChatScreen(chatId, chatTitle, projectId) {
   dom.welcomeScreen.style.display = 'none';
   dom.chatScreen.style.display = 'flex';
   dom.chatTitle.textContent = chatTitle;
+  updateNavActive();
 
   renderMessages(chatId);
   scrollToEnd(true);
@@ -357,6 +359,13 @@ function openChat(chatId, chatTitle, projectId) {
 function updateActiveChat() {
   document.querySelectorAll('.chat-item').forEach((item) => {
     item.classList.toggle('active', item.dataset.chatId === state.selectedChatId);
+  });
+}
+
+function updateNavActive() {
+  const onWelcome = dom.chatScreen.style.display === 'none';
+  document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
+    item.classList.toggle('active', item.dataset.action === 'new-chat' && onWelcome);
   });
 }
 
