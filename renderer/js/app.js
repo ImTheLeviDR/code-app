@@ -344,11 +344,8 @@ function toggleProject(projectId) {
 }
 
 function updateProjectSelection() {
-  document.querySelectorAll('.project-header').forEach((h) => h.classList.remove('selected'));
-  const selectedHeader = document.querySelector(`[data-project-id="${state.selectedProjectId}"] .project-header`);
-  if (selectedHeader) selectedHeader.classList.add('selected');
+  updateNavActive();
 
-  // Update welcome title
   const project = state.projects.find((p) => p.id === state.selectedProjectId);
   if (project) {
     dom.welcomeTitle.textContent = `What should we work on in ${project.name}?`;
@@ -431,9 +428,16 @@ function updateActiveChat() {
 function updateNavActive() {
   const onWelcome = state.selectedChatId === null;
   const onSettings = SettingsStore.getIsOpen();
+  const onChat = state.selectedChatId !== null;
+
   document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
     item.classList.toggle('active', item.dataset.action === 'new-chat' && onWelcome && !onSettings);
   });
+
+  document.querySelectorAll('.project-header').forEach((header) => {
+    header.classList.toggle('selected', onChat && header.closest('.project-group')?.dataset.projectId === state.selectedProjectId);
+  });
+
   const settingsBtn = document.querySelector('.footer-btn[data-action="settings"]');
   if (settingsBtn) settingsBtn.classList.toggle('active', onSettings);
 }
@@ -473,7 +477,6 @@ function renderMessage(msg, animate = true) {
         </div>
       </div>
     `;
-    if (msg.toolCalls?.length) bindWorkingDropdown(el);
   }
 
   dom.messagesList.appendChild(el);
@@ -493,21 +496,21 @@ function assistantAvatarHTML() {
 
 function getToolActivityLabel(tc) {
   const { name, args = {} } = tc;
-  const basename = (p) => (p ? String(p).split(/[/\\]/).pop() : '');
+  const basename = getFileBasename(args.path);
 
   switch (name) {
     case 'read_file':
-      return args.path ? `Reading ${basename(args.path)}...` : 'Reading file...';
+      return basename ? `Reading ${basename}...` : 'Reading file...';
     case 'search_codebase':
       return args.query
         ? `Searching "${args.query}" in codebase...`
         : 'Searching codebase...';
     case 'write_file':
-      return args.path ? `Writing ${basename(args.path)}...` : 'Writing file...';
+      return basename ? `Writing ${basename}...` : 'Writing file...';
     case 'create_file':
-      return args.path ? `Creating ${basename(args.path)}...` : 'Creating file...';
+      return basename ? `Creating ${basename}...` : 'Creating file...';
     case 'edit_file':
-      return args.path ? `Editing ${basename(args.path)}...` : 'Editing file...';
+      return basename ? `Editing ${basename}...` : 'Editing file...';
     case 'run_terminal_cmd':
       return args.command
         ? `Running ${args.command.length > 36 ? args.command.slice(0, 36) + '…' : args.command}...`
@@ -525,21 +528,21 @@ function getToolActivityLabel(tc) {
 
 function getToolActivityLabelDone(tc) {
   const { name, args = {} } = tc;
-  const basename = (p) => (p ? String(p).split(/[/\\]/).pop() : '');
+  const basename = getFileBasename(args.path);
 
   switch (name) {
     case 'read_file':
-      return args.path ? `Read ${basename(args.path)}` : 'Read file';
+      return basename ? `Read ${basename}` : 'Read file';
     case 'search_codebase':
       return args.query
         ? `Searched "${args.query}" in codebase`
         : 'Searched codebase';
     case 'write_file':
-      return args.path ? `Wrote ${basename(args.path)}` : 'Wrote file';
+      return basename ? `Wrote ${basename}` : 'Wrote file';
     case 'create_file':
-      return args.path ? `Created ${basename(args.path)}` : 'Created file';
+      return basename ? `Created ${basename}` : 'Created file';
     case 'edit_file':
-      return args.path ? `Edited ${basename(args.path)}` : 'Edited file';
+      return basename ? `Edited ${basename}` : 'Edited file';
     case 'run_terminal_cmd':
       return args.command
         ? `Ran ${args.command.length > 36 ? args.command.slice(0, 36) + '…' : args.command}`
@@ -555,69 +558,48 @@ function getToolActivityLabelDone(tc) {
   }
 }
 
-function renderWorkingDropdownHTML(toolCalls, msgId, expanded = false) {
-  const items = toolCalls
-    .map(
-      (tc) =>
-        `<div class="tool-working-item">${escapeHtml(getToolActivityLabelDone(tc))}</div>`
-    )
-    .join('');
-  const count = toolCalls.length;
-  const countLabel = count === 1 ? '1 step' : `${count} steps`;
-
-  return `
-    <div class="tool-working${expanded ? ' expanded' : ''}" id="tool-working-${msgId}">
-      <button class="tool-working-trigger" type="button" aria-expanded="${expanded}">
-        <span class="tool-working-label">Working</span>
-        <span class="tool-working-count">${countLabel}</span>
-        <svg class="tool-working-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none">
-          <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-      <div class="tool-working-panel">
-        <div class="tool-working-items">${items}</div>
-      </div>
-    </div>
-  `;
+function getFileBasename(path) {
+  return path ? String(path).split(/[/\\]/).pop() : '';
 }
 
-function bindWorkingDropdown(root) {
-  root.querySelectorAll('.tool-working-trigger').forEach((trigger) => {
-    if (trigger.dataset.bound) return;
-    trigger.dataset.bound = 'true';
-    trigger.addEventListener('click', () => {
-      const wrap = trigger.closest('.tool-working');
-      const isExpanded = wrap.classList.toggle('expanded');
-      trigger.setAttribute('aria-expanded', String(isExpanded));
-      const chevron = wrap.querySelector('.tool-working-chevron');
-      Physics.rotate(chevron, isExpanded ? 180 : 0);
-    });
-  });
+function isFileMutationTool(name) {
+  return name === 'edit_file' || name === 'write_file' || name === 'create_file';
 }
 
-function showWorkingDropdown(msgId, toolCalls) {
-  if (!toolCalls?.length) return;
+function getToolLineStats(tc) {
+  const adds = tc.additions ?? tc.args?.additions ?? 0;
+  const dels = tc.deletions ?? tc.args?.deletions ?? 0;
+  return { adds, dels };
+}
 
-  const msgEl = document.getElementById(`msg-${msgId}`);
-  if (!msgEl) return;
+function renderFileMutationLineHTML(tc) {
+  const file = getFileBasename(tc.args?.path);
+  const verb = { edit_file: 'Edited', write_file: 'Wrote', create_file: 'Created' }[tc.name] || 'Edited';
+  const { adds, dels } = getToolLineStats(tc);
+  let stats = '';
+  if (adds > 0) stats += `<span class="tool-edit-stat tool-edit-stat-add">+${adds}</span>`;
+  if (dels > 0) stats += `<span class="tool-edit-stat tool-edit-stat-del">-${dels}</span>`;
+  const statsHtml = stats ? ` <span class="tool-edit-stats">${stats}</span>` : '';
+  return `<span class="tool-activity-verb">${verb}</span><span class="tool-activity-file">${escapeHtml(file)}</span>${statsHtml}`;
+}
 
-  const body = msgEl.querySelector('.assistant-body');
-  const meta = getActiveToolMeta(body);
-  if (!meta) return;
+function renderToolActivityLineHTML(tc, running = false) {
+  const runClass = running ? ' running' : ' done';
+  const idAttr = tc.id ? ` id="tc-${tc.id}"` : '';
 
-  const activity = meta.querySelector('.tool-activity');
-  if (activity) activity.remove();
-
-  let workingEl = meta.querySelector('.tool-working');
-  if (!workingEl) {
-    const wrap = document.createElement('div');
-    wrap.innerHTML = renderWorkingDropdownHTML(toolCalls, msgId, false);
-    workingEl = wrap.firstElementChild;
-    meta.insertBefore(workingEl, meta.firstChild);
-    bindWorkingDropdown(body);
-  } else {
-    updateWorkingDropdown(workingEl, toolCalls);
+  if (!running && isFileMutationTool(tc.name)) {
+    return `<div class="tool-activity-line done tool-file-edit-line"${idAttr}>${renderFileMutationLineHTML(tc)}</div>`;
   }
+
+  const label = running ? getToolActivityLabel(tc) : getToolActivityLabelDone(tc);
+  return `<div class="tool-activity-line${runClass}"${idAttr}><span class="tool-activity-text">${escapeHtml(label)}</span></div>`;
+}
+
+function renderToolCallsHTML(toolCalls, msgId) {
+  if (!toolCalls?.length) return '';
+  const allComplete = toolCalls.every((tc) => (tc.status || 'complete') === 'complete');
+  if (!allComplete) return '<div class="tool-activity"></div>';
+  return `<div class="tool-activity">${toolCalls.map((tc) => renderToolActivityLineHTML(tc, false)).join('')}</div>`;
 }
 
 function getActiveToolMeta(body) {
@@ -632,49 +614,6 @@ function getActiveToolMeta(body) {
   }
   const metas = body.querySelectorAll('.assistant-meta');
   return metas[metas.length - 1] || null;
-}
-
-function updateWorkingDropdown(workingEl, toolCalls) {
-  const count = toolCalls.length;
-  const countLabel = count === 1 ? '1 step' : `${count} steps`;
-  const countEl = workingEl.querySelector('.tool-working-count');
-  if (countEl) countEl.textContent = countLabel;
-
-  const itemsEl = workingEl.querySelector('.tool-working-items');
-  if (itemsEl) {
-    itemsEl.innerHTML = toolCalls
-      .map(
-        (tc) =>
-          `<div class="tool-working-item">${escapeHtml(getToolActivityLabelDone(tc))}</div>`
-      )
-      .join('');
-  }
-}
-
-function renderToolCallsHTML(toolCalls, msgId) {
-  if (!toolCalls?.length) return '';
-  const allComplete = toolCalls.every((tc) => (tc.status || 'complete') === 'complete');
-  if (allComplete) {
-    return renderWorkingDropdownHTML(toolCalls, msgId, false);
-  }
-  return '<div class="tool-activity"></div>';
-}
-
-function ensureWorkingDropdownAfterTools(msgId, msg) {
-  if (!msg?.toolCalls?.length) return false;
-  const allComplete = msg.toolCalls.every(
-    (tc) => (tc.status || 'complete') === 'complete'
-  );
-  if (!allComplete) return false;
-  showWorkingDropdown(msgId, msg.toolCalls);
-  return true;
-}
-
-function clearToolActivityUI(msgId) {
-  const msgEl = document.getElementById(`msg-${msgId}`);
-  const meta = getActiveToolMeta(msgEl?.querySelector('.assistant-body'));
-  const activity = meta?.querySelector('.tool-activity');
-  if (activity) activity.remove();
 }
 
 function getToolActivityContainer(msgId) {
@@ -706,7 +645,7 @@ function showToolActivityLine(tc, msgId) {
   const container = getToolActivityContainer(msgId);
   if (!container) return;
 
-  container.querySelectorAll('.tool-activity-line').forEach((el) => el.remove());
+  container.querySelectorAll('.tool-activity-line.running').forEach((el) => el.remove());
 
   const line = document.createElement('div');
   line.className = 'tool-activity-line running';
@@ -722,8 +661,14 @@ function completeToolActivityLine(tcId, msgId) {
   const tc = findToolCallById(tcId);
   line.classList.remove('running');
   line.classList.add('done');
-  if (tc) {
-    line.querySelector('.tool-activity-text').textContent = getToolActivityLabelDone(tc);
+  if (!tc) return;
+
+  if (isFileMutationTool(tc.name)) {
+    line.classList.add('tool-file-edit-line');
+    line.innerHTML = renderFileMutationLineHTML(tc);
+  } else {
+    line.classList.remove('tool-file-edit-line');
+    line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabelDone(tc))}</span>`;
   }
 }
 
@@ -865,6 +810,8 @@ function mapToolCalls(toolCalls, phaseKey = 0) {
     id: `tc-${stamp}-${phaseKey}-${i}`,
     name: tc.name,
     args: tc.args || {},
+    additions: tc.additions,
+    deletions: tc.deletions,
     result: null,
     status: 'pending',
     duration: tc.duration,
@@ -939,7 +886,6 @@ function runToolCallsSequentially(toolCalls, msgEl, msgId, chatId, onDone) {
 
   function runNext() {
     if (idx >= toolCalls.length) {
-      clearToolActivityUI(msgId);
       onDone();
       return;
     }
@@ -1055,13 +1001,6 @@ function streamText(fullText, msgId, chatId, onDone, options = {}) {
   let currentText = hasSegment && append ? '' : prefix;
   let wordIdx = 0;
   const baseDelay = 18;
-  let workingDropdownShown = false;
-
-  function showWorkingOnceAfterTools() {
-    if (workingDropdownShown) return;
-    if (!ensureWorkingDropdownAfterTools(msgId, msgInState)) return;
-    workingDropdownShown = true;
-  }
 
   function finishStream() {
     contentEl.classList.remove('is-streaming');
@@ -1097,8 +1036,6 @@ function streamText(fullText, msgId, chatId, onDone, options = {}) {
         ? part1Text + separator + currentText
         : currentText;
     }
-
-    showWorkingOnceAfterTools();
 
     if (!state.userHasScrolledUp) {
       scrollToEnd(false);

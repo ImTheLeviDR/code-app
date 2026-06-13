@@ -68,8 +68,6 @@ body.physics-motion .search-overlay,
 body.physics-motion .search-modal,
 body.physics-motion .settings-screen,
 body.physics-motion .tool-activity-line,
-body.physics-motion .tool-working,
-body.physics-motion .tool-working-item,
 body.physics-motion .toast {
   animation: none !important;
 }
@@ -375,11 +373,6 @@ textarea {
   max-height: none;
 }
 
-body.physics-motion .project-header.expanded .project-expand-icon,
-body.physics-motion .tool-working.expanded .tool-working-chevron {
-  transform: none;
-}
-
 .chat-item {
   display: flex;
   align-items: center;
@@ -460,10 +453,13 @@ body.physics-motion .tool-working.expanded .tool-working-chevron {
   gap: 8px;
   padding: 6px 12px;
   border-radius: 0;
+  border-left: 2px solid transparent;
   font-size: 12px;
   color: var(--text-secondary);
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
   flex: 1;
+  width: 100%;
+  text-align: left;
 }
 
 .footer-btn:hover {
@@ -1212,89 +1208,38 @@ body.physics-motion .tool-working.expanded .tool-working-chevron {
   color: var(--text-muted);
 }
 
+.tool-file-edit-line {
+  gap: 0.35em;
+}
+
+.tool-activity-verb {
+  color: var(--text-secondary);
+}
+
+.tool-activity-file {
+  color: var(--text-muted);
+}
+
+.tool-edit-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+
+.tool-edit-stat-add {
+  color: var(--success);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-edit-stat-del {
+  color: #e06c75;
+  font-variant-numeric: tabular-nums;
+}
+
 @keyframes tool-text-shimmer {
   0%   { background-position: 100% center; }
   100% { background-position: -100% center; }
 }
-
-/* Collapsed "Working" summary after tools finish */
-.tool-working {
-  margin: 2px 0 4px;
-  border-radius: var(--radius-sm);
-}
-
-.tool-working-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 8px 4px 6px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--text-muted);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: color var(--transition-fast), background var(--transition-fast);
-}
-
-.tool-working-trigger:hover {
-  color: var(--text-secondary);
-  background: var(--bg-hover);
-}
-
-.tool-working-label {
-  font-weight: 500;
-  color: var(--accent);
-}
-
-.tool-working-count {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.tool-working-chevron {
-  color: var(--text-muted);
-  transition: transform var(--transition-fast);
-  flex-shrink: 0;
-}
-
-.tool-working.expanded .tool-working-chevron {
-  transform: rotate(180deg);
-}
-
-.tool-working-panel {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows var(--transition-normal);
-}
-
-.tool-working.expanded .tool-working-panel {
-  grid-template-rows: 1fr;
-}
-
-.tool-working-items {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 0 2px 6px;
-  overflow: hidden;
-  min-height: 0;
-}
-
-.tool-working-item {
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-muted);
-  padding: 2px 0;
-  animation: fade-in 0.2s ease;
-}
-
-.tool-working-item::before {
-  content: '·';
-  margin-right: 6px;
-  color: var(--text-muted);
-}
-
 
 @keyframes fade-in {
   from { opacity: 0; }

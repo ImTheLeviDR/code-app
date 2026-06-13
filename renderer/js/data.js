@@ -228,9 +228,18 @@ const CHAT_MESSAGES = {
           result: 'const token = req.headers.authorization;\nconst payload = jwt.verify(token, process.env.JWT_SECRET);',
           status: 'complete',
         },
+        {
+          id: 'tc15',
+          name: 'edit_file',
+          args: { path: 'src/middleware/auth.ts' },
+          additions: 3,
+          deletions: 2,
+          result: 'Applied fix',
+          status: 'complete',
+        },
       ],
       content:
-        "JWT middleware usually validates the `Authorization` header, decodes the token, and attaches the user to `req`. The typical failure modes are clock skew, wrong secret, or reading from the wrong header.\n\nI'll search the repo for how your app wires this up.\n\nFound it in `src/middleware/auth.ts`. The middleware reads `req.headers.authorization` but never strips the `Bearer ` prefix:\n\n```typescript\nconst token = req.headers.authorization;\nconst payload = jwt.verify(token, process.env.JWT_SECRET);\n```\n\n**Fix:**\n```typescript\nconst header = req.headers.authorization;\nif (!header?.startsWith('Bearer ')) return res.status(401).end();\nconst token = header.slice(7);\nconst payload = jwt.verify(token, process.env.JWT_SECRET);\n```",
+        "JWT middleware usually validates the `Authorization` header, decodes the token, and attaches the user to `req`. The typical failure modes are clock skew, wrong secret, or reading from the wrong header.\n\nI'll search the repo for how your app wires this up.\n\nFound it in `src/middleware/auth.ts`. The middleware reads `req.headers.authorization` but never strips the `Bearer ` prefix — I've patched it to parse the header correctly. That matches how the login route signs tokens in `src/routes/auth.ts`.",
     },
   ],
 
@@ -284,11 +293,13 @@ const CHAT_MESSAGES = {
           id: 'tc7',
           name: 'write_file',
           args: { path: 'src/styles/globals.css' },
+          additions: 48,
+          deletions: 12,
           result: 'Written 48 lines',
           status: 'complete',
         },
       ],
-      content: "I've redesigned the color system with a dark-first approach. Here's what changed:\n\n```css\n:root {\n  /* Dark mode (default) */\n  --bg-base:    #0a0a0a;\n  --bg-surface: #111111;\n  --bg-elevated: #1a1a1a;\n  \n  --text-primary:   #f0f0f0;\n  --text-secondary: #888;\n  --text-muted:     #555;\n  \n  --accent:   #6366f1;\n  --accent-2: #8b5cf6;\n  --border:   #222;\n}\n\n@media (prefers-color-scheme: light) {\n  :root {\n    --bg-base:    #fafafa;\n    --bg-surface: #ffffff;\n    --text-primary: #111;\n    /* ... */\n  }\n}\n```\n\nThis approach means dark mode is the baseline, with light mode as an override. Users who prefer light mode still get it automatically via `prefers-color-scheme`.",
+      content: "I've redesigned the color system with a dark-first approach — dark mode is the baseline, with light mode as a `prefers-color-scheme` override. Users who prefer light mode still get it automatically.",
     },
   ],
 
@@ -320,11 +331,13 @@ const CHAT_MESSAGES = {
           id: 'tc10',
           name: 'edit_file',
           args: { path: 'SearchProvider.kt', line: 84 },
+          additions: 1,
+          deletions: 1,
           result: 'Applied fix',
           status: 'complete',
         },
       ],
-      content: "Found it! The bug is in `SearchProvider.kt`, the base URL already ends with `/` and you're prepending another `/`.\n\n**Before:**\n```kotlin\nval searchUrl = baseUrl + \"/\" + query.encodeUrl()\n// → https://google.com//search?q=hello  ❌\n```\n\n**After:**\n```kotlin\nval searchUrl = baseUrl.trimEnd('/') + \"/\" + query.encodeUrl()\n// → https://google.com/search?q=hello  ✓\n```\n\nI've applied the fix. The `trimEnd('/')` call normalizes the base URL before concatenation so it works correctly regardless of whether the stored URL has a trailing slash.",
+      content: "Found it! The bug is in `SearchProvider.kt`, the base URL already ends with `/` and you're prepending another `/`.\n\nI've applied the fix. The `trimEnd('/')` call normalizes the base URL before concatenation so it works correctly regardless of whether the stored URL has a trailing slash.",
     },
   ],
 
@@ -382,7 +395,17 @@ const AI_RESPONSE_TEMPLATES = [
         },
         {
           type: 'stream',
-          text: "Only in `handler.ts`. Here's the fix:\n\n```typescript\n// Before (buggy)\nfunction handleRequest(req: Request) {\n  const data = fetchData(); // missing await!\n  return processData(data);\n}\n\n// After (fixed)\nasync function handleRequest(req: Request) {\n  const data = await fetchData();\n  return processData(data);\n}\n```\n\nI also noticed you're not handling the rejection case. Adding a try/catch will prevent unhandled promise rejections from crashing the process.",
+          text: "Only in `handler.ts`. Here's the fix:",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'edit_file', args: { path: 'src/handler.ts' }, additions: 2, deletions: 3, duration: 1100 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: "I also noticed you're not handling the rejection case. Adding a try/catch will prevent unhandled promise rejections from crashing the process.",
         },
       ],
     },
@@ -394,8 +417,8 @@ const AI_RESPONSE_TEMPLATES = [
         {
           type: 'tools',
           toolCalls: [
-            { name: 'create_file', args: { path: 'src/components/Component.tsx' }, duration: 1200 },
-            { name: 'write_file', args: { path: 'src/components/Component.tsx' }, duration: 2000 },
+            { name: 'create_file', args: { path: 'src/components/Component.tsx' }, additions: 42, duration: 1200 },
+            { name: 'write_file', args: { path: 'src/components/Component.tsx' }, additions: 42, duration: 2000 },
           ],
         },
         {
@@ -405,12 +428,12 @@ const AI_RESPONSE_TEMPLATES = [
         {
           type: 'tools',
           toolCalls: [
-            { name: 'edit_file', args: { path: 'src/index.ts' }, duration: 900 },
+            { name: 'edit_file', args: { path: 'src/index.ts' }, additions: 1, deletions: 0, duration: 900 },
           ],
         },
         {
           type: 'stream',
-          text: "Done! Here's what was generated:\n\n```typescript\nexport interface ComponentProps {\n  title: string;\n  description?: string;\n  onAction: () => void;\n  variant?: 'primary' | 'secondary' | 'ghost';\n}\n\nexport const Component: React.FC<ComponentProps> = ({\n  title,\n  description,\n  onAction,\n  variant = 'primary',\n}) => {\n  return (\n    <div className={`component component--${variant}`}>\n      <h2>{title}</h2>\n      {description && <p>{description}</p>}\n      <button onClick={onAction}>Action</button>\n    </div>\n  );\n};\n```\n\nThe component is exported from `index.ts` and has full TypeScript types.",
+          text: "Done! The component is exported from `index.ts` and has full TypeScript types.",
         },
       ],
     },
@@ -433,12 +456,12 @@ const AI_RESPONSE_TEMPLATES = [
         {
           type: 'tools',
           toolCalls: [
-            { name: 'edit_file', args: { path: 'src/hooks/useDataFetching.ts' }, duration: 2200 },
+            { name: 'edit_file', args: { path: 'src/hooks/useDataFetching.ts' }, additions: 18, deletions: 35, duration: 2200 },
           ],
         },
         {
           type: 'stream',
-          text: "Refactoring complete:\n\n1. **Extracted shared logic** into a `useDataFetching` hook, eliminates 3 duplicate implementations\n2. **Renamed** `getData` → `fetchUserProfile` for clarity\n3. **Simplified** the conditional chain using early returns\n4. **Removed** 2 unused imports\n\nBefore: 87 lines | After: **52 lines** (-40%)\n\nAll 14 tests still pass.",
+          text: "Refactoring complete:\n\n1. **Extracted shared logic** into a `useDataFetching` hook, eliminates 3 duplicate implementations\n2. **Renamed** `getData` → `fetchUserProfile` for clarity\n3. **Simplified** the conditional chain using early returns\n4. **Removed** 2 unused imports\n\nAll 14 tests still pass.",
         },
       ],
     },
@@ -477,13 +500,13 @@ const AI_RESPONSE_TEMPLATES = [
         {
           type: 'tools',
           toolCalls: [
-            { name: 'create_file', args: { path: 'src/components/SignIn.test.tsx' }, duration: 900 },
-            { name: 'write_file', args: { path: 'src/components/SignIn.test.tsx' }, duration: 1700 },
+            { name: 'create_file', args: { path: 'src/components/SignIn.test.tsx' }, additions: 64, duration: 900 },
+            { name: 'write_file', args: { path: 'src/components/SignIn.test.tsx' }, additions: 64, duration: 1700 },
           ],
         },
         {
           type: 'stream',
-          text: "Done. Here's the test suite:\n\n```typescript\ndescribe('UserAuth', () => {\n  it('signs in with valid credentials', async () => {\n    const { getByRole, user } = render(<SignIn />);\n    await user.type(getByRole('textbox', { name: /email/i }), 'user@test.com');\n    await user.type(getByRole('textbox', { name: /password/i }), 'password123');\n    await user.click(getByRole('button', { name: /sign in/i }));\n    expect(mockSignIn).toHaveBeenCalledWith({\n      email: 'user@test.com',\n      password: 'password123',\n    });\n  });\n\n  it('shows error on invalid credentials', async () => {\n    mockSignIn.mockRejectedValueOnce(new Error('Invalid credentials'));\n    expect(screen.getByText(/invalid credentials/i)).toBeInTheDocument();\n  });\n});\n```\n\n**Coverage:** 8 test cases, branches: 94%, lines: 98%",
+          text: "Done. **Coverage:** 8 test cases, branches: 94%, lines: 98%",
         },
       ],
     },
@@ -491,27 +514,70 @@ const AI_RESPONSE_TEMPLATES = [
   {
     match: /verify|double-check|confirm (this|the|my)|check (my|the) (work|implementation|code)/i,
     response: {
-      textBefore:
-        "Based on the symptoms, this is most likely a missing `await` on an async database call. The handler returns before the query finishes, so the response goes out with empty data.\n\nLet me verify that in your codebase before suggesting a concrete patch.",
-      toolCalls: [
-        { name: 'read_file', args: { path: 'src/api/users.ts' }, duration: 1500 },
-        { name: 'search_codebase', args: { query: 'getUserById' }, duration: 1300 },
+      phases: [
+        {
+          type: 'stream',
+          text:
+            "Based on the symptoms, this is most likely a missing `await` on an async database call. The handler returns before the query finishes, so the response goes out with empty data.\n\nLet me verify that in your codebase before suggesting a concrete patch.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'read_file', args: { path: 'src/api/users.ts' }, duration: 1500 },
+            { name: 'search_codebase', args: { query: 'getUserById' }, duration: 1300 },
+          ],
+        },
+        {
+          type: 'stream',
+          text:
+            'Confirmed — `getUserById` is called without `await` on line 42 of `src/api/users.ts`. I also found the same pattern in `src/api/posts.ts` (line 28).',
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'edit_file', args: { path: 'src/api/users.ts' }, additions: 1, deletions: 1, duration: 900 },
+            { name: 'edit_file', args: { path: 'src/api/posts.ts' }, additions: 1, deletions: 1, duration: 900 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: 'Worth fixing both to avoid the same bug elsewhere — patches applied.',
+        },
       ],
-      text:
-        "Confirmed — `getUserById` is called without `await` on line 42 of `src/api/users.ts`:\n\n```typescript\n// Before\nconst user = getUserById(id);\nreturn res.json(user);\n\n// After\nconst user = await getUserById(id);\nreturn res.json(user);\n```\n\nI also found the same pattern in `src/api/posts.ts` (line 28). Worth fixing both to avoid the same bug elsewhere.",
     },
   },
   {
     match: /look up in (the )?(code|repo)|search the (code|repo) for/i,
     response: {
-      textBefore:
-        "JWT middleware usually validates the `Authorization` header, decodes the token, and attaches the user to `req`. The typical failure modes are clock skew, wrong secret, or reading from the wrong header.\n\nI'll search the repo for how your app wires this up.",
-      toolCalls: [
-        { name: 'search_codebase', args: { query: 'jwt middleware verify' }, duration: 1400 },
-        { name: 'read_file', args: { path: 'src/middleware/auth.ts' }, duration: 1600 },
+      phases: [
+        {
+          type: 'stream',
+          text:
+            "JWT middleware usually validates the `Authorization` header, decodes the token, and attaches the user to `req`. The typical failure modes are clock skew, wrong secret, or reading from the wrong header.\n\nI'll search the repo for how your app wires this up.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'search_codebase', args: { query: 'jwt middleware verify' }, duration: 1400 },
+            { name: 'read_file', args: { path: 'src/middleware/auth.ts' }, duration: 1600 },
+          ],
+        },
+        {
+          type: 'stream',
+          text:
+            "Found it in `src/middleware/auth.ts`. The middleware reads `req.headers.authorization` but never strips the `Bearer ` prefix.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'edit_file', args: { path: 'src/middleware/auth.ts' }, additions: 3, deletions: 2, duration: 1100 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: 'That matches how the login route signs tokens in `src/routes/auth.ts`.',
+        },
       ],
-      text:
-        "Found it in `src/middleware/auth.ts`. The middleware reads `req.headers.authorization` but never strips the `Bearer ` prefix:\n\n```typescript\nconst token = req.headers.authorization;\nconst payload = jwt.verify(token, process.env.JWT_SECRET);\n```\n\n**Fix:**\n```typescript\nconst header = req.headers.authorization;\nif (!header?.startsWith('Bearer ')) return res.status(401).end();\nconst token = header.slice(7);\nconst payload = jwt.verify(token, process.env.JWT_SECRET);\n```\n\nThat matches how the login route signs tokens in `src/routes/auth.ts`.",
     },
   },
   {
@@ -533,12 +599,12 @@ const AI_RESPONSE_TEMPLATES = [
           type: 'tools',
           toolCalls: [
             { name: 'search_codebase', args: { query: 'checkInventory' }, duration: 1200 },
-            { name: 'edit_file', args: { path: 'src/services/OrderService.ts' }, duration: 1400 },
+            { name: 'edit_file', args: { path: 'src/services/OrderService.ts' }, additions: 1, deletions: 1, duration: 1400 },
           ],
         },
         {
           type: 'stream',
-          text: "Fixed. `checkInventory` is only called in `OrderService.create()`, so I added `await` there. Orders will now correctly block when inventory runs out.\n\n```typescript\n// before\ncheckInventory(items);\n\n// after\nawait checkInventory(items);\n```",
+          text: 'Fixed. `checkInventory` is only called in `OrderService.create()`, so I added `await` there. Orders will now correctly block when inventory runs out.',
         },
       ],
     },
@@ -546,14 +612,36 @@ const AI_RESPONSE_TEMPLATES = [
   {
     match: /suggest.*then (check|search|verify)|outline.*then (read|check|look)/i,
     response: {
-      textBefore:
-        "I'd start by adding a typed config module instead of reading `process.env` inline. That gives you validation at startup and clearer errors when a variable is missing.\n\nChecking how env vars are currently loaded…",
-      toolCalls: [
-        { name: 'read_file', args: { path: 'src/config.ts' }, duration: 1200 },
-        { name: 'list_directory', args: { path: 'src/' }, duration: 900 },
+      phases: [
+        {
+          type: 'stream',
+          text:
+            "I'd start by adding a typed config module instead of reading `process.env` inline. That gives you validation at startup and clearer errors when a variable is missing.\n\nChecking how env vars are currently loaded…",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'read_file', args: { path: 'src/config.ts' }, duration: 1200 },
+            { name: 'list_directory', args: { path: 'src/' }, duration: 900 },
+          ],
+        },
+        {
+          type: 'stream',
+          text:
+            "There's no central config yet — `DATABASE_URL` and `JWT_SECRET` are read in three different files.",
+        },
+        {
+          type: 'tools',
+          toolCalls: [
+            { name: 'create_file', args: { path: 'src/config.ts' }, additions: 12, duration: 900 },
+            { name: 'write_file', args: { path: 'src/config.ts' }, additions: 12, duration: 1400 },
+          ],
+        },
+        {
+          type: 'stream',
+          text: 'Import `config` everywhere instead of `process.env` for type-safe access.',
+        },
       ],
-      text:
-        "There's no central config yet — `DATABASE_URL` and `JWT_SECRET` are read in three different files. Here's a minimal `src/config.ts` you can add:\n\n```typescript\nimport { z } from 'zod';\n\nconst env = z.object({\n  DATABASE_URL: z.string().url(),\n  JWT_SECRET: z.string().min(32),\n  PORT: z.coerce.number().default(3000),\n}).parse(process.env);\n\nexport const config = env;\n```\n\nImport `config` everywhere instead of `process.env` for type-safe access.",
     },
   },
   {
