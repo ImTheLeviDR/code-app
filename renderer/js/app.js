@@ -193,6 +193,7 @@ let openModelDropdown = null;
 let modelDropdownClickBound = false;
 let modelsLoading = typeof Backend !== 'undefined' && Backend.isAvailable();
 const aiRuns = new Map();
+const questionRequests = new Map();
 
 /* ---- DOM refs ---- */
 const $ = (id) => document.getElementById(id);
@@ -1083,7 +1084,7 @@ function getToolActivityLabel(tc) {
         ? `Loading skill "${truncateLabel(args.name, 32)}"...`
         : 'Loading skill...';
     case 'question':
-      return 'Asking a question...';
+      return 'Waiting for your answer...';
     case 'todowrite':
       return 'Updating task list...';
     case 'search_codebase': {
@@ -1458,6 +1459,7 @@ async function runAIResponse(chatId, userMessage) {
     toolCalls: new Map(),
     content: '',
     started: false,
+    sessionId: null,
   });
 
   const modelId = state.selectedModelId;
@@ -1567,8 +1569,19 @@ function upsertToolCall(run, toolCall) {
   msg.toolCalls = Array.from(run.toolCalls.values());
 
   if (toolCall.status === 'pending' || toolCall.status === 'running') {
-    showToolActivityLine(toolCall, run.assistantMsgId);
+    if (toolCall.name === 'question') {
+      syncInlineQuestion(run.assistantMsgId, {
+        chatId: run.chatId,
+        sessionId: run.sessionId,
+        toolCallId: toolCall.id,
+        questions: toolCall.args?.questions,
+        requestId: null,
+      });
+    } else {
+      showToolActivityLine(toolCall, run.assistantMsgId);
+    }
   } else if (toolCall.status === 'complete') {
+    if (toolCall.name === 'question') removeInlineQuestion(run.assistantMsgId);
     completeToolActivityLine(toolCall.id, run.assistantMsgId);
   }
 }
@@ -1581,7 +1594,7 @@ function finalizeToolCallsUI(msgId, toolCalls) {
   }
 }
 
-function applyLateToolUpdate(chatId, toolCall) {
+function applyLateToolUpdate(chatId, toolCall, sessionId = null) {
   if (!toolCall?.id) return;
   const msgs = state.chatMessages[chatId];
   if (!msgs?.length) return;
@@ -1595,8 +1608,19 @@ function applyLateToolUpdate(chatId, toolCall) {
   else msg.toolCalls.push(toolCall);
 
   if (toolCall.status === 'pending' || toolCall.status === 'running') {
-    showToolActivityLine(toolCall, msg.id);
+    if (toolCall.name === 'question') {
+      syncInlineQuestion(msg.id, {
+        chatId,
+        sessionId,
+        toolCallId: toolCall.id,
+        questions: toolCall.args?.questions,
+        requestId: null,
+      });
+    } else {
+      showToolActivityLine(toolCall, msg.id);
+    }
   } else if (toolCall.status === 'complete') {
+    if (toolCall.name === 'question') removeInlineQuestion(msg.id);
     completeToolActivityLine(toolCall.id, msg.id);
   }
   saveChatState();
@@ -1664,8 +1688,21 @@ function finishAIWithError(chatId, message) {
 function handleBackendEvent(event) {
   if (!event?.chatId) return;
 
-  if (event.type === 'tool-update' && !aiRuns.has(event.chatId)) {
-    applyLateToolUpdate(event.chatId, event.toolCall);
+  if (event.type === 'question-request') {
+    const msgId = resolveQuestionMsgId(event);
+    if (msgId) syncInlineQuestion(msgId, event);
+    return;
+  }
+
+  if (event.type === 'tool-update') {
+    if (!aiRuns.has(event.chatId)) {
+      applyLateToolUpdate(event.chatId, event.toolCall, event.sessionId);
+    } else {
+      const run = aiRuns.get(event.chatId);
+      if (event.sessionId) run.sessionId = event.sessionId;
+      ensureAssistantVisible(run);
+      upsertToolCall(run, event.toolCall);
+    }
     return;
   }
 
@@ -1680,10 +1717,6 @@ function handleBackendEvent(event) {
     case 'text-full':
       ensureAssistantVisible(run);
       appendStreamFull(run, event.text);
-      break;
-    case 'tool-update':
-      ensureAssistantVisible(run);
-      upsertToolCall(run, event.toolCall);
       break;
     case 'assistant-message':
       if (event.error) {
@@ -2720,6 +2753,39 @@ function bindEvents() {
   dom.messagesList.addEventListener('click', (e) => {
     const line = e.target.closest('.tool-edit-clickable');
     if (line) openEditDiffFromLine(line);
+
+    const option = e.target.closest('.question-option');
+    if (option) {
+      const card = option.closest('.question-inline');
+      if (card) toggleQuestionOption(option, card.dataset.msgId);
+      return;
+    }
+
+    const submitBtn = e.target.closest('.question-submit-btn');
+    if (submitBtn) {
+      const card = submitBtn.closest('.question-inline');
+      if (card) void submitInlineQuestion(card.dataset.msgId);
+      return;
+    }
+
+    const skipBtn = e.target.closest('.question-skip-btn');
+    if (skipBtn) {
+      const card = skipBtn.closest('.question-inline');
+      if (card) void dismissInlineQuestion(card.dataset.msgId);
+    }
+  });
+
+  dom.messagesList.addEventListener('input', (e) => {
+    const input = e.target.closest('.question-custom-input');
+    if (!input) return;
+    const card = input.closest('.question-inline');
+    if (!card) return;
+    const req = questionRequests.get(card.dataset.msgId);
+    if (!req) return;
+    const qIdx = Number(input.dataset.qidx);
+    if (Number.isNaN(qIdx)) return;
+    req.customAnswers[qIdx] = input.value;
+    updateQuestionSubmitState(card.dataset.msgId);
   });
 
   dom.messagesList.addEventListener('keydown', (e) => {
@@ -2806,6 +2872,301 @@ function bindEvents() {
   });
 
   syncSendButtonState();
+}
+
+/* ============================================================
+   QUESTION TOOL UI (inline in message)
+   ============================================================ */
+
+function normalizeQuestionList(questions) {
+  if (!Array.isArray(questions)) return [];
+  return questions
+    .map((q) => {
+      if (!q || typeof q !== 'object') return null;
+      const prompt = q.question || q.prompt || q.text || '';
+      const options = Array.isArray(q.options) ? q.options : [];
+      if (!prompt && !options.length) return null;
+      return {
+        header: q.header || '',
+        question: prompt,
+        options: options.map((opt) => ({
+          label: opt?.label || String(opt),
+          description: opt?.description || '',
+        })),
+        multiple: Boolean(q.multiple || q.allow_multiple),
+        custom: q.custom !== false,
+      };
+    })
+    .filter(Boolean);
+}
+
+function resolveQuestionMsgId(event) {
+  const run = aiRuns.get(event.chatId);
+  if (run?.assistantMsgId) return run.assistantMsgId;
+
+  const msgs = state.chatMessages[event.chatId] || [];
+  if (event.toolCallId) {
+    const match = [...msgs].reverse().find(
+      (m) => m.role === 'assistant'
+        && m.toolCalls?.some((tc) => tc.id === event.toolCallId),
+    );
+    if (match) return match.id;
+  }
+
+  const latest = [...msgs].reverse().find((m) => m.role === 'assistant');
+  return latest?.id || null;
+}
+
+function syncInlineQuestion(msgId, event) {
+  const questions = normalizeQuestionList(event.questions);
+  if (!questions.length) return;
+
+  let req = questionRequests.get(msgId);
+  if (!req) {
+    req = {
+      requestId: event.requestId || null,
+      toolCallId: event.toolCallId || null,
+      chatId: event.chatId,
+      sessionId: event.sessionId || null,
+      questions,
+      selections: questions.map(() => new Set()),
+      customAnswers: questions.map(() => ''),
+      submitting: false,
+    };
+    questionRequests.set(msgId, req);
+  } else {
+    if (event.requestId) req.requestId = event.requestId;
+    if (event.sessionId) req.sessionId = event.sessionId;
+    if (event.toolCallId) req.toolCallId = event.toolCallId;
+    if (!req.questions.length) req.questions = questions;
+  }
+
+  mountInlineQuestionUI(msgId);
+
+  if (!req.requestId && req.sessionId) {
+    void attachInlineQuestionRequestId(msgId, req.sessionId);
+  }
+
+  if (!state.userHasScrolledUp) scrollToEnd(false);
+}
+
+function getInlineQuestionHost(msgId) {
+  const body = document.querySelector(`#msg-${msgId} .assistant-body`);
+  if (!body) return null;
+
+  let card = body.querySelector('.question-inline');
+  if (!card) {
+    card = document.createElement('div');
+    card.className = 'question-inline';
+    card.dataset.msgId = msgId;
+    const content = body.querySelector('.md-content');
+    if (content) body.insertBefore(card, content);
+    else body.appendChild(card);
+  }
+  return card;
+}
+
+function hideQuestionToolLine(msgId) {
+  const req = questionRequests.get(msgId);
+  if (!req?.toolCallId) return;
+  document.getElementById(`tc-${req.toolCallId}`)?.remove();
+}
+
+function mountInlineQuestionUI(msgId) {
+  const req = questionRequests.get(msgId);
+  if (!req) return;
+
+  const card = getInlineQuestionHost(msgId);
+  if (!card) return;
+
+  hideQuestionToolLine(msgId);
+  card.innerHTML = renderInlineQuestionHTML(req, msgId);
+  updateQuestionSubmitState(msgId);
+  Physics.messageIn(card, { soft: true });
+}
+
+function renderInlineQuestionHTML(req, msgId) {
+  const blocks = req.questions.map((q, qIdx) => {
+    const allowMultiple = Boolean(q.multiple);
+    const allowCustom = q.custom !== false;
+    const selected = req.selections[qIdx] || new Set();
+
+    const options = (q.options || []).map((opt, optIdx) => {
+      const isSelected = selected.has(opt.label);
+      return `
+        <button
+          type="button"
+          class="question-option${isSelected ? ' is-selected' : ''}"
+          data-qidx="${qIdx}"
+          data-optidx="${optIdx}"
+          aria-pressed="${isSelected ? 'true' : 'false'}"
+        >
+          <span class="question-option-marker" aria-hidden="true"></span>
+          <span class="question-option-content">
+            <span class="question-option-label">${escapeHtml(opt.label)}</span>
+            ${opt.description ? `<span class="question-option-desc">${escapeHtml(opt.description)}</span>` : ''}
+          </span>
+        </button>
+      `;
+    }).join('');
+
+    const customField = allowCustom ? `
+      <input
+        type="text"
+        class="question-custom-input"
+        data-qidx="${qIdx}"
+        value="${escapeHtml(req.customAnswers[qIdx] || '')}"
+        placeholder="Other…"
+        aria-label="Custom answer for question ${qIdx + 1}"
+      >
+    ` : '';
+
+    return `
+      <div class="question-block" data-qidx="${qIdx}">
+        ${q.header ? `<div class="question-block-header">${escapeHtml(q.header)}</div>` : ''}
+        <p class="question-prompt">${escapeHtml(q.question)}</p>
+        <div class="question-options${allowMultiple ? ' is-multiple' : ''}" data-multiple="${allowMultiple ? '1' : '0'}">
+          ${options}
+        </div>
+        ${customField}
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="question-inline-body">${blocks}</div>
+    <div class="question-inline-footer">
+      <button type="button" class="question-skip-btn">Dismiss</button>
+      <button type="button" class="question-submit-btn" disabled>Continue</button>
+    </div>
+  `;
+}
+
+async function attachInlineQuestionRequestId(msgId, sessionId) {
+  const req = questionRequests.get(msgId);
+  if (!req || req.requestId || !sessionId) return;
+  if (typeof Backend === 'undefined' || !Backend.isAvailable()) return;
+
+  const requestId = await Backend.resolveQuestionRequestId(sessionId);
+  if (!requestId) return;
+  req.requestId = requestId;
+  updateQuestionSubmitState(msgId);
+}
+
+function toggleQuestionOption(optionEl, msgId) {
+  const req = questionRequests.get(msgId);
+  const card = getInlineQuestionHost(msgId);
+  if (!req || !card) return;
+
+  const qIdx = Number(optionEl.dataset.qidx);
+  const optIdx = Number(optionEl.dataset.optidx);
+  if (Number.isNaN(qIdx) || Number.isNaN(optIdx)) return;
+
+  const label = req.questions[qIdx]?.options?.[optIdx]?.label;
+  if (!label) return;
+
+  const block = card.querySelector(`.question-block[data-qidx="${qIdx}"]`);
+  const isMultiple = block?.querySelector('.question-options')?.dataset.multiple === '1';
+  const selected = req.selections[qIdx];
+
+  if (isMultiple) {
+    if (selected.has(label)) selected.delete(label);
+    else selected.add(label);
+  } else {
+    selected.clear();
+    selected.add(label);
+  }
+
+  block?.querySelectorAll('.question-option').forEach((btn) => {
+    const btnOptIdx = Number(btn.dataset.optidx);
+    const btnLabel = req.questions[qIdx]?.options?.[btnOptIdx]?.label;
+    const isSelected = btnLabel && selected.has(btnLabel);
+    btn.classList.toggle('is-selected', isSelected);
+    btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+  });
+
+  updateQuestionSubmitState(msgId);
+}
+
+function buildQuestionAnswersFor(msgId) {
+  const req = questionRequests.get(msgId);
+  if (!req) return [];
+  return req.questions.map((_, qIdx) => {
+    const labels = Array.from(req.selections[qIdx]);
+    const custom = req.customAnswers[qIdx]?.trim();
+    if (custom) labels.push(custom);
+    return labels;
+  });
+}
+
+function isInlineQuestionComplete(msgId) {
+  const answers = buildQuestionAnswersFor(msgId);
+  return answers.length > 0 && answers.every((answer) => answer.length > 0);
+}
+
+function updateQuestionSubmitState(msgId) {
+  const req = questionRequests.get(msgId);
+  const card = getInlineQuestionHost(msgId);
+  if (!req || !card) return;
+  const submitBtn = card.querySelector('.question-submit-btn');
+  if (!submitBtn) return;
+  submitBtn.disabled = !isInlineQuestionComplete(msgId) || req.submitting;
+}
+
+async function submitInlineQuestion(msgId) {
+  const req = questionRequests.get(msgId);
+  if (!req || req.submitting) return;
+  if (!isInlineQuestionComplete(msgId)) return;
+
+  let { requestId, sessionId } = req;
+  const answers = buildQuestionAnswersFor(msgId);
+  req.submitting = true;
+  updateQuestionSubmitState(msgId);
+
+  try {
+    if (typeof Backend === 'undefined' || !Backend.isAvailable()) {
+      throw new Error('Backend unavailable');
+    }
+
+    if (!requestId && sessionId) {
+      requestId = await Backend.resolveQuestionRequestId(sessionId);
+      if (requestId) req.requestId = requestId;
+    }
+    if (!requestId) {
+      throw new Error('Question is still registering. Wait a moment and try again.');
+    }
+
+    const result = await Backend.replyQuestion({ requestId, answers, sessionId });
+    if (!result?.ok) throw new Error(result?.error || 'Failed to submit answers');
+    removeInlineQuestion(msgId);
+  } catch (err) {
+    req.submitting = false;
+    updateQuestionSubmitState(msgId);
+    showToast(err.message || 'Failed to submit answers');
+  }
+}
+
+async function dismissInlineQuestion(msgId) {
+  const req = questionRequests.get(msgId);
+  if (!req) {
+    removeInlineQuestion(msgId);
+    return;
+  }
+
+  const { requestId, sessionId } = req;
+  try {
+    if (typeof Backend !== 'undefined' && Backend.isAvailable()) {
+      await Backend.rejectQuestion({ requestId, sessionId });
+    }
+  } catch (_) {
+    /* reject may fail if already answered */
+  }
+  removeInlineQuestion(msgId);
+}
+
+function removeInlineQuestion(msgId) {
+  questionRequests.delete(msgId);
+  document.querySelector(`#msg-${msgId} .question-inline`)?.remove();
 }
 
 /* ============================================================

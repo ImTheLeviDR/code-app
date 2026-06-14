@@ -68,6 +68,7 @@ body.physics-motion .search-overlay,
 body.physics-motion .search-modal,
 body.physics-motion .diff-overlay,
 body.physics-motion .diff-modal,
+body.physics-motion .question-inline,
 body.physics-motion .settings-screen,
 body.physics-motion .tool-activity-line,
 body.physics-motion .toast {
@@ -2645,6 +2646,190 @@ textarea {
 
 .settings-about-row-value {
   color: var(--text-muted);
+}
+
+/* ============================================================
+   QUESTION TOOL (inline in message)
+   ============================================================ */
+
+.question-inline {
+  width: 40%;
+  max-width: 300px;
+  min-width: 200px;
+  margin: 6px 0 10px;
+  padding: 0 0 0 10px;
+  border-left: 2px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.question-inline-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.question-block + .question-block {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.question-block-header {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.question-prompt {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.question-option:hover {
+  background: var(--bg-hover);
+}
+
+.question-option.is-selected {
+  background: var(--accent-glow2);
+}
+
+.question-option-marker {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--text-secondary);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.question-options.is-multiple .question-option-marker {
+  border-radius: 2px;
+}
+
+.question-option.is-selected .question-option-marker {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.question-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.question-option-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.question-option-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.question-custom-input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 0 5px;
+  border: none;
+  border-bottom: 1px solid var(--border-light);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+}
+
+.question-custom-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.75;
+}
+
+.question-custom-input:focus {
+  border-bottom-color: var(--accent);
+}
+
+.question-inline-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.question-skip-btn {
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.question-skip-btn:hover {
+  color: var(--text-primary);
+}
+
+.question-submit-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.question-submit-btn:not(:disabled) {
+  border-color: rgba(139, 92, 246, 0.35);
+  background: var(--accent-glow2);
+  color: var(--text-primary);
+}
+
+.question-submit-btn:not(:disabled):hover {
+  border-color: rgba(139, 92, 246, 0.5);
+  background: var(--accent-glow);
+}
+
+.question-submit-btn:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
 }
 
 /* ============================================================

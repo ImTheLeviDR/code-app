@@ -112,6 +112,30 @@ function registerBackendHandlers({ getMainWindow, getWorkspace }) {
     if (result?.error) return result;
     return result;
   });
+
+  ipcMain.handle('backend:reply-question', async (_evt, payload) => {
+    const result = await safeCall(getMainWindow, getWorkspace, (mod) => mod.replyQuestion(payload));
+    if (result?.error) return result;
+    return result;
+  });
+
+  ipcMain.handle('backend:reject-question', async (_evt, payload) => {
+    const result = await safeCall(getMainWindow, getWorkspace, (mod) => mod.rejectQuestionRequest(payload));
+    if (result?.error) return result;
+    return result;
+  });
+
+  ipcMain.handle('backend:list-questions', async (_evt, sessionId) => {
+    const result = await safeCall(getMainWindow, getWorkspace, (mod) => mod.listPendingQuestions(sessionId));
+    if (result?.error) return [];
+    return result;
+  });
+
+  ipcMain.handle('backend:resolve-question-id', async (_evt, sessionId) => {
+    const result = await safeCall(getMainWindow, getWorkspace, (mod) => mod.resolveQuestionRequestId(sessionId));
+    if (result?.error) return null;
+    return result;
+  });
 }
 
 async function shutdownBackend() {

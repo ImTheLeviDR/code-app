@@ -70,6 +70,30 @@ const Backend = (() => {
     return window.backendAPI.setWorkspace(folderPath);
   }
 
+  async function replyQuestion(payload) {
+    if (!isAvailable()) throw new Error('Backend unavailable');
+    await ensureReady();
+    return window.backendAPI.replyQuestion(payload);
+  }
+
+  async function rejectQuestion(payload) {
+    if (!isAvailable()) return { ok: false, error: 'Backend unavailable' };
+    await ensureReady();
+    return window.backendAPI.rejectQuestion(payload);
+  }
+
+  async function listQuestions(sessionId) {
+    if (!isAvailable()) return [];
+    await ensureReady();
+    return window.backendAPI.listQuestions(sessionId);
+  }
+
+  async function resolveQuestionRequestId(sessionId) {
+    if (!isAvailable()) return null;
+    await ensureReady();
+    return window.backendAPI.resolveQuestionRequestId(sessionId);
+  }
+
   function onEvent(handler) {
     eventHandlers.add(handler);
     if (!eventUnsubscribe && isAvailable()) {
@@ -90,6 +114,10 @@ const Backend = (() => {
     sendMessage,
     abort,
     setWorkspace,
+    replyQuestion,
+    rejectQuestion,
+    listQuestions,
+    resolveQuestionRequestId,
     onEvent,
   };
 })();

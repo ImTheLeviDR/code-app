@@ -60,6 +60,7 @@ const sessionChats = new Map();
 const activeRuns = new Map();
 const activePolls = new Set();
 const messageRoles = new Map();
+const seenQuestionRequests = new Set();
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -139,6 +140,17 @@ async function pollSessionResponse(chatId, sessionId) {
                 messageId: part.messageID,
                 toolCall: mapped,
               });
+              if (
+                part.tool === 'question'
+                && (mapped.status === 'pending' || mapped.status === 'running')
+              ) {
+                const input = part.state?.input || {};
+                void syncQuestionRequests(sessionId, {
+                  chatId,
+                  questions: input.questions || mapped.args?.questions,
+                  toolCallId: part.id,
+                });
+              }
             }
           }
         }
@@ -416,6 +428,7 @@ function getChatIdForSession(sessionId) {
 
 async function approvePermission(permission) {
   if (!client || !permission?.id || !permission?.sessionID) return;
+  if (permission.type === 'question') return;
   try {
     await client.postSessionIdPermissionsPermissionId({
       path: {
@@ -426,6 +439,139 @@ async function approvePermission(permission) {
     });
   } catch (_) {
     /* permission may have expired */
+  }
+}
+
+function questionQueryString() {
+  if (!activeWorkspace) return '';
+  return `?directory=${encodeURIComponent(activeWorkspace)}`;
+}
+
+async function fetchQuestionList() {
+  if (!server?.url) return [];
+  try {
+    const res = await fetch(`${server.url}/question${questionQueryString()}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return [];
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) return [];
+    const data = await res.json();
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.data)) return data.data;
+    return [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function emitQuestionRequest(chatId, sessionId, request, toolCallId = null) {
+  if (!emitEvent) return;
+  const questions = request?.questions || [];
+  if (!questions.length) return;
+
+  const dedupeKey = request?.id || (toolCallId ? `tool:${toolCallId}` : null);
+  if (dedupeKey && seenQuestionRequests.has(dedupeKey)) return;
+  if (dedupeKey) seenQuestionRequests.add(dedupeKey);
+
+  emitEvent({
+    type: 'question-request',
+    chatId,
+    sessionId,
+    requestId: request?.id || null,
+    toolCallId,
+    questions,
+    tool: request?.tool || null,
+  });
+}
+
+async function syncQuestionRequests(sessionId, fallback = null) {
+  if (!sessionId) return;
+  const chatId = getChatIdForSession(sessionId) || fallback?.chatId;
+  if (!chatId) return;
+
+  const list = await fetchQuestionList();
+  const matches = list.filter((req) => req.sessionID === sessionId);
+  if (matches.length) {
+    for (const req of matches) emitQuestionRequest(chatId, sessionId, req);
+    return;
+  }
+
+  if (fallback?.questions?.length) {
+    emitQuestionRequest(chatId, sessionId, { questions: fallback.questions }, fallback.toolCallId);
+  }
+}
+
+async function replyToQuestion(requestId, answers, sessionId) {
+  if (!server?.url || !requestId) return { ok: false, error: 'Missing request' };
+
+  const body = { answers };
+  const qs = questionQueryString();
+
+  try {
+    const res = await fetch(
+      `${server.url}/question/${encodeURIComponent(requestId)}/reply${qs}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+    if (res.ok) {
+      seenQuestionRequests.delete(requestId);
+      return { ok: true };
+    }
+
+    if (sessionId) {
+      const v2 = await fetch(
+        `${server.url}/api/session/${encodeURIComponent(sessionId)}/question/${encodeURIComponent(requestId)}/reply${qs}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+      if (v2.ok) {
+        seenQuestionRequests.delete(requestId);
+        return { ok: true };
+      }
+    }
+
+    return { ok: false, error: `Reply failed (${res.status})` };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Reply failed' };
+  }
+}
+
+async function rejectQuestion(requestId, sessionId) {
+  if (!server?.url || !requestId) return { ok: false, error: 'Missing request' };
+
+  const qs = questionQueryString();
+
+  try {
+    const res = await fetch(
+      `${server.url}/question/${encodeURIComponent(requestId)}/reject${qs}`,
+      { method: 'POST' },
+    );
+    if (res.ok) {
+      seenQuestionRequests.delete(requestId);
+      return { ok: true };
+    }
+
+    if (sessionId) {
+      const v2 = await fetch(
+        `${server.url}/api/session/${encodeURIComponent(sessionId)}/question/${encodeURIComponent(requestId)}/reject${qs}`,
+        { method: 'POST' },
+      );
+      if (v2.ok) {
+        seenQuestionRequests.delete(requestId);
+        return { ok: true };
+      }
+    }
+
+    return { ok: false, error: `Reject failed (${res.status})` };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Reject failed' };
   }
 }
 
@@ -466,14 +612,46 @@ function handleBusEvent(event) {
 
       if (part.type === 'tool') {
         messageRoles.set(part.messageID, 'assistant');
+        const toolCall = mapToolToFrontend(part);
+        const input = part.state?.input || {};
         emitEvent({
           type: 'tool-update',
           chatId,
           sessionId: part.sessionID,
           messageId: part.messageID,
-          toolCall: mapToolToFrontend(part),
+          toolCall,
         });
+        if (
+          part.tool === 'question'
+          && (toolCall.status === 'pending' || toolCall.status === 'running')
+        ) {
+          const questions = input.questions || toolCall.args?.questions;
+          void syncQuestionRequests(part.sessionID, {
+            chatId,
+            questions,
+            toolCallId: part.id,
+          });
+        }
       }
+      break;
+    }
+
+    case 'question.asked':
+    case 'question.v2.asked': {
+      const request = event.properties;
+      if (!request?.sessionID || !request?.id) break;
+      const chatId = getChatIdForSession(request.sessionID);
+      if (!chatId) break;
+      emitQuestionRequest(chatId, request.sessionID, request);
+      break;
+    }
+
+    case 'question.replied':
+    case 'question.v2.replied':
+    case 'question.rejected':
+    case 'question.v2.rejected': {
+      const requestId = event.properties?.requestID || event.properties?.id;
+      if (requestId) seenQuestionRequests.delete(requestId);
       break;
     }
 
@@ -803,4 +981,31 @@ export async function abortChat(chatId) {
 
 export function isChatRunning(chatId) {
   return activeRuns.has(chatId);
+}
+
+export async function replyQuestion({ requestId, answers, sessionId }) {
+  if (!client) throw new Error('OpenCode server is not running');
+  return replyToQuestion(requestId, answers, sessionId);
+}
+
+export async function rejectQuestionRequest({ requestId, sessionId }) {
+  if (!client) throw new Error('OpenCode server is not running');
+  return rejectQuestion(requestId, sessionId);
+}
+
+export async function listPendingQuestions(sessionId) {
+  if (!client) return [];
+  const list = await fetchQuestionList();
+  if (!sessionId) return list;
+  return list.filter((req) => req.sessionID === sessionId);
+}
+
+export async function resolveQuestionRequestId(sessionId) {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const list = await fetchQuestionList();
+    const match = list.find((req) => req.sessionID === sessionId);
+    if (match?.id) return match.id;
+    await sleep(250);
+  }
+  return null;
 }

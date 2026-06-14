@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('backendAPI', {
   sendMessage: (payload) => ipcRenderer.invoke('backend:send-message', payload),
   abort: (chatId) => ipcRenderer.invoke('backend:abort', chatId),
   setWorkspace: (folderPath) => ipcRenderer.invoke('backend:set-workspace', folderPath),
+  replyQuestion: (payload) => ipcRenderer.invoke('backend:reply-question', payload),
+  rejectQuestion: (payload) => ipcRenderer.invoke('backend:reject-question', payload),
+  listQuestions: (sessionId) => ipcRenderer.invoke('backend:list-questions', sessionId),
+  resolveQuestionRequestId: (sessionId) => ipcRenderer.invoke('backend:resolve-question-id', sessionId),
   onEvent: (cb) => {
     const listener = (_, event) => cb(event);
     ipcRenderer.on('backend:event', listener);
