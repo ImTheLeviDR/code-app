@@ -1214,12 +1214,10 @@ function renderFileMutationLineHTML(tc) {
 
   if (kind === 'edit') {
     if (file && (adds > 0 || dels > 0)) {
-      let html = '<span class="tool-activity-text">Edited </span>';
+      let html = `<span class="tool-activity-text">Edited ${escapeHtml(file)} </span>`;
       if (adds > 0) html += `<span class="tool-edit-stat tool-edit-stat-add">+${adds}</span>`;
       if (adds > 0 && dels > 0) html += '<span class="tool-activity-text"> </span>';
       if (dels > 0) html += `<span class="tool-edit-stat tool-edit-stat-del">-${dels}</span>`;
-      const lineWord = adds + dels === 1 ? 'line' : 'lines';
-      html += `<span class="tool-activity-text"> ${lineWord} in ${escapeHtml(file)}</span>`;
       return html;
     }
     const text = file ? `Edited ${file}` : 'Edited file';
@@ -1321,8 +1319,13 @@ function getInlineThinkingContainer(msgId) {
   return thinking;
 }
 
+function hasRunningToolCalls(run) {
+  return Array.from(run?.toolCalls?.values() || [])
+    .some((tc) => (tc.status || 'complete') !== 'complete');
+}
+
 function showInlineThinking(run) {
-  if (!run) return;
+  if (!run || run.content || hasRunningToolCalls(run)) return;
 
   const thinking = getInlineThinkingContainer(run.assistantMsgId);
   if (thinking && !state.userHasScrolledUp) scrollToEnd(false);
@@ -1484,6 +1487,7 @@ async function runAIResponse(chatId, userMessage) {
     role: 'assistant',
     toolCalls: [],
     content: '',
+    segments: [],
   };
   state.chatMessages[chatId].push(assistantMsg);
 
@@ -1549,17 +1553,17 @@ async function runAIResponse(chatId, userMessage) {
 function ensureAssistantVisible(run) {
   if (run.started) return;
   run.started = true;
+  stopThinkingIndicator(run.thinkingEl);
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
   if (!msg) return;
 
   run.msgEl = renderMessage(msg, false);
-  showInlineThinking(run);
-  stopThinkingIndicator(run.thinkingEl);
 }
 
 function appendStreamFull(run, text) {
   if (!text) return;
+  hideInlineThinking(run.assistantMsgId);
   run.content = text;
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
@@ -1581,6 +1585,7 @@ function appendStreamFull(run, text) {
 
 function appendStreamDelta(run, delta) {
   if (!delta) return;
+  hideInlineThinking(run.assistantMsgId);
   run.content += delta;
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
@@ -1610,6 +1615,7 @@ function upsertToolCall(run, toolCall) {
   msg.toolCalls = Array.from(run.toolCalls.values());
 
   if (toolCall.status === 'pending' || toolCall.status === 'running') {
+    hideInlineThinking(run.assistantMsgId);
     if (toolCall.name === 'question') {
       syncInlineQuestion(run.assistantMsgId, {
         chatId: run.chatId,
@@ -1791,6 +1797,7 @@ function simulateAIResponse(chatId, userMessage) {
     role: 'assistant',
     toolCalls: startsWithTools ? mapToolCalls(phases[0].toolCalls, 0) : [],
     content: '',
+    segments: [],
   };
   state.chatMessages[chatId].push(assistantMsg);
 

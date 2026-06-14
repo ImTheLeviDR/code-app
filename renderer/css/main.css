@@ -1476,6 +1476,15 @@ textarea {
 
 .tool-activity-line.done:not(.tool-edit-clickable) {
   pointer-events: none;
+  opacity: 0.6;
+}
+
+.tool-activity-line.done .tool-activity-text {
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  -webkit-text-fill-color: initial;
+  color: var(--text-muted);
 }
 
 .tool-edit-clickable {
