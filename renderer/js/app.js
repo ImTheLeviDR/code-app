@@ -1435,6 +1435,56 @@ function showToolActivityLine(tc, msgId) {
   line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabel(tc))}</span>`;
 }
 
+function showToolActivityLineInline(tc, msgId, chatId) {
+  const msgEl = document.getElementById(`msg-${msgId}`);
+  if (!msgEl) return;
+
+  const body = msgEl.querySelector('.assistant-body');
+  if (!body) return;
+
+  const contentEl = document.getElementById(`content-${msgId}`);
+  const hasPriorText = Boolean(contentEl?.innerHTML.trim());
+
+  if (hasPriorText) {
+    const prior = document.createElement('div');
+    prior.className = 'md-content md-content-segment';
+    prior.innerHTML = contentEl.innerHTML;
+    body.insertBefore(prior, contentEl);
+    contentEl.innerHTML = '';
+    contentEl.classList.remove('is-streaming');
+
+    const meta = document.createElement('div');
+    meta.className = 'assistant-meta';
+    const container = document.createElement('div');
+    container.className = 'tool-activity';
+    meta.appendChild(container);
+    body.insertBefore(meta, contentEl);
+
+    container.querySelectorAll('.tool-activity-line.running').forEach((el) => {
+      const otherId = el.id?.replace(/^tc-/, '');
+      if (otherId && otherId !== tc.id) {
+        completeToolActivityLine(otherId, msgId);
+      }
+    });
+
+    let line = document.getElementById(`tc-${tc.id}`);
+    if (!line) {
+      line = document.createElement('div');
+      line.className = 'tool-activity-line running';
+      line.id = `tc-${tc.id}`;
+      container.appendChild(line);
+    } else {
+      line.classList.remove('done', 'tool-file-edit-line', 'tool-edit-clickable');
+      line.classList.add('running');
+      line.removeAttribute('role');
+      line.removeAttribute('tabindex');
+    }
+    line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabel(tc))}</span>`;
+  } else {
+    showToolActivityLine(tc, msgId);
+  }
+}
+
 function completeToolActivityLine(tcId, msgId) {
   const tc = findToolCallById(tcId);
   let line = document.getElementById(`tc-${tcId}`);
@@ -1707,7 +1757,7 @@ function upsertToolCall(run, toolCall) {
         requestId: null,
       });
     } else {
-      showToolActivityLine(toolCall, run.assistantMsgId);
+      showToolActivityLineInline(toolCall, run.assistantMsgId, run.chatId);
     }
   } else if (toolCall.status === 'complete') {
     if (toolCall.name === 'question') removeInlineQuestion(run.assistantMsgId);
@@ -1762,7 +1812,6 @@ function buildSegmentsFromDOM(msgId, chatId) {
   const body = document.querySelector(`#msg-${msgId} .assistant-body`);
   if (!body) return;
   const segments = [];
-  let contentAdded = false;
   for (const child of body.children) {
     if (child.classList.contains('assistant-meta')) {
       const lines = child.querySelectorAll('.tool-activity-line');
@@ -1773,13 +1822,13 @@ function buildSegmentsFromDOM(msgId, chatId) {
         if (tc) toolCalls.push(tc);
       });
       if (toolCalls.length) segments.push({ type: 'tools', toolCalls });
-    } else if (child.classList.contains('md-content') && !child.classList.contains('md-content-segment')) {
-      if (msg.content && !contentAdded) {
-        segments.push({ type: 'content', text: msg.content });
-        contentAdded = true;
-      }
     } else if (child.classList.contains('md-content-segment')) {
-      segments.push({ type: 'content', text: child.innerHTML });
+      const text = child.textContent || '';
+      if (text.trim()) segments.push({ type: 'content', text });
+    } else if (child.classList.contains('md-content') && !child.classList.contains('md-content-segment')) {
+      if (msg.content) {
+        segments.push({ type: 'content', text: msg.content });
+      }
     }
   }
   if (segments.length) msg.segments = segments;
