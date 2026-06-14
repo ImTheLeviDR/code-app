@@ -363,8 +363,14 @@ function setChatRunning(chatId, running) {
   const chat = findChatById(chatId);
   if (!chat) return;
 
+  const wasRunning = chat.running;
   chat.running = running;
   syncChatItem(chatId);
+
+  // Show notification when task finishes
+  if (wasRunning && !running) {
+    showToast(`Task finished: ${chat.title}`);
+  }
 }
 
 function createChatItem(chat, projectId) {
@@ -1875,33 +1881,44 @@ function dismissToast(toast, animate = true) {
 
 function setupToastInteractions(toast) {
   let dragging = false;
+  let activePointerId = null;
   let startX = 0;
   let startY = 0;
   let originX = 0;
   let originY = 0;
 
-  function onMouseDown(e) {
+  function endDrag() {
+    dragging = false;
+    activePointerId = null;
+    if (!toast.isConnected) return;
+    toast.classList.remove("toast-dragging");
+    toastDismissTimer = setTimeout(() => dismissToast(toast), 800);
+  }
+
+  function onPointerDown(e) {
     if (e.button !== 0) return;
 
     dragging = true;
-    toast.classList.add('toast-dragging');
+    activePointerId = e.pointerId;
+    toast.classList.add("toast-dragging");
     clearToastTimers();
 
     const rect = toast.getBoundingClientRect();
-    toast.style.right = 'auto';
+    toast.style.right = "auto";
     toast.style.top = `${rect.top}px`;
     toast.style.left = `${rect.left}px`;
-    toast.style.transform = 'none';
+    toast.style.transform = "none";
 
     startX = e.clientX;
     startY = e.clientY;
     originX = rect.left;
     originY = rect.top;
+    toast.setPointerCapture(activePointerId);
     e.preventDefault();
   }
 
-  function onMouseMove(e) {
-    if (!dragging) return;
+  function onPointerMove(e) {
+    if (!dragging || e.pointerId !== activePointerId) return;
 
     const x = originX + (e.clientX - startX);
     const y = originY + (e.clientY - startY);
@@ -1917,17 +1934,28 @@ function setupToastInteractions(toast) {
       rect.top > window.innerHeight + margin;
 
     if (isOutside) {
-      dragging = false;
+      if (activePointerId !== null) {
+        toast.releasePointerCapture(activePointerId);
+      }
       dismissToast(toast, false);
     }
   }
 
-  function onMouseUp() {
-    if (!dragging) return;
+  function onPointerUp(e) {
+    if (!dragging || e.pointerId !== activePointerId) return;
+    if (activePointerId !== null) {
+      toast.releasePointerCapture(activePointerId);
+    }
+    endDrag();
+  }
+
+  function onPointerCancel(e) {
+    if (!dragging || e.pointerId !== activePointerId) return;
+    activePointerId = null;
     dragging = false;
+    toast.classList.remove("toast-dragging");
     if (!toast.isConnected) return;
-    toast.classList.remove('toast-dragging');
-    toastDismissTimer = setTimeout(() => dismissToast(toast), 2500);
+    toastDismissTimer = setTimeout(() => dismissToast(toast), 800);
   }
 
   function onAuxClick(e) {
@@ -1936,15 +1964,17 @@ function setupToastInteractions(toast) {
     dismissToast(toast);
   }
 
-  toast.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup', onMouseUp);
+  toast.addEventListener("pointerdown", onPointerDown);
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+  toast.addEventListener("pointercancel", onPointerCancel);
   toast.addEventListener('auxclick', onAuxClick);
 
   return () => {
-    toast.removeEventListener('mousedown', onMouseDown);
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseup', onMouseUp);
+    toast.removeEventListener("pointerdown", onPointerDown);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+    toast.removeEventListener("pointercancel", onPointerCancel);
     toast.removeEventListener('auxclick', onAuxClick);
   };
 }
