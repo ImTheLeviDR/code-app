@@ -39,26 +39,18 @@ const PROVIDER_PRESETS = {
   openai: {
     name: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
-    models: ['gpt-5.4', 'gpt-4.1', 'o3', 'o4-mini'],
-    imageModels: ['gpt-4o', 'gpt-4o-mini'],
   },
   anthropic: {
     name: 'Anthropic',
     baseUrl: 'https://api.anthropic.com/v1',
-    models: ['claude-sonnet-4', 'claude-opus-4'],
-    imageModels: [],
   },
   google: {
     name: 'Google',
     baseUrl: 'https://generativelanguage.googleapis.com/v1',
-    models: ['gemini-2.5-pro', 'gemini-2.0-flash'],
-    imageModels: ['gemini-2.0-flash'],
   },
   custom: {
     name: 'Custom',
     baseUrl: '',
-    models: [],
-    imageModels: [],
   },
 };
 
@@ -71,8 +63,6 @@ const DEFAULT_SETTINGS = {
       baseUrl: PROVIDER_PRESETS.openai.baseUrl,
       apiKey: '',
       enabled: true,
-      models: [...PROVIDER_PRESETS.openai.models],
-      imageModels: [...PROVIDER_PRESETS.openai.imageModels],
     },
     {
       id: 'prov-anthropic',
@@ -81,8 +71,6 @@ const DEFAULT_SETTINGS = {
       baseUrl: PROVIDER_PRESETS.anthropic.baseUrl,
       apiKey: '',
       enabled: false,
-      models: [...PROVIDER_PRESETS.anthropic.models],
-      imageModels: [...PROVIDER_PRESETS.anthropic.imageModels],
     },
   ],
 };

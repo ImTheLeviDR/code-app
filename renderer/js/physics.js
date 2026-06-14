@@ -382,6 +382,8 @@ const Physics = (() => {
       '.settings-primary-btn',
       '.settings-add-btn',
       '.settings-icon-btn',
+      '.prov-panel-action',
+      '.prov-text-btn',
     ].join(',');
 
     root.querySelectorAll(selector).forEach((el) => {
@@ -401,16 +403,41 @@ const Physics = (() => {
     });
   }
 
+  function bindToggleTargets(root = document) {
+    root.querySelectorAll('.settings-toggle').forEach((el) => {
+      if (el.dataset.springToggle) return;
+      el.dataset.springToggle = '1';
+      const track = el.querySelector('.settings-toggle-track');
+      if (!track) return;
+
+      el.addEventListener('pointerenter', () => {
+        animate(track, { scale: 1.07 }, { preset: 'snappy' });
+      });
+      el.addEventListener('pointerleave', () => {
+        animate(track, { scale: 1 }, { preset: 'soft' });
+      });
+      el.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        press(track, 0.93);
+      });
+      el.addEventListener('pointerup', () => release(track));
+      el.addEventListener('pointercancel', () => release(track));
+    });
+  }
+
   function init() {
     document.body.classList.add('physics-motion');
     bindPressTargets();
+    bindToggleTargets();
 
     const observer = new MutationObserver((mutations) => {
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (node.nodeType === 1) {
             bindPressTargets(node);
-            if (node.matches?.( 'button, .nav-item, .chat-item')) bindPressTargets(node.parentElement || node);
+            bindToggleTargets(node);
+            if (node.matches?.('button, .nav-item, .chat-item')) bindPressTargets(node.parentElement || node);
+            if (node.matches?.('.settings-toggle')) bindToggleTargets(node.parentElement || node);
           }
         }
       }
@@ -438,6 +465,7 @@ const Physics = (() => {
     hide,
     thinkingDots,
     bindPressTargets,
+    bindToggleTargets,
     init,
     switchScreens,
     resetMotion,

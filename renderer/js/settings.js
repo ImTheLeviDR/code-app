@@ -6,25 +6,26 @@
 
 const SETTINGS_STORAGE_KEY = 'code-app-settings';
 
-const PROVIDER_COLORS = {
-  openai:    '#10a37f',
-  anthropic: '#d4763b',
-  google:    '#4285f4',
-  custom:    '#8b5cf6',
-};
-
 const SettingsStore = (() => {
   let settings = loadSettingsFromStorage();
   let pageEl = null;
   let isOpen = false;
   let activeCategory = 'providers';
+  const expandedProviderIds = new Set();
+  let focusApiKeyId = null;
+  let focusProviderField = null;
+  let animateExpandId = null;
+  let staggerProviders = false;
 
   function loadSettingsFromStorage() {
     try {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed?.providers?.length) return parsed;
+        if (parsed?.providers?.length) {
+          parsed.providers = parsed.providers.map(({ models, imageModels, ...provider }) => provider);
+          return parsed;
+        }
       }
     } catch (_) { /* use defaults */ }
     return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -39,19 +40,7 @@ const SettingsStore = (() => {
   function getProvider(id) { return settings.providers.find((p) => p.id === id); }
 
   function getChatModels() {
-    const seen = new Set();
-    const models = [];
-    settings.providers
-      .filter((p) => p.enabled)
-      .forEach((p) => {
-        p.models.forEach((name) => {
-          if (!seen.has(name)) {
-            seen.add(name);
-            models.push({ id: name, label: name });
-          }
-        });
-      });
-    return models.length ? models : MODELS;
+    return MODELS;
   }
 
   function updateProvider(id, patch, rerender = false) {
@@ -62,7 +51,7 @@ const SettingsStore = (() => {
     if (rerender && isOpen) renderContent();
   }
 
-  function addProvider(type) {
+  function addProvider(type, { expand = false, focusKey = false, focusBaseUrl = false } = {}) {
     const preset = PROVIDER_PRESETS[type] || PROVIDER_PRESETS.custom;
     const provider = {
       id: `prov-${Date.now()}`,
@@ -71,17 +60,29 @@ const SettingsStore = (() => {
       baseUrl: preset.baseUrl,
       apiKey: '',
       enabled: true,
-      models: [...preset.models],
-      imageModels: [...preset.imageModels],
     };
     settings.providers.push(provider);
+    if (expand) {
+      expandedProviderIds.add(provider.id);
+      animateExpandId = provider.id;
+    }
+    if (focusKey) {
+      focusApiKeyId = provider.id;
+      focusProviderField = 'apiKey';
+    }
+    if (focusBaseUrl) {
+      focusApiKeyId = provider.id;
+      focusProviderField = 'baseUrl';
+    }
     save();
+    staggerProviders = true;
     if (isOpen) renderContent();
     return provider.id;
   }
 
   function removeProvider(id) {
     settings.providers = settings.providers.filter((p) => p.id !== id);
+    expandedProviderIds.delete(id);
     if (!settings.providers.length) {
       settings.providers.push({
         id: `prov-${Date.now()}`,
@@ -90,163 +91,249 @@ const SettingsStore = (() => {
         baseUrl: '',
         apiKey: '',
         enabled: true,
-        models: [],
-        imageModels: [],
       });
     }
     save();
+    staggerProviders = true;
     if (isOpen) renderContent();
   }
 
-  function addModelToProvider(id, modelName, kind) {
-    const provider = getProvider(id);
-    if (!provider || !modelName.trim()) return;
-    const key = kind === 'image' ? 'imageModels' : 'models';
-    const name = modelName.trim();
-    if (!provider[key].includes(name)) {
-      provider[key].push(name);
-      save();
+  function toggleProviderExpanded(id) {
+    const isExpanded = expandedProviderIds.has(id);
+    const row = pageEl?.querySelector(`[data-provider-id="${id}"]`);
+
+    if (!row) {
+      if (isExpanded) expandedProviderIds.delete(id);
+      else expandedProviderIds.add(id);
       if (isOpen) renderContent();
+      return;
+    }
+
+    const details = row.querySelector('.prov-row-body');
+    const chevron = row.querySelector('.prov-row-chevron');
+
+    if (isExpanded) {
+      expandedProviderIds.delete(id);
+      row.classList.remove('is-expanded');
+      chevron?.setAttribute('aria-expanded', 'false');
+      Physics.rotate(chevron, 0);
+      Physics.expandVertical(details, false, () => {
+        details.classList.remove('expanded');
+        details.classList.add('collapsed');
+      });
+    } else {
+      expandedProviderIds.add(id);
+      details.classList.remove('collapsed');
+      details.classList.add('expanded');
+      row.classList.add('is-expanded');
+      chevron?.setAttribute('aria-expanded', 'true');
+      Physics.rotate(chevron, 90);
+      Physics.expandVertical(details, true);
     }
   }
 
-  function removeModelFromProvider(id, modelName, kind) {
-    const provider = getProvider(id);
-    if (!provider) return;
-    const key = kind === 'image' ? 'imageModels' : 'models';
-    provider[key] = provider[key].filter((m) => m !== modelName);
-    save();
-    if (isOpen) renderContent();
+  function renderRowStatus(provider) {
+    if (provider.apiKey) {
+      return '<span class="prov-row-status is-set">Configured</span>';
+    }
+    return '<span class="prov-row-status is-missing">No key</span>';
   }
 
-  function maskApiKey(key) {
-    if (!key) return '';
-    if (key.length <= 8) return '••••••••';
-    return key.slice(0, 3) + '••••••••' + key.slice(-4);
+  function patchProviderRow(row, provider) {
+    if (!row || !provider) return;
+    row.classList.toggle('is-enabled', provider.enabled);
+    row.classList.toggle('is-disabled', !provider.enabled);
+    const nameEl = row.querySelector('.prov-row-name');
+    if (nameEl) nameEl.textContent = provider.name;
+    const status = row.querySelector('.prov-row-status');
+    if (status) {
+      const next = renderRowStatus(provider);
+      status.outerHTML = next;
+    }
+  }
+
+  function initProviderRows(container) {
+    container.querySelectorAll('.prov-row').forEach((row) => {
+      const id = row.dataset.providerId;
+      const details = row.querySelector('.prov-row-body');
+      const chevron = row.querySelector('.prov-row-chevron');
+      const isExpanded = expandedProviderIds.has(id);
+      const deferExpand = id === animateExpandId;
+
+      Physics.resetMotion(details);
+      Physics.resetMotion(chevron);
+
+      if (isExpanded && !deferExpand) {
+        row.classList.add('is-expanded');
+        details.classList.remove('collapsed');
+        details.classList.add('expanded');
+        details.style.height = 'auto';
+        details.style.overflow = '';
+        details.style.opacity = '1';
+        chevron?.setAttribute('aria-expanded', 'true');
+        if (chevron) {
+          chevron.style.transform = 'rotate(90deg)';
+          chevron._springState = { rotate: 90 };
+        }
+      } else {
+        row.classList.remove('is-expanded');
+        details.classList.add('collapsed');
+        details.classList.remove('expanded');
+        details.style.height = '0';
+        details.style.overflow = 'hidden';
+        details.style.opacity = '0';
+        chevron?.setAttribute('aria-expanded', 'false');
+        if (chevron) {
+          chevron.style.transform = '';
+          delete chevron._springState;
+        }
+      }
+    });
+  }
+
+  function focusProviderInput(container, id) {
+    if (!id || !focusProviderField) return;
+    const row = container.querySelector(`[data-provider-id="${id}"]`);
+    row?.querySelector(`[data-field="${focusProviderField}"]`)?.focus();
+    focusApiKeyId = null;
+    focusProviderField = null;
+  }
+
+  function runProviderEnterAnimations(container) {
+    const configured = container.querySelector('.prov-group-panel');
+    if (configured) {
+      Physics.stagger(configured, '.prov-row', { opacity: 0, y: 4 }, { preset: 'gentle', delay: 30 });
+    }
+
+    const addPanel = container.querySelector('.prov-add-panel');
+    if (addPanel) {
+      const delay = (container.querySelectorAll('.prov-row').length + 1) * 30;
+      setTimeout(() => {
+        Physics.stagger(addPanel, '.prov-panel-row', { opacity: 0, y: 4 }, { preset: 'gentle', delay: 25 });
+      }, delay);
+    }
+
+    const customPanel = container.querySelector('.prov-custom-panel');
+    if (customPanel) {
+      const delay = (container.querySelectorAll('.prov-row').length + 1) * 30 + 50;
+      setTimeout(() => {
+        Physics.stagger(customPanel, '.prov-panel-row', { opacity: 0, y: 4 }, { preset: 'gentle', delay: 25 });
+      }, delay);
+    }
+
+    if (animateExpandId) {
+      const id = animateExpandId;
+      animateExpandId = null;
+      const rows = [...container.querySelectorAll('.prov-row')];
+      const index = Math.max(0, rows.findIndex((r) => r.dataset.providerId === id));
+      const delay = (index + 1) * 30 + 60;
+
+      setTimeout(() => {
+        const row = container.querySelector(`[data-provider-id="${id}"]`);
+        if (!row) return;
+        const details = row.querySelector('.prov-row-body');
+        const chevron = row.querySelector('.prov-row-chevron');
+        expandedProviderIds.add(id);
+        details.classList.remove('collapsed');
+        details.classList.add('expanded');
+        row.classList.add('is-expanded');
+        chevron?.setAttribute('aria-expanded', 'true');
+        Physics.rotate(chevron, 90);
+        Physics.expandVertical(details, true, () => {
+          focusProviderInput(container, id);
+        });
+      }, delay);
+      return;
+    }
+
+    focusProviderInput(container, focusApiKeyId);
   }
 
   /* ---- Rendering ---- */
 
-  function providerColor(type) {
-    return PROVIDER_COLORS[type] || PROVIDER_COLORS.custom;
-  }
+  function renderProviderRow(provider) {
+    const isExpanded = expandedProviderIds.has(provider.id);
+    const deferExpand = provider.id === animateExpandId;
+    const detailsClass = isExpanded && !deferExpand ? 'expanded' : 'collapsed';
 
-  function renderProviderCard(provider) {
-    const color = providerColor(provider.type);
-    const initial = (provider.name || provider.type || '?')[0].toUpperCase();
-    const enabledClass = provider.enabled ? 'enabled' : 'disabled';
     return `
-      <article class="settings-provider-card ${enabledClass}" data-provider-id="${provider.id}">
-        <div class="settings-provider-header">
-          <div class="settings-provider-identity">
-            <div class="settings-provider-avatar" style="background: linear-gradient(135deg, ${color}cc, ${color})">${initial}</div>
-            <div class="settings-provider-info">
-              <input
-                class="settings-provider-name"
-                type="text"
-                value="${escapeHtml(provider.name)}"
-                data-field="name"
-                placeholder="Provider name"
-                spellcheck="false"
-              />
-              <div class="settings-provider-meta">
-                <span class="settings-provider-type-badge" style="--badge-color: ${color}">${escapeHtml(provider.type)}</span>
-                <span class="settings-provider-status ${provider.enabled ? 'status-on' : 'status-off'}">
-                  ${provider.enabled ? 'Active' : 'Disabled'}
-                </span>
-              </div>
-            </div>
-          </div>
-          <div class="settings-provider-actions">
-            <label class="settings-toggle" title="${provider.enabled ? 'Disable' : 'Enable'} provider">
-              <input type="checkbox" class="settings-toggle-input" data-field="enabled" ${provider.enabled ? 'checked' : ''} />
-              <span class="settings-toggle-track"></span>
-            </label>
-            <button class="settings-icon-btn settings-remove-btn" type="button" data-action="remove-provider" title="Remove provider">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-            </button>
-          </div>
-        </div>
+      <article
+        class="prov-row ${provider.enabled ? 'is-enabled' : 'is-disabled'}${isExpanded && !deferExpand ? ' is-expanded' : ''}"
+        data-provider-id="${provider.id}"
+      >
+        <button class="prov-row-head" type="button" data-action="toggle-expand" aria-expanded="${isExpanded && !deferExpand}">
+          <span class="prov-row-chevron" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="prov-row-main">
+            <span class="prov-row-name">${escapeHtml(provider.name)}</span>
+            <span class="prov-row-type">${escapeHtml(provider.type)}</span>
+          </span>
+          ${renderRowStatus(provider)}
+          <label class="settings-toggle prov-row-toggle" title="${provider.enabled ? 'Disable' : 'Enable'} provider" data-action="stop-propagation">
+            <input type="checkbox" class="settings-toggle-input" data-field="enabled" ${provider.enabled ? 'checked' : ''} />
+            <span class="settings-toggle-track"></span>
+          </label>
+        </button>
 
-        <div class="settings-provider-fields">
-          <div class="settings-field">
-            <label class="settings-label">Base URL</label>
-            <input
-              class="settings-input"
-              type="url"
-              value="${escapeHtml(provider.baseUrl)}"
-              data-field="baseUrl"
-              placeholder="https://api.example.com/v1"
-              spellcheck="false"
-            />
-          </div>
-
-          <div class="settings-field">
-            <label class="settings-label">API Key</label>
-            <div class="settings-api-key-row">
-              <input
-                class="settings-input settings-api-key-input"
-                type="password"
-                value="${escapeHtml(provider.apiKey)}"
-                data-field="apiKey"
-                placeholder="sk-..."
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button class="settings-icon-btn" type="button" data-action="toggle-key" title="Show/hide key">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2"/>
-                  <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
-                </svg>
-              </button>
-            </div>
-            ${provider.apiKey ? `<span class="settings-key-hint">${escapeHtml(maskApiKey(provider.apiKey))}</span>` : ''}
-          </div>
-
-          <div class="settings-field-row">
-            <div class="settings-field">
-              <label class="settings-label">Chat models</label>
-              <div class="settings-tags" data-kind="models">
-                ${provider.models.map((m) => `
-                  <span class="settings-tag">
-                    ${escapeHtml(m)}
-                    <button type="button" class="settings-tag-remove" data-action="remove-model" data-model="${escapeHtml(m)}" data-kind="models" title="Remove">&times;</button>
-                  </span>
-                `).join('')}
-                ${provider.models.length === 0 ? '<span class="settings-empty-hint">None added</span>' : ''}
-              </div>
-              <div class="settings-add-row">
-                <input class="settings-input settings-add-input" type="text" placeholder="model-name  ↵" data-kind="models" spellcheck="false" />
-                <button class="settings-add-btn" type="button" data-action="add-model" data-kind="models">Add</button>
+        <div class="prov-row-body ${detailsClass}">
+          <div class="prov-row-fields">
+            <div class="prov-form-row">
+              <span class="prov-form-label">Name</span>
+              <div class="prov-form-control">
+                <input
+                  class="settings-input"
+                  type="text"
+                  value="${escapeHtml(provider.name)}"
+                  data-field="name"
+                  placeholder="Provider name"
+                  spellcheck="false"
+                />
               </div>
             </div>
 
-            <div class="settings-field">
-              <label class="settings-label">
-                Image models
-                <span class="settings-label-note" title="Images are converted to text descriptions before being sent to the model">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-                    <path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <div class="prov-form-row">
+              <span class="prov-form-label">API key</span>
+              <div class="prov-form-control">
+                <input
+                  class="settings-input settings-api-key-input"
+                  type="password"
+                  value="${escapeHtml(provider.apiKey)}"
+                  data-field="apiKey"
+                  placeholder="Paste API key"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button class="settings-icon-btn" type="button" data-action="toggle-key" title="Show/hide key">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2"/>
+                    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
                   </svg>
-                </span>
-              </label>
-              <div class="settings-tags" data-kind="imageModels">
-                ${provider.imageModels.map((m) => `
-                  <span class="settings-tag settings-tag-image">
-                    ${escapeHtml(m)}
-                    <button type="button" class="settings-tag-remove" data-action="remove-model" data-model="${escapeHtml(m)}" data-kind="imageModels" title="Remove">&times;</button>
-                  </span>
-                `).join('')}
-                ${provider.imageModels.length === 0 ? '<span class="settings-empty-hint">None added</span>' : ''}
-              </div>
-              <div class="settings-add-row">
-                <input class="settings-input settings-add-input" type="text" placeholder="model-name  ↵" data-kind="imageModels" spellcheck="false" />
-                <button class="settings-add-btn" type="button" data-action="add-model" data-kind="imageModels">Add</button>
+                </button>
               </div>
             </div>
+
+            ${provider.type === 'custom' ? `
+            <div class="prov-form-row">
+              <span class="prov-form-label">Base URL</span>
+              <div class="prov-form-control">
+                <input
+                  class="settings-input"
+                  type="url"
+                  value="${escapeHtml(provider.baseUrl)}"
+                  data-field="baseUrl"
+                  placeholder="https://api.example.com/v1"
+                  spellcheck="false"
+                />
+              </div>
+            </div>
+            ` : ''}
+          </div>
+
+          <div class="prov-row-actions">
+            <button class="prov-text-btn" type="button" data-action="remove-provider">Remove</button>
           </div>
         </div>
       </article>
@@ -254,71 +341,18 @@ const SettingsStore = (() => {
   }
 
   const POPULAR_PROVIDERS = [
-    {
-      type: "openai",
-      name: "OpenAI",
-      description: "Curated models including GPT-5.4, GPT-4.1, o3 and more",
-    },
-    {
-      type: "anthropic",
-      name: "Anthropic",
-      description: "Claude Sonnet 4 and Claude Opus 4 models",
-    },
-    {
-      type: "google",
-      name: "Google",
-      description: "Gemini 2.5 Pro and Gemini 2.0 Flash models",
-    },
+    { type: 'openai', name: 'OpenAI' },
+    { type: 'anthropic', name: 'Anthropic' },
+    { type: 'google', name: 'Google' },
   ];
 
-  function renderSimpleProviderCard(provider) {
-    const color = providerColor(provider.type);
-    const initial = (provider.name || provider.type || "?")[0].toUpperCase();
-    const statusClass = provider.enabled ? "enabled" : "disabled";
-    const keyStatus = provider.apiKey ? "API key set" : "No API key";
-    const toggleLabel = provider.enabled ? "Disable" : "Enable";
-    return `
-      <div class="providers-card providers-card-connected ${statusClass}" data-provider-id="${provider.id}">
-        <div class="providers-card-icon" style="background: linear-gradient(135deg, ${color}cc, ${color})">${initial}</div>
-        <div class="providers-card-content">
-          <div class="providers-card-header">
-            <div class="providers-card-name">${escapeHtml(provider.name)}</div>
-            <span class="providers-card-status ${provider.enabled ? "status-on" : "status-off"}">
-              ${provider.enabled ? "Active" : "Inactive"}
-            </span>
-          </div>
-          <div class="providers-card-key-status ${provider.apiKey ? "has-key" : "no-key"}">
-            ${keyStatus}
-          </div>
-        </div>
-        <div class="providers-card-actions">
-          <button class="providers-card-btn providers-card-btn-secondary" data-action="edit-api-key" title="Edit API key">
-            Edit Key
-          </button>
-          <button class="providers-card-btn providers-card-btn-toggle" data-action="toggle-provider" title="${toggleLabel}">
-            ${toggleLabel}
-          </button>
-          <button class="providers-card-btn providers-card-btn-danger" data-action="remove-provider" title="Remove">
-            Remove
-          </button>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderPopularProviderCard(provider) {
-    const color = providerColor(provider.type);
-    const initial = (provider.name || provider.type || "?")[0].toUpperCase();
+  function renderPresetRow(provider) {
     const isAdded = settings.providers.some((p) => p.type === provider.type);
     return `
-      <div class="providers-card providers-card-popular">
-        <div class="providers-card-icon" style="background: linear-gradient(135deg, ${color}cc, ${color})">${initial}</div>
-        <div class="providers-card-content">
-          <div class="providers-card-name">${escapeHtml(provider.name)}</div>
-          <div class="providers-card-description">${escapeHtml(provider.description)}</div>
-        </div>
-        <button class="providers-card-btn providers-card-btn-primary providers-card-btn-connect ${isAdded ? "is-connected" : ""}" data-action="connect-popular" data-type="${provider.type}" title="${isAdded ? "Already connected" : "Connect"}">
-          ${isAdded ? "Connected" : "Connect"}
+      <div class="prov-panel-row${isAdded ? ' is-added' : ''}">
+        <span class="prov-panel-row-label">${escapeHtml(provider.name)}</span>
+        <button class="prov-panel-action" type="button" data-action="add-preset" data-type="${provider.type}" ${isAdded ? 'disabled' : ''}>
+          ${isAdded ? 'Added' : 'Add'}
         </button>
       </div>
     `;
@@ -327,21 +361,32 @@ const SettingsStore = (() => {
   function renderProvidersContent() {
     return `
       <div class="settings-section">
-        <div class="providers-header">
+        <div class="settings-section-header">
           <h2>Providers</h2>
+          <p>API keys are stored locally on this device.</p>
         </div>
 
-        <div class="providers-section">
-          <div class="providers-section-label">Connected providers</div>
-          <div class="providers-list" id="settingsConnectedProviders">
-            ${settings.providers.map(renderSimpleProviderCard).join("")}
+        <div class="prov-group">
+          <div class="prov-group-label">Configured</div>
+          <div class="prov-group-panel" id="settingsProvidersList">
+            ${settings.providers.map(renderProviderRow).join('')}
           </div>
         </div>
 
-        <div class="providers-section">
-          <div class="providers-section-label">Popular providers</div>
-          <div class="providers-list" id="settingsPopularProviders">
-            ${POPULAR_PROVIDERS.map(renderPopularProviderCard).join("")}
+        <div class="prov-group">
+          <div class="prov-group-label">Add</div>
+          <div class="prov-group-panel prov-add-panel">
+            ${POPULAR_PROVIDERS.map(renderPresetRow).join('')}
+          </div>
+        </div>
+
+        <div class="prov-group">
+          <div class="prov-group-label">Custom</div>
+          <div class="prov-group-panel prov-custom-panel">
+            <div class="prov-panel-row">
+              <span class="prov-panel-row-label">Custom endpoint</span>
+              <button class="prov-panel-action" type="button" data-action="add-custom">Add</button>
+            </div>
           </div>
         </div>
       </div>
@@ -485,19 +530,15 @@ const SettingsStore = (() => {
     bindContentEvents(contentEl);
 
     if (activeCategory === "providers") {
-      const list = contentEl.querySelector(".settings-providers-list");
-      if (list) {
-        Physics.stagger(
-          list,
-          ".settings-provider-card",
-          {
-            opacity: 0,
-            y: 8,
-            scale: 0.99,
-          },
-          { preset: "gentle", delay: 40 },
-        );
+      initProviderRows(contentEl);
+      if (staggerProviders) {
+        runProviderEnterAnimations(contentEl);
+        staggerProviders = false;
+      } else if (focusApiKeyId) {
+        focusProviderInput(contentEl, focusApiKeyId);
       }
+      Physics.bindPressTargets(contentEl);
+      Physics.bindToggleTargets(contentEl);
     }
 
     // Update nav active state
@@ -506,69 +547,79 @@ const SettingsStore = (() => {
     });
   }
 
-  function showApiKeyModal(providerId, providerName, currentKey = "") {
-    return new Promise((resolve) => {
-      const overlay = document.createElement("div");
-      overlay.className = "settings-modal-overlay";
+  function bindContentEvents(container) {
+    container.querySelectorAll('.prov-row').forEach((row) => {
+      const id = row.dataset.providerId;
 
-      const modal = document.createElement("div");
-      modal.className = "settings-api-key-modal";
-
-      modal.innerHTML = `
-        <div class="settings-api-key-modal-header">
-          <h3>Enter API Key</h3>
-          <p>${escapeHtml(providerName)}</p>
-        </div>
-        <div class="settings-api-key-modal-content">
-          <input
-            type="password"
-            class="settings-api-key-input"
-            placeholder="Paste your API key here..."
-            value="${escapeHtml(currentKey)}"
-            autocomplete="off"
-          />
-          <label class="settings-api-key-toggle">
-            <input type="checkbox" class="settings-api-key-show" />
-            <span>Show</span>
-          </label>
-        </div>
-        <div class="settings-api-key-modal-actions">
-          <button class="settings-modal-btn settings-modal-cancel">Cancel</button>
-          <button class="settings-modal-btn settings-modal-primary">Save</button>
-        </div>
-      `;
-
-      overlay.appendChild(modal);
-      document.body.appendChild(overlay);
-
-      const input = modal.querySelector(".settings-api-key-input");
-      const toggle = modal.querySelector(".settings-api-key-show");
-      const saveBtn = modal.querySelector(".settings-modal-primary");
-      const cancelBtn = modal.querySelector(".settings-modal-cancel");
-
-      toggle.addEventListener("change", () => {
-        input.type = toggle.checked ? "text" : "password";
+      row.querySelectorAll('[data-action="toggle-expand"]').forEach((el) => {
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('[data-action="stop-propagation"]')) return;
+          toggleProviderExpanded(id);
+        });
       });
 
-      const close = () => {
-        overlay.remove();
-        resolve(null);
-      };
+      row.querySelectorAll('[data-field]').forEach((input) => {
+        const field = input.dataset.field;
+        const event = input.type === 'checkbox' ? 'change' : 'input';
 
-      const save = () => {
-        const key = input.value.trim();
-        overlay.remove();
-        resolve(key);
-      };
+        input.addEventListener(event, (e) => {
+          e.stopPropagation();
+          const value = input.type === 'checkbox' ? input.checked : input.value;
+          if (field === 'name' && !value.trim()) return;
+          updateProvider(id, { [field]: value }, false);
+          if (field === 'enabled') patchProviderRow(row, getProvider(id));
+        });
 
-      cancelBtn.addEventListener("click", close);
-      saveBtn.addEventListener("click", save);
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") save();
-        if (e.key === "Escape") close();
+        if (field === 'apiKey') {
+          input.addEventListener('blur', () => {
+            patchProviderRow(row, getProvider(id));
+          });
+        }
+
+        if (field === 'name') {
+          input.addEventListener('blur', () => {
+            const nameEl = row.querySelector('.prov-row-name');
+            if (nameEl) nameEl.textContent = getProvider(id)?.name || '';
+          });
+        }
       });
 
-      input.focus();
+      row.querySelector('[data-action="stop-propagation"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+
+      row.querySelector('[data-action="remove-provider"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (settings.providers.length <= 1) {
+          showToast('Keep at least one provider');
+          return;
+        }
+        removeProvider(id);
+        showToast('Provider removed');
+      });
+
+      row.querySelector('[data-action="toggle-key"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const input = row.querySelector('.settings-api-key-input');
+        input.type = input.type === 'password' ? 'text' : 'password';
+      });
+    });
+
+    container.querySelectorAll('[data-action="add-preset"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const type = btn.dataset.type;
+        if (settings.providers.some((p) => p.type === type)) {
+          showToast('Provider already added');
+          return;
+        }
+        addProvider(type, { expand: true, focusKey: true });
+        showToast('Provider added — paste your API key');
+      });
+    });
+
+    container.querySelector('[data-action="add-custom"]')?.addEventListener('click', () => {
+      addProvider('custom', { expand: true, focusBaseUrl: true });
+      showToast('Custom provider added');
     });
   }
 
@@ -603,182 +654,12 @@ const SettingsStore = (() => {
           return;
         }
         activeCategory = category;
+        if (category === 'providers') staggerProviders = true;
         renderContent();
       });
     });
 
     renderContent();
-  }
-
-  function bindContentEvents(container) {
-    // Handle connected provider toggle enable/disable
-    container
-      .querySelectorAll('[data-action="toggle-provider"]')
-      .forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const card = btn.closest(".providers-card-connected");
-          const id = card.dataset.providerId;
-          const provider = getProvider(id);
-          if (provider) {
-            updateProvider(id, { enabled: !provider.enabled }, true);
-            showToast(
-              provider.enabled ? "Provider disabled" : "Provider enabled",
-            );
-          }
-        });
-      });
-
-    // Handle edit API key
-    container
-      .querySelectorAll('[data-action="edit-api-key"]')
-      .forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const card = btn.closest(".providers-card-connected");
-          const id = card.dataset.providerId;
-          const provider = getProvider(id);
-          if (provider) {
-            const key = await showApiKeyModal(
-              id,
-              provider.name,
-              provider.apiKey,
-            );
-            if (key !== null) {
-              updateProvider(id, { apiKey: key }, true);
-              showToast("API key updated");
-            }
-          }
-        });
-      });
-
-    // Handle remove provider
-    container
-      .querySelectorAll('[data-action="remove-provider"]')
-      .forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const card = btn.closest(".providers-card-connected");
-          const id = card.dataset.providerId;
-          if (settings.providers.length <= 1) {
-            showToast("Keep at least one provider");
-            return;
-          }
-          removeProvider(id);
-          showToast("Provider removed");
-        });
-      });
-
-    // Handle connect from popular providers
-    container
-      .querySelectorAll('[data-action="connect-popular"]')
-      .forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const type = btn.dataset.type;
-          const providerExists = settings.providers.some(
-            (p) => p.type === type,
-          );
-          if (providerExists) {
-            showToast("Provider already connected");
-            return;
-          }
-
-          const popularprov = POPULAR_PROVIDERS.find((p) => p.type === type);
-          const key = await showApiKeyModal(null, popularprov?.name || type);
-          if (key !== null) {
-            const id = addProvider(type);
-            const provider = getProvider(id);
-            if (provider) {
-              updateProvider(id, { apiKey: key }, true);
-            }
-            renderContent();
-            showToast("Provider connected");
-          }
-        });
-      });
-
-    // Keep old handling for detailed provider cards (if they exist)
-    container.querySelectorAll(".settings-provider-card").forEach((card) => {
-      const id = card.dataset.providerId;
-
-      card.querySelectorAll("[data-field]").forEach((input) => {
-        const field = input.dataset.field;
-        const event = input.type === "checkbox" ? "change" : "input";
-
-        input.addEventListener(event, () => {
-          const value = input.type === "checkbox" ? input.checked : input.value;
-          if (field === "name" && !value.trim()) return;
-          updateProvider(id, { [field]: value }, field === "enabled");
-        });
-
-        if (field === "apiKey") {
-          input.addEventListener("blur", () => renderContent());
-        }
-      });
-
-      card
-        .querySelector('[data-action="remove-provider"]')
-        ?.addEventListener("click", () => {
-          if (settings.providers.length <= 1) {
-            showToast("Keep at least one provider");
-            return;
-          }
-          removeProvider(id);
-          showToast("Provider removed");
-        });
-
-      card
-        .querySelector('[data-action="toggle-key"]')
-        ?.addEventListener("click", () => {
-          const input = card.querySelector(".settings-api-key-input");
-          input.type = input.type === "password" ? "text" : "password";
-        });
-
-      card.querySelectorAll('[data-action="add-model"]').forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const kind = btn.dataset.kind;
-          const input = card.querySelector(
-            `.settings-add-input[data-kind="${kind}"]`,
-          );
-          addModelToProvider(
-            id,
-            input.value,
-            kind === "imageModels" ? "image" : "text",
-          );
-          input.value = "";
-        });
-      });
-
-      card.querySelectorAll(".settings-add-input").forEach((input) => {
-        input.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            const kind = input.dataset.kind;
-            addModelToProvider(
-              id,
-              input.value,
-              kind === "imageModels" ? "image" : "text",
-            );
-            input.value = "";
-          }
-        });
-      });
-
-      card.querySelectorAll('[data-action="remove-model"]').forEach((btn) => {
-        btn.addEventListener("click", () => {
-          removeModelFromProvider(
-            id,
-            btn.dataset.model,
-            btn.dataset.kind === "imageModels" ? "image" : "text",
-          );
-        });
-      });
-    });
-
-    container
-      .querySelector("#settingsAddProviderBtn")
-      ?.addEventListener("click", () => {
-        const type = container.querySelector("#settingsProviderType").value;
-        addProvider(type);
-        showToast("Provider added");
-      });
   }
 
   function open() {
@@ -787,6 +668,7 @@ const SettingsStore = (() => {
     pageEl = document.getElementById('settingsScreen');
     if (!pageEl) return;
     isOpen = true;
+    staggerProviders = true;
     render();
     showSettingsScreen();
   }
