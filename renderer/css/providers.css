@@ -35,7 +35,7 @@
 }
 
 .prov-row.is-disabled {
-  opacity: 0.55;
+  opacity: 0.78;
 }
 
 .prov-row-head {
@@ -240,7 +240,7 @@
 }
 
 .prov-panel-row.is-added {
-  opacity: 0.45;
+  opacity: 0.72;
 }
 
 .prov-panel-row-label {
