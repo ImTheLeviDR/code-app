@@ -253,42 +253,96 @@ const SettingsStore = (() => {
     `;
   }
 
-  function renderProvidersContent() {
-    const enabledCount = settings.providers.filter((p) => p.enabled).length;
+  const POPULAR_PROVIDERS = [
+    {
+      type: "openai",
+      name: "OpenAI",
+      description: "Curated models including GPT-5.4, GPT-4.1, o3 and more",
+    },
+    {
+      type: "anthropic",
+      name: "Anthropic",
+      description: "Claude Sonnet 4 and Claude Opus 4 models",
+    },
+    {
+      type: "google",
+      name: "Google",
+      description: "Gemini 2.5 Pro and Gemini 2.0 Flash models",
+    },
+  ];
+
+  function renderSimpleProviderCard(provider) {
+    const color = providerColor(provider.type);
+    const initial = (provider.name || provider.type || "?")[0].toUpperCase();
+    const statusClass = provider.enabled ? "enabled" : "disabled";
+    const keyStatus = provider.apiKey ? "API key set" : "No API key";
+    const toggleLabel = provider.enabled ? "Disable" : "Enable";
     return `
-      <div class="settings-section">
-        <div class="settings-section-header">
-          <h2>AI Providers</h2>
-          <p>Connect your AI providers by adding API keys and configuring available models. Settings are stored locally on this device.</p>
-          <div class="settings-section-stats">
-            <span class="settings-stat">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              ${settings.providers.length} provider${settings.providers.length !== 1 ? 's' : ''}
-            </span>
-            <span class="settings-stat settings-stat-active">
-              <span class="settings-stat-dot"></span>
-              ${enabledCount} active
+      <div class="providers-card providers-card-connected ${statusClass}" data-provider-id="${provider.id}">
+        <div class="providers-card-icon" style="background: linear-gradient(135deg, ${color}cc, ${color})">${initial}</div>
+        <div class="providers-card-content">
+          <div class="providers-card-header">
+            <div class="providers-card-name">${escapeHtml(provider.name)}</div>
+            <span class="providers-card-status ${provider.enabled ? "status-on" : "status-off"}">
+              ${provider.enabled ? "Active" : "Inactive"}
             </span>
           </div>
+          <div class="providers-card-key-status ${provider.apiKey ? "has-key" : "no-key"}">
+            ${keyStatus}
+          </div>
         </div>
-        <div class="settings-providers-list" id="settingsProvidersList">
-          ${settings.providers.map(renderProviderCard).join('')}
-        </div>
-        <div class="settings-add-provider-bar">
-          <select class="settings-select" id="settingsProviderType">
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="google">Google</option>
-            <option value="custom">Custom</option>
-          </select>
-          <button class="settings-primary-btn" type="button" id="settingsAddProviderBtn">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-              <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-            Add provider
+        <div class="providers-card-actions">
+          <button class="providers-card-btn providers-card-btn-secondary" data-action="edit-api-key" title="Edit API key">
+            Edit Key
           </button>
+          <button class="providers-card-btn providers-card-btn-toggle" data-action="toggle-provider" title="${toggleLabel}">
+            ${toggleLabel}
+          </button>
+          <button class="providers-card-btn providers-card-btn-danger" data-action="remove-provider" title="Remove">
+            Remove
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderPopularProviderCard(provider) {
+    const color = providerColor(provider.type);
+    const initial = (provider.name || provider.type || "?")[0].toUpperCase();
+    const isAdded = settings.providers.some((p) => p.type === provider.type);
+    return `
+      <div class="providers-card providers-card-popular">
+        <div class="providers-card-icon" style="background: linear-gradient(135deg, ${color}cc, ${color})">${initial}</div>
+        <div class="providers-card-content">
+          <div class="providers-card-name">${escapeHtml(provider.name)}</div>
+          <div class="providers-card-description">${escapeHtml(provider.description)}</div>
+        </div>
+        <button class="providers-card-btn providers-card-btn-primary providers-card-btn-connect ${isAdded ? "is-connected" : ""}" data-action="connect-popular" data-type="${provider.type}" title="${isAdded ? "Already connected" : "Connect"}">
+          ${isAdded ? "Connected" : "Connect"}
+        </button>
+      </div>
+    `;
+  }
+
+  function renderProvidersContent() {
+    return `
+      <div class="settings-section">
+        <div class="providers-header">
+          <h2>Providers</h2>
+        </div>
+
+        <div class="providers-section">
+          <div class="providers-section-label">Connected providers</div>
+          <div class="providers-list" id="settingsConnectedProviders">
+            ${settings.providers.map(renderSimpleProviderCard).join("")}
+          </div>
+        </div>
+
+        <div class="providers-section">
+          <div class="providers-section-label">Popular providers</div>
+          <div class="providers-list" id="settingsPopularProviders">
+            ${POPULAR_PROVIDERS.map(renderPopularProviderCard).join("")}
+          </div>
         </div>
       </div>
     `;
@@ -297,9 +351,11 @@ const SettingsStore = (() => {
   function renderComingSoon(label) {
     const icons = {
       appearance: `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`,
-      shortcuts:  `<rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2"/><path d="M16 2l-4 5-4-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+      shortcuts: `<rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2"/><path d="M16 2l-4 5-4-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
     };
-    const icon = icons[label] || `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`;
+    const icon =
+      icons[label] ||
+      `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`;
     const title = label.charAt(0).toUpperCase() + label.slice(1);
     return `
       <div class="settings-coming-soon">
@@ -350,33 +406,33 @@ const SettingsStore = (() => {
 
   const CATEGORIES = [
     {
-      section: 'Configuration',
+      section: "Configuration",
       items: [
         {
-          id: 'providers',
-          label: 'Providers',
+          id: "providers",
+          label: "Providers",
           icon: `<path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
         },
         {
-          id: 'appearance',
-          label: 'Appearance',
+          id: "appearance",
+          label: "Appearance",
           soon: true,
           icon: `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
         },
         {
-          id: 'shortcuts',
-          label: 'Shortcuts',
+          id: "shortcuts",
+          label: "Shortcuts",
           soon: true,
           icon: `<rect x="2" y="7" width="20" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 12h.01M12 12h.01M16 12h.01M8 16h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
         },
       ],
     },
     {
-      section: 'App',
+      section: "App",
       items: [
         {
-          id: 'about',
-          label: 'About',
+          id: "about",
+          label: "About",
           icon: `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
         },
       ],
@@ -384,53 +440,135 @@ const SettingsStore = (() => {
   ];
 
   function renderNav() {
-    return CATEGORIES.map((group) => `
+    return CATEGORIES.map(
+      (group) => `
       <div class="settings-nav-group">
         <div class="settings-nav-section-label">${group.section}</div>
-        ${group.items.map((item) => `
+        ${group.items
+          .map(
+            (item) => `
           <button
-            class="settings-nav-item${activeCategory === item.id ? ' active' : ''}"
+            class="settings-nav-item${activeCategory === item.id ? " active" : ""}"
             type="button"
             data-category="${item.id}"
           >
             <svg class="settings-nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none">${item.icon}</svg>
             <span>${item.label}</span>
-            ${item.soon ? '<span class="settings-nav-soon">Soon</span>' : ''}
+            ${item.soon ? '<span class="settings-nav-soon">Soon</span>' : ""}
           </button>
-        `).join('')}
+        `,
+          )
+          .join("")}
       </div>
-    `).join('');
+    `,
+    ).join("");
   }
 
   function renderCategoryContent() {
     switch (activeCategory) {
-      case 'providers':   return renderProvidersContent();
-      case 'about':       return renderAboutContent();
-      default:            return renderComingSoon(activeCategory);
+      case "providers":
+        return renderProvidersContent();
+      case "about":
+        return renderAboutContent();
+      default:
+        return renderComingSoon(activeCategory);
     }
   }
 
   function renderContent() {
     if (!pageEl) return;
 
-    const contentEl = pageEl.querySelector('.settings-page-content');
+    const contentEl = pageEl.querySelector(".settings-page-content");
     if (!contentEl) return;
 
     contentEl.innerHTML = renderCategoryContent();
     bindContentEvents(contentEl);
 
-    if (activeCategory === 'providers') {
-      const list = contentEl.querySelector('.settings-providers-list');
+    if (activeCategory === "providers") {
+      const list = contentEl.querySelector(".settings-providers-list");
       if (list) {
-        Physics.stagger(list, '.settings-provider-card', {
-          opacity: 0, y: 8, scale: 0.99,
-        }, { preset: 'gentle', delay: 40 });
+        Physics.stagger(
+          list,
+          ".settings-provider-card",
+          {
+            opacity: 0,
+            y: 8,
+            scale: 0.99,
+          },
+          { preset: "gentle", delay: 40 },
+        );
       }
     }
 
     // Update nav active state
-    pageEl.querySelectorAll('.settings-nav-item').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.category === activeCategory);
+    pageEl.querySelectorAll(".settings-nav-item").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.category === activeCategory);
+    });
+  }
+
+  function showApiKeyModal(providerId, providerName, currentKey = "") {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "settings-modal-overlay";
+
+      const modal = document.createElement("div");
+      modal.className = "settings-api-key-modal";
+
+      modal.innerHTML = `
+        <div class="settings-api-key-modal-header">
+          <h3>Enter API Key</h3>
+          <p>${escapeHtml(providerName)}</p>
+        </div>
+        <div class="settings-api-key-modal-content">
+          <input
+            type="password"
+            class="settings-api-key-input"
+            placeholder="Paste your API key here..."
+            value="${escapeHtml(currentKey)}"
+            autocomplete="off"
+          />
+          <label class="settings-api-key-toggle">
+            <input type="checkbox" class="settings-api-key-show" />
+            <span>Show</span>
+          </label>
+        </div>
+        <div class="settings-api-key-modal-actions">
+          <button class="settings-modal-btn settings-modal-cancel">Cancel</button>
+          <button class="settings-modal-btn settings-modal-primary">Save</button>
+        </div>
+      `;
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const input = modal.querySelector(".settings-api-key-input");
+      const toggle = modal.querySelector(".settings-api-key-show");
+      const saveBtn = modal.querySelector(".settings-modal-primary");
+      const cancelBtn = modal.querySelector(".settings-modal-cancel");
+
+      toggle.addEventListener("change", () => {
+        input.type = toggle.checked ? "text" : "password";
+      });
+
+      const close = () => {
+        overlay.remove();
+        resolve(null);
+      };
+
+      const save = () => {
+        const key = input.value.trim();
+        overlay.remove();
+        resolve(key);
+      };
+
+      cancelBtn.addEventListener("click", close);
+      saveBtn.addEventListener("click", save);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") save();
+        if (e.key === "Escape") close();
+      });
+
+      input.focus();
     });
   }
 
@@ -454,14 +592,14 @@ const SettingsStore = (() => {
       </div>
     `;
 
-    pageEl.querySelector('#settingsBackBtn').addEventListener('click', close);
+    pageEl.querySelector("#settingsBackBtn").addEventListener("click", close);
 
-    pageEl.querySelectorAll('.settings-nav-item').forEach((btn) => {
-      btn.addEventListener('click', () => {
+    pageEl.querySelectorAll(".settings-nav-item").forEach((btn) => {
+      btn.addEventListener("click", () => {
         const category = btn.dataset.category;
         if (category === activeCategory) return;
-        if (btn.querySelector('.settings-nav-soon')) {
-          showToast('Coming soon');
+        if (btn.querySelector(".settings-nav-soon")) {
+          showToast("Coming soon");
           return;
         }
         activeCategory = category;
@@ -473,70 +611,174 @@ const SettingsStore = (() => {
   }
 
   function bindContentEvents(container) {
-    container.querySelectorAll('.settings-provider-card').forEach((card) => {
+    // Handle connected provider toggle enable/disable
+    container
+      .querySelectorAll('[data-action="toggle-provider"]')
+      .forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const card = btn.closest(".providers-card-connected");
+          const id = card.dataset.providerId;
+          const provider = getProvider(id);
+          if (provider) {
+            updateProvider(id, { enabled: !provider.enabled }, true);
+            showToast(
+              provider.enabled ? "Provider disabled" : "Provider enabled",
+            );
+          }
+        });
+      });
+
+    // Handle edit API key
+    container
+      .querySelectorAll('[data-action="edit-api-key"]')
+      .forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const card = btn.closest(".providers-card-connected");
+          const id = card.dataset.providerId;
+          const provider = getProvider(id);
+          if (provider) {
+            const key = await showApiKeyModal(
+              id,
+              provider.name,
+              provider.apiKey,
+            );
+            if (key !== null) {
+              updateProvider(id, { apiKey: key }, true);
+              showToast("API key updated");
+            }
+          }
+        });
+      });
+
+    // Handle remove provider
+    container
+      .querySelectorAll('[data-action="remove-provider"]')
+      .forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const card = btn.closest(".providers-card-connected");
+          const id = card.dataset.providerId;
+          if (settings.providers.length <= 1) {
+            showToast("Keep at least one provider");
+            return;
+          }
+          removeProvider(id);
+          showToast("Provider removed");
+        });
+      });
+
+    // Handle connect from popular providers
+    container
+      .querySelectorAll('[data-action="connect-popular"]')
+      .forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const type = btn.dataset.type;
+          const providerExists = settings.providers.some(
+            (p) => p.type === type,
+          );
+          if (providerExists) {
+            showToast("Provider already connected");
+            return;
+          }
+
+          const popularprov = POPULAR_PROVIDERS.find((p) => p.type === type);
+          const key = await showApiKeyModal(null, popularprov?.name || type);
+          if (key !== null) {
+            const id = addProvider(type);
+            const provider = getProvider(id);
+            if (provider) {
+              updateProvider(id, { apiKey: key }, true);
+            }
+            renderContent();
+            showToast("Provider connected");
+          }
+        });
+      });
+
+    // Keep old handling for detailed provider cards (if they exist)
+    container.querySelectorAll(".settings-provider-card").forEach((card) => {
       const id = card.dataset.providerId;
 
-      card.querySelectorAll('[data-field]').forEach((input) => {
+      card.querySelectorAll("[data-field]").forEach((input) => {
         const field = input.dataset.field;
-        const event = input.type === 'checkbox' ? 'change' : 'input';
+        const event = input.type === "checkbox" ? "change" : "input";
 
         input.addEventListener(event, () => {
-          const value = input.type === 'checkbox' ? input.checked : input.value;
-          if (field === 'name' && !value.trim()) return;
-          updateProvider(id, { [field]: value }, field === 'enabled');
+          const value = input.type === "checkbox" ? input.checked : input.value;
+          if (field === "name" && !value.trim()) return;
+          updateProvider(id, { [field]: value }, field === "enabled");
         });
 
-        if (field === 'apiKey') {
-          input.addEventListener('blur', () => renderContent());
+        if (field === "apiKey") {
+          input.addEventListener("blur", () => renderContent());
         }
       });
 
-      card.querySelector('[data-action="remove-provider"]')?.addEventListener('click', () => {
-        if (settings.providers.length <= 1) {
-          showToast('Keep at least one provider');
-          return;
-        }
-        removeProvider(id);
-        showToast('Provider removed');
-      });
+      card
+        .querySelector('[data-action="remove-provider"]')
+        ?.addEventListener("click", () => {
+          if (settings.providers.length <= 1) {
+            showToast("Keep at least one provider");
+            return;
+          }
+          removeProvider(id);
+          showToast("Provider removed");
+        });
 
-      card.querySelector('[data-action="toggle-key"]')?.addEventListener('click', () => {
-        const input = card.querySelector('.settings-api-key-input');
-        input.type = input.type === 'password' ? 'text' : 'password';
-      });
+      card
+        .querySelector('[data-action="toggle-key"]')
+        ?.addEventListener("click", () => {
+          const input = card.querySelector(".settings-api-key-input");
+          input.type = input.type === "password" ? "text" : "password";
+        });
 
       card.querySelectorAll('[data-action="add-model"]').forEach((btn) => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener("click", () => {
           const kind = btn.dataset.kind;
-          const input = card.querySelector(`.settings-add-input[data-kind="${kind}"]`);
-          addModelToProvider(id, input.value, kind === 'imageModels' ? 'image' : 'text');
-          input.value = '';
+          const input = card.querySelector(
+            `.settings-add-input[data-kind="${kind}"]`,
+          );
+          addModelToProvider(
+            id,
+            input.value,
+            kind === "imageModels" ? "image" : "text",
+          );
+          input.value = "";
         });
       });
 
-      card.querySelectorAll('.settings-add-input').forEach((input) => {
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
+      card.querySelectorAll(".settings-add-input").forEach((input) => {
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
             e.preventDefault();
             const kind = input.dataset.kind;
-            addModelToProvider(id, input.value, kind === 'imageModels' ? 'image' : 'text');
-            input.value = '';
+            addModelToProvider(
+              id,
+              input.value,
+              kind === "imageModels" ? "image" : "text",
+            );
+            input.value = "";
           }
         });
       });
 
       card.querySelectorAll('[data-action="remove-model"]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          removeModelFromProvider(id, btn.dataset.model, btn.dataset.kind === 'imageModels' ? 'image' : 'text');
+        btn.addEventListener("click", () => {
+          removeModelFromProvider(
+            id,
+            btn.dataset.model,
+            btn.dataset.kind === "imageModels" ? "image" : "text",
+          );
         });
       });
     });
 
-    container.querySelector('#settingsAddProviderBtn')?.addEventListener('click', () => {
-      const type = container.querySelector('#settingsProviderType').value;
-      addProvider(type);
-      showToast('Provider added');
-    });
+    container
+      .querySelector("#settingsAddProviderBtn")
+      ?.addEventListener("click", () => {
+        const type = container.querySelector("#settingsProviderType").value;
+        addProvider(type);
+        showToast("Provider added");
+      });
   }
 
   function open() {
