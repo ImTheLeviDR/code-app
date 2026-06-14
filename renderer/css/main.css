@@ -1269,23 +1269,6 @@ textarea {
   display: inline;
 }
 
-.md-content.is-streaming .streaming-cursor {
-  display: inline-block;
-  vertical-align: text-bottom;
-  transform: translateY(4px);
-}
-
-.streaming-cursor {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  background: var(--accent);
-  border-radius: 50%;
-  margin-left: 5px;
-  vertical-align: text-bottom;
-  transform: translateY(4px);
-}
-
 .md-content-segment {
   margin-bottom: 0;
 }
@@ -1402,23 +1385,6 @@ textarea {
 
 .md-content.is-streaming .md-stream-body {
   display: inline;
-}
-
-.md-content.is-streaming .streaming-cursor {
-  display: inline-block;
-  vertical-align: text-bottom;
-  transform: translateY(4px);
-}
-
-.streaming-cursor {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  background: var(--accent);
-  border-radius: 50%;
-  margin-left: 5px;
-  vertical-align: text-bottom;
-  transform: translateY(4px);
 }
 
 /* Thinking indicator */

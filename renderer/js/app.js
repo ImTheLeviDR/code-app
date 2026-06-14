@@ -1701,7 +1701,6 @@ function appendStreamFull(run, text) {
   contentEl.innerHTML = `
     <span class="md-stream-wrap">
       <span class="md-stream-body">${parseMarkdown(closeOpenFences(run.content))}</span>
-      <span class="streaming-cursor"></span>
     </span>
   `;
 
@@ -1726,7 +1725,6 @@ function appendStreamDelta(run, delta) {
   contentEl.innerHTML = `
     <span class="md-stream-wrap">
       <span class="md-stream-body">${parseMarkdown(closeOpenFences(run.content))}</span>
-      <span class="streaming-cursor"></span>
     </span>
   `;
 
@@ -2332,7 +2330,6 @@ function streamText(fullText, msgId, chatId, onDone, options = {}) {
     : prefix + fullText;
 
   let streamBody = contentEl.querySelector('.md-stream-body');
-  let cursor = contentEl.querySelector('.streaming-cursor');
 
   if (!streamBody) {
     contentEl.classList.add('is-streaming');
@@ -2341,10 +2338,7 @@ function streamText(fullText, msgId, chatId, onDone, options = {}) {
     streamWrap.className = 'md-stream-wrap';
     streamBody = document.createElement('span');
     streamBody.className = 'md-stream-body';
-    cursor = document.createElement('span');
-    cursor.className = 'streaming-cursor';
     streamWrap.appendChild(streamBody);
-    streamWrap.appendChild(cursor);
     contentEl.appendChild(streamWrap);
     if (prefix && !hasSegment) streamBody.innerHTML = parseMarkdown(prefix);
   }
