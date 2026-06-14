@@ -1295,6 +1295,46 @@ function getToolActivityContainer(msgId) {
   return container;
 }
 
+function getInlineThinkingContainer(msgId) {
+  const msgEl = document.getElementById(`msg-${msgId}`);
+  if (!msgEl) return null;
+
+  const body = msgEl.querySelector('.assistant-body');
+  if (!body) return null;
+
+  let thinking = body.querySelector('.tool-thinking-indicator');
+  if (thinking) return thinking;
+
+  const toolContainer = getToolActivityContainer(msgId);
+  const meta = toolContainer?.parentElement;
+  if (!meta) return null;
+
+  thinking = document.createElement('div');
+  thinking.className = 'thinking-indicator tool-thinking-indicator';
+  thinking.innerHTML = '<span class="thinking-typewriter-text"></span>';
+
+  const toolActivity = meta.querySelector('.tool-activity');
+  if (toolActivity) meta.insertBefore(thinking, toolActivity.nextSibling);
+  else meta.appendChild(thinking);
+
+  startThinkingTypewriter(thinking);
+  return thinking;
+}
+
+function showInlineThinking(run) {
+  if (!run) return;
+
+  const thinking = getInlineThinkingContainer(run.assistantMsgId);
+  if (thinking && !state.userHasScrolledUp) scrollToEnd(false);
+}
+
+function hideInlineThinking(msgId) {
+  const thinking = document.querySelector(`#msg-${msgId} .tool-thinking-indicator`);
+  if (!thinking) return;
+  thinking._stopThinkingTypewriter?.();
+  thinking.remove();
+}
+
 function showToolActivityLine(tc, msgId) {
   const container = getToolActivityContainer(msgId);
   if (!container) return;
@@ -1509,12 +1549,13 @@ async function runAIResponse(chatId, userMessage) {
 function ensureAssistantVisible(run) {
   if (run.started) return;
   run.started = true;
-  stopThinkingIndicator(run.thinkingEl);
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
   if (!msg) return;
 
   run.msgEl = renderMessage(msg, false);
+  showInlineThinking(run);
+  stopThinkingIndicator(run.thinkingEl);
 }
 
 function appendStreamFull(run, text) {
@@ -1583,6 +1624,7 @@ function upsertToolCall(run, toolCall) {
   } else if (toolCall.status === 'complete') {
     if (toolCall.name === 'question') removeInlineQuestion(run.assistantMsgId);
     completeToolActivityLine(toolCall.id, run.assistantMsgId);
+    showInlineThinking(run);
   }
 }
 
@@ -1629,6 +1671,7 @@ function applyLateToolUpdate(chatId, toolCall, sessionId = null) {
 function finalizeAssistantMessage(run) {
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
+  hideInlineThinking(run.assistantMsgId);
   if (!contentEl || !msg) return;
 
   finalizeToolCallsUI(run.assistantMsgId, msg.toolCalls);
@@ -1652,6 +1695,7 @@ function finishAIRun(chatId) {
   if (!run) return;
 
   finalizeAssistantMessage(run);
+  stopThinkingIndicator(run.thinkingEl);
   aiRuns.delete(chatId);
   state.isGenerating = false;
   syncSendButtonState();
@@ -1663,6 +1707,7 @@ function finishAIRun(chatId) {
 function finishAIWithError(chatId, message) {
   const run = aiRuns.get(chatId);
   if (run) {
+    hideInlineThinking(run.assistantMsgId);
     stopThinkingIndicator(run.thinkingEl);
     if (!run.started) {
       const msg = state.chatMessages[chatId]?.find((m) => m.id === run.assistantMsgId);

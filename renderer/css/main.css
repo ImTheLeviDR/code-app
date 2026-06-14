@@ -1429,6 +1429,10 @@ textarea {
   min-height: 1.4em;
 }
 
+.tool-thinking-indicator {
+  padding: 4px 0 10px;
+}
+
 .thinking-typewriter-text {
   white-space: pre-wrap;
 }
