@@ -5,6 +5,7 @@
 'use strict';
 
 const CHAT_STORAGE_KEY = 'code-app-chats';
+const SELECTED_MODEL_KEY = 'code-app-selected-model';
 const PROJECT_COLORS = ['#6d28d9', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#64748b', '#8b5cf6', '#06b6d4'];
 const LEGACY_PROJECT_IDS = new Set([
   'default', 'assistant', 'snycmod', 'llexa', 'translator', 'kvaesitso', 'eaglensserver', 'archive',
@@ -55,6 +56,26 @@ function saveChatState() {
   }
 }
 
+function loadSelectedModelId(savedChatState = null) {
+  try {
+    const stored = localStorage.getItem(SELECTED_MODEL_KEY);
+    if (stored) return stored;
+    if (savedChatState?.selectedModelId) return savedChatState.selectedModelId;
+  } catch {
+    /* ignore */
+  }
+  return MODELS[0]?.id;
+}
+
+function saveSelectedModelId(modelId) {
+  if (!modelId) return;
+  try {
+    localStorage.setItem(SELECTED_MODEL_KEY, modelId);
+  } catch (err) {
+    console.error('Failed to save model preference:', err);
+  }
+}
+
 function createInitialState() {
   const saved = loadPersistedChatState();
   if (saved) {
@@ -68,7 +89,7 @@ function createInitialState() {
       nextMsgId: saved.nextMsgId || 1000,
       isGenerating: false,
       userHasScrolledUp: false,
-      selectedModelId: MODELS[0].id,
+      selectedModelId: loadSelectedModelId(saved),
     };
   }
 
@@ -81,7 +102,7 @@ function createInitialState() {
     nextMsgId: 1000,
     isGenerating: false,
     userHasScrolledUp: false,
-    selectedModelId: MODELS[0].id,
+    selectedModelId: loadSelectedModelId(),
   };
 }
 
@@ -170,6 +191,7 @@ async function openProjectFolder() {
 let modelDropdowns = [];
 let openModelDropdown = null;
 let modelDropdownClickBound = false;
+let modelsLoading = typeof Backend !== 'undefined' && Backend.isAvailable();
 const aiRuns = new Map();
 
 /* ---- DOM refs ---- */
@@ -209,6 +231,10 @@ function init() {
   initBackend();
   updateProjectSelection();
   window.addEventListener('settings-changed', refreshModelDropdowns);
+  window.addEventListener('models-loading', (e) => {
+    modelsLoading = Boolean(e.detail?.loading);
+    syncModelDropdownLabels();
+  });
   showWelcomeScreen({ animateWelcome: true });
   bindEvents();
   setupWindowControls();
@@ -217,9 +243,14 @@ function init() {
 
 function initBackend() {
   if (typeof Backend === 'undefined' || !Backend.isAvailable()) {
+    modelsLoading = false;
     showToast('AI backend unavailable — restart the app');
+    syncModelDropdownLabels();
     return;
   }
+
+  modelsLoading = true;
+  syncModelDropdownLabels();
 
   Backend.onEvent(handleBackendEvent);
 
@@ -237,6 +268,10 @@ function initBackend() {
     .catch((err) => {
       console.error('Backend init failed:', err);
       showToast('AI backend failed to start');
+    })
+    .finally(() => {
+      modelsLoading = false;
+      syncModelDropdownLabels();
     });
 }
 
@@ -275,6 +310,25 @@ function groupModelsByCategory(models) {
 function getModelLabel(modelId) {
   const model = getAvailableModels().find((m) => m.id === modelId);
   return model ? getModelDisplayName(model) : modelId;
+}
+
+function isSelectedModelResolved() {
+  return getAvailableModels().some((m) => m.id === state.selectedModelId);
+}
+
+function shouldShowModelSpinner() {
+  return modelsLoading || !isSelectedModelResolved();
+}
+
+function modelSelectorLabelHTML() {
+  if (shouldShowModelSpinner()) {
+    return '<span class="model-selector-spinner" aria-hidden="true"></span>';
+  }
+  return escapeHtml(getModelLabel(state.selectedModelId));
+}
+
+function syncModelDropdownLabels() {
+  modelDropdowns.forEach((dropdown) => dropdown.syncSelection());
 }
 
 function buildModelMenuHTML(models, selectedId) {
@@ -359,6 +413,7 @@ function closeAllModelDropdowns(instant = false) {
 
 function setSelectedModel(modelId) {
   state.selectedModelId = modelId;
+  saveSelectedModelId(modelId);
   modelDropdowns.forEach((dropdown) => dropdown.syncSelection());
 }
 
@@ -366,6 +421,7 @@ function refreshModelDropdowns() {
   const models = getAvailableModels();
   if (!models.some((m) => m.id === state.selectedModelId)) {
     state.selectedModelId = models[0]?.id ?? state.selectedModelId;
+    saveSelectedModelId(state.selectedModelId);
   }
   initModelDropdowns();
 }
@@ -392,8 +448,8 @@ function createModelDropdown(container) {
   </svg>`;
 
   container.innerHTML = `
-    <button class="model-selector-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
-      <span class="model-selected-label">${escapeHtml(getModelLabel(state.selectedModelId))}</span>
+    <button class="model-selector-trigger${shouldShowModelSpinner() ? ' is-loading' : ''}" type="button" aria-haspopup="listbox" aria-expanded="false"${shouldShowModelSpinner() ? ' aria-busy="true"' : ''}>
+      <span class="model-selected-label">${modelSelectorLabelHTML()}</span>
       ${chevronSvg}
     </button>
     <div class="model-dropdown-menu" role="presentation">
@@ -528,7 +584,11 @@ function createModelDropdown(container) {
   }
 
   function syncSelection() {
-    labelEl.textContent = getModelLabel(state.selectedModelId);
+    const loading = shouldShowModelSpinner();
+    labelEl.innerHTML = modelSelectorLabelHTML();
+    trigger.classList.toggle('is-loading', loading);
+    trigger.setAttribute('aria-busy', String(loading));
+    container.classList.toggle('is-loading', loading);
     container.querySelectorAll('.model-option').forEach((opt) => {
       const isSelected = opt.dataset.modelId === state.selectedModelId;
       opt.classList.toggle('selected', isSelected);
@@ -893,33 +953,147 @@ function assistantAvatarHTML() {
   `;
 }
 
+function formatLineCount(count, word = 'line') {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+function truncateLabel(text, max = 40) {
+  if (!text) return '';
+  const s = String(text);
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+function getGrepPattern(args = {}) {
+  return args.pattern ?? args.regex ?? args.grep;
+}
+
+function getGlobPattern(args = {}) {
+  return args.pattern ?? args.glob_pattern ?? args.glob;
+}
+
+function getWebSearchQuery(args = {}) {
+  return args.query ?? args.q ?? args.search;
+}
+
+function getWebFetchTarget(args = {}) {
+  const url = args.url ?? args.uri ?? '';
+  if (!url) return '';
+  try {
+    return new URL(url).hostname || truncateLabel(url, 48);
+  } catch {
+    return truncateLabel(url, 48);
+  }
+}
+
+function getReadTarget(args = {}) {
+  const path = args.path ?? args.file ?? args.filePath ?? '';
+  if (!path) return '';
+  return path.endsWith('/') || path.endsWith('\\')
+    ? path
+    : (getFileBasename(path) || path);
+}
+
+function isFileMutationTool(name) {
+  return name === 'edit' || name === 'edit_file'
+    || name === 'write' || name === 'write_file'
+    || name === 'create_file';
+}
+
+function normalizeFileMutationName(name) {
+  if (name === 'write' || name === 'write_file') return 'write';
+  if (name === 'create_file') return 'create';
+  if (name === 'edit' || name === 'edit_file') return 'edit';
+  return name;
+}
+
+function getFileMutationRunningLabel(tc) {
+  const file = getFileBasename(tc.args?.path);
+  const { adds, dels } = getToolLineStats(tc);
+  const kind = normalizeFileMutationName(tc.name);
+
+  switch (kind) {
+    case 'write':
+      if (adds > 0 && file) return `Writing ${formatLineCount(adds)} to ${file}...`;
+      return file ? `Writing ${file}...` : 'Writing file...';
+    case 'create':
+      if (adds > 0 && file) return `Creating ${formatLineCount(adds)} in ${file}...`;
+      return file ? `Creating ${file}...` : 'Creating file...';
+    case 'edit':
+      if (file && (adds > 0 || dels > 0)) {
+        let stats = 'Editing ';
+        if (adds > 0) stats += `+${adds}`;
+        if (adds > 0 && dels > 0) stats += ' ';
+        if (dels > 0) stats += `-${dels}`;
+        stats += ` ${adds + dels === 1 ? 'line' : 'lines'} in ${file}...`;
+        return stats;
+      }
+      return file ? `Editing ${file}...` : 'Editing file...';
+    default:
+      return null;
+  }
+}
+
 function getToolActivityLabel(tc) {
   const { name, args = {} } = tc;
-  const basename = getFileBasename(args.path);
+
+  if (isFileMutationTool(name)) {
+    return getFileMutationRunningLabel(tc) || `${name.replace(/_/g, ' ')}...`;
+  }
 
   switch (name) {
-    case 'read_file':
-      return basename ? `Reading ${basename}...` : 'Reading file...';
-    case 'search_codebase':
-      return args.query
-        ? `Searching "${args.query}" in codebase...`
-        : 'Searching codebase...';
-    case 'write_file':
-      return basename ? `Writing ${basename}...` : 'Writing file...';
-    case 'create_file':
-      return basename ? `Creating ${basename}...` : 'Creating file...';
-    case 'edit_file':
-      return basename ? `Editing ${basename}...` : 'Editing file...';
+    case 'read':
+    case 'read_file': {
+      const target = getReadTarget(args);
+      return target ? `Reading ${target}...` : 'Reading file...';
+    }
+    case 'bash':
     case 'run_terminal_cmd':
       return args.command
-        ? `Running ${args.command.length > 36 ? args.command.slice(0, 36) + '…' : args.command}...`
+        ? `Running ${truncateLabel(args.command)}...`
         : 'Running command...';
-    case 'search_files':
-      return args.pattern
-        ? `Searching for "${args.pattern}"...`
-        : 'Searching files...';
+    case 'grep': {
+      const pattern = getGrepPattern(args);
+      return pattern
+        ? `Searching file contents for "${truncateLabel(pattern, 32)}"...`
+        : 'Searching file contents...';
+    }
+    case 'glob':
+    case 'search_files': {
+      const pattern = getGlobPattern(args);
+      return pattern
+        ? `Finding files matching "${truncateLabel(pattern, 32)}"...`
+        : 'Finding files...';
+    }
+    case 'webfetch': {
+      const target = getWebFetchTarget(args);
+      return target ? `Fetching ${target}...` : 'Fetching URL...';
+    }
+    case 'websearch': {
+      const query = getWebSearchQuery(args);
+      return query
+        ? `Searching the web for "${truncateLabel(query, 32)}"...`
+        : 'Searching the web...';
+    }
+    case 'task':
+      return args.description
+        ? `Running sub-agent: ${truncateLabel(args.description, 36)}...`
+        : 'Running sub-agent...';
+    case 'skill':
+      return args.name
+        ? `Loading skill "${truncateLabel(args.name, 32)}"...`
+        : 'Loading skill...';
+    case 'question':
+      return 'Asking a question...';
+    case 'todowrite':
+      return 'Updating task list...';
+    case 'search_codebase': {
+      const query = getWebSearchQuery(args) || getGrepPattern(args);
+      return query
+        ? `Searching "${truncateLabel(query, 32)}" in codebase...`
+        : 'Searching codebase...';
+    }
     case 'list_directory':
-      return args.path ? `Listing ${args.path}...` : 'Listing directory...';
+      return args.path ? `Listing ${truncateLabel(args.path, 40)}...` : 'Listing directory...';
     default:
       return `${name.replace(/_/g, ' ')}...`;
   }
@@ -927,31 +1101,69 @@ function getToolActivityLabel(tc) {
 
 function getToolActivityLabelDone(tc) {
   const { name, args = {} } = tc;
-  const basename = getFileBasename(args.path);
+
+  if (isFileMutationTool(name)) return null;
 
   switch (name) {
-    case 'read_file':
-      return basename ? `Read ${basename}` : 'Read file';
-    case 'search_codebase':
-      return args.query
-        ? `Searched "${args.query}" in codebase`
-        : 'Searched codebase';
-    case 'write_file':
-      return basename ? `Wrote ${basename}` : 'Wrote file';
-    case 'create_file':
-      return basename ? `Created ${basename}` : 'Created file';
-    case 'edit_file':
-      return basename ? `Edited ${basename}` : 'Edited file';
+    case 'read':
+    case 'read_file': {
+      const target = getReadTarget(args);
+      return target ? `Read ${target}` : 'Read file';
+    }
+    case 'bash':
     case 'run_terminal_cmd':
       return args.command
-        ? `Ran ${args.command.length > 36 ? args.command.slice(0, 36) + '…' : args.command}`
+        ? `Ran ${truncateLabel(args.command)}`
         : 'Ran command';
-    case 'search_files':
-      return args.pattern
-        ? `Searched for "${args.pattern}"`
-        : 'Searched files';
+    case 'grep': {
+      const pattern = getGrepPattern(args);
+      return pattern
+        ? `Searched file contents for "${truncateLabel(pattern, 32)}"`
+        : 'Searched file contents';
+    }
+    case 'glob':
+    case 'search_files': {
+      const pattern = getGlobPattern(args);
+      return pattern
+        ? `Found files matching "${truncateLabel(pattern, 32)}"`
+        : 'Found files';
+    }
+    case 'webfetch': {
+      const target = getWebFetchTarget(args);
+      return target ? `Fetched ${target}` : 'Fetched URL';
+    }
+    case 'websearch': {
+      const query = getWebSearchQuery(args);
+      return query
+        ? `Searched the web for "${truncateLabel(query, 32)}"`
+        : 'Searched the web';
+    }
+    case 'task':
+      return args.description
+        ? `Ran sub-agent: ${truncateLabel(args.description, 36)}`
+        : 'Ran sub-agent';
+    case 'skill':
+      return args.name
+        ? `Loaded skill "${truncateLabel(args.name, 32)}"`
+        : 'Loaded skill';
+    case 'question':
+      return 'Asked a question';
+    case 'todowrite':
+      return 'Updated task list';
+    case 'search_codebase': {
+      const query = getWebSearchQuery(args) || getGrepPattern(args);
+      return query
+        ? `Searched "${truncateLabel(query, 32)}" in codebase`
+        : 'Searched codebase';
+    }
+    case 'write_file':
+      return getFileBasename(args.path) ? `Wrote ${getFileBasename(args.path)}` : 'Wrote file';
+    case 'create_file':
+      return getFileBasename(args.path) ? `Created ${getFileBasename(args.path)}` : 'Created file';
+    case 'edit_file':
+      return getFileBasename(args.path) ? `Edited ${getFileBasename(args.path)}` : 'Edited file';
     case 'list_directory':
-      return args.path ? `Listed ${args.path}` : 'Listed directory';
+      return args.path ? `Listed ${truncateLabel(args.path, 40)}` : 'Listed directory';
     default:
       return name.replace(/_/g, ' ');
   }
@@ -961,29 +1173,63 @@ function getFileBasename(path) {
   return path ? String(path).split(/[/\\]/).pop() : '';
 }
 
-function isFileMutationTool(name) {
-  return name === 'edit_file' || name === 'write_file' || name === 'create_file';
+function countContentLines(content) {
+  if (content == null || content === '') return 0;
+  const lines = String(content).split(/\r?\n/);
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines.length;
 }
 
 function getToolLineStats(tc) {
-  const adds = tc.additions ?? tc.args?.additions ?? 0;
-  const dels = tc.deletions ?? tc.args?.deletions ?? 0;
-  return { adds, dels };
+  let adds = tc.additions ?? tc.args?.additions;
+  let dels = tc.deletions ?? tc.args?.deletions;
+
+  if ((adds == null || adds === 0) && (tc.name === 'write' || tc.name === 'write_file' || tc.name === 'create_file')) {
+    const content = tc.args?.content ?? tc.args?.text ?? tc.args?.body;
+    if (content) adds = countContentLines(content);
+  }
+
+  return { adds: adds ?? 0, dels: dels ?? 0 };
 }
 
 function renderFileMutationLineHTML(tc) {
   const file = getFileBasename(tc.args?.path);
-  const verb = { edit_file: 'Edited', write_file: 'Wrote', create_file: 'Created' }[tc.name] || 'Edited';
   const { adds, dels } = getToolLineStats(tc);
-  let stats = '';
-  if (adds > 0) stats += `<span class="tool-edit-stat tool-edit-stat-add">+${adds}</span>`;
-  if (dels > 0) stats += `<span class="tool-edit-stat tool-edit-stat-del">-${dels}</span>`;
-  const statsHtml = stats ? ` <span class="tool-edit-stats">${stats}</span>` : '';
-  return `<span class="tool-activity-verb">${verb}</span><span class="tool-activity-file">${escapeHtml(file)}</span>${statsHtml}`;
+  const kind = normalizeFileMutationName(tc.name);
+
+  if (kind === 'write') {
+    const text = adds > 0 && file
+      ? `Wrote ${formatLineCount(adds)} to ${file}`
+      : (file ? `Wrote ${file}` : 'Wrote file');
+    return `<span class="tool-activity-text">${escapeHtml(text)}</span>`;
+  }
+
+  if (kind === 'create') {
+    const text = adds > 0 && file
+      ? `Created ${formatLineCount(adds)} in ${file}`
+      : (file ? `Created ${file}` : 'Created file');
+    return `<span class="tool-activity-text">${escapeHtml(text)}</span>`;
+  }
+
+  if (kind === 'edit') {
+    if (file && (adds > 0 || dels > 0)) {
+      let html = '<span class="tool-activity-text">Edited </span>';
+      if (adds > 0) html += `<span class="tool-edit-stat tool-edit-stat-add">+${adds}</span>`;
+      if (adds > 0 && dels > 0) html += '<span class="tool-activity-text"> </span>';
+      if (dels > 0) html += `<span class="tool-edit-stat tool-edit-stat-del">-${dels}</span>`;
+      const lineWord = adds + dels === 1 ? 'line' : 'lines';
+      html += `<span class="tool-activity-text"> ${lineWord} in ${escapeHtml(file)}</span>`;
+      return html;
+    }
+    const text = file ? `Edited ${file}` : 'Edited file';
+    return `<span class="tool-activity-text">${escapeHtml(text)}</span>`;
+  }
+
+  return `<span class="tool-activity-text">${escapeHtml(file || 'File')}</span>`;
 }
 
 function isEditToolClickable(tc, running = false) {
-  return !running && tc.name === 'edit_file' && tc.id;
+  return !running && (tc.name === 'edit' || tc.name === 'edit_file') && tc.id;
 }
 
 function renderToolActivityLineHTML(tc, running = false) {
@@ -998,7 +1244,7 @@ function renderToolActivityLineHTML(tc, running = false) {
     return `<div class="${classes}"${idAttr}${attrs}>${renderFileMutationLineHTML(tc)}</div>`;
   }
 
-  const label = running ? getToolActivityLabel(tc) : getToolActivityLabelDone(tc);
+  const label = running ? getToolActivityLabel(tc) : (getToolActivityLabelDone(tc) || getToolActivityLabel(tc));
   return `<div class="tool-activity-line${runClass}"${idAttr}><span class="tool-activity-text">${escapeHtml(label)}</span></div>`;
 }
 
@@ -1052,23 +1298,42 @@ function showToolActivityLine(tc, msgId) {
   const container = getToolActivityContainer(msgId);
   if (!container) return;
 
-  container.querySelectorAll('.tool-activity-line.running').forEach((el) => el.remove());
+  container.querySelectorAll('.tool-activity-line.running').forEach((el) => {
+    const otherId = el.id?.replace(/^tc-/, '');
+    if (otherId && otherId !== tc.id) {
+      completeToolActivityLine(otherId, msgId);
+    }
+  });
 
-  const line = document.createElement('div');
-  line.className = 'tool-activity-line running';
-  line.id = `tc-${tc.id}`;
+  let line = document.getElementById(`tc-${tc.id}`);
+  if (!line) {
+    line = document.createElement('div');
+    line.className = 'tool-activity-line running';
+    line.id = `tc-${tc.id}`;
+    container.appendChild(line);
+  } else {
+    line.classList.remove('done', 'tool-file-edit-line', 'tool-edit-clickable');
+    line.classList.add('running');
+    line.removeAttribute('role');
+    line.removeAttribute('tabindex');
+  }
   line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabel(tc))}</span>`;
-  container.appendChild(line);
 }
 
 function completeToolActivityLine(tcId, msgId) {
-  const line = document.getElementById(`tc-${tcId}`);
-  if (!line) return;
-
   const tc = findToolCallById(tcId);
+  let line = document.getElementById(`tc-${tcId}`);
+  if (!line) {
+    const container = getToolActivityContainer(msgId);
+    if (!container || !tc) return;
+    line = document.createElement('div');
+    line.className = 'tool-activity-line done';
+    line.id = `tc-${tcId}`;
+    container.appendChild(line);
+  }
+  if (!tc) return;
   line.classList.remove('running');
   line.classList.add('done');
-  if (!tc) return;
 
   if (isFileMutationTool(tc.name)) {
     line.classList.add('tool-file-edit-line');
@@ -1204,7 +1469,7 @@ async function runAIResponse(chatId, userMessage) {
         && resolveOpencodeProviderId(p) === providerPrefix,
     );
     if (!hasKey) {
-      thinkingEl.remove();
+      stopThinkingIndicator(thinkingEl);
       const msgs = state.chatMessages[chatId];
       const idx = msgs.findIndex((m) => m.id === assistantMsgId);
       if (idx !== -1) msgs.splice(idx, 1);
@@ -1218,7 +1483,7 @@ async function runAIResponse(chatId, userMessage) {
   }
 
   if (typeof Backend === 'undefined' || !Backend.isAvailable()) {
-    thinkingEl.remove();
+    stopThinkingIndicator(thinkingEl);
     const msgs = state.chatMessages[chatId];
     const idx = msgs.findIndex((m) => m.id === assistantMsgId);
     if (idx !== -1) msgs.splice(idx, 1);
@@ -1242,7 +1507,7 @@ async function runAIResponse(chatId, userMessage) {
 function ensureAssistantVisible(run) {
   if (run.started) return;
   run.started = true;
-  run.thinkingEl?.remove();
+  stopThinkingIndicator(run.thinkingEl);
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
   if (!msg) return;
@@ -1301,17 +1566,48 @@ function upsertToolCall(run, toolCall) {
   run.toolCalls.set(toolCall.id, toolCall);
   msg.toolCalls = Array.from(run.toolCalls.values());
 
-  if (toolCall.status === 'running') {
+  if (toolCall.status === 'pending' || toolCall.status === 'running') {
     showToolActivityLine(toolCall, run.assistantMsgId);
   } else if (toolCall.status === 'complete') {
     completeToolActivityLine(toolCall.id, run.assistantMsgId);
   }
 }
 
+function finalizeToolCallsUI(msgId, toolCalls) {
+  if (!toolCalls?.length) return;
+  for (const tc of toolCalls) {
+    if (tc.status !== 'complete') tc.status = 'complete';
+    completeToolActivityLine(tc.id, msgId);
+  }
+}
+
+function applyLateToolUpdate(chatId, toolCall) {
+  if (!toolCall?.id) return;
+  const msgs = state.chatMessages[chatId];
+  if (!msgs?.length) return;
+
+  const msg = [...msgs].reverse().find((m) => m.role === 'assistant');
+  if (!msg) return;
+
+  if (!msg.toolCalls) msg.toolCalls = [];
+  const idx = msg.toolCalls.findIndex((t) => t.id === toolCall.id);
+  if (idx >= 0) msg.toolCalls[idx] = toolCall;
+  else msg.toolCalls.push(toolCall);
+
+  if (toolCall.status === 'pending' || toolCall.status === 'running') {
+    showToolActivityLine(toolCall, msg.id);
+  } else if (toolCall.status === 'complete') {
+    completeToolActivityLine(toolCall.id, msg.id);
+  }
+  saveChatState();
+}
+
 function finalizeAssistantMessage(run) {
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
   if (!contentEl || !msg) return;
+
+  finalizeToolCallsUI(run.assistantMsgId, msg.toolCalls);
 
   contentEl.classList.remove('is-streaming');
   if (run.content) {
@@ -1343,7 +1639,7 @@ function finishAIRun(chatId) {
 function finishAIWithError(chatId, message) {
   const run = aiRuns.get(chatId);
   if (run) {
-    run.thinkingEl?.remove();
+    stopThinkingIndicator(run.thinkingEl);
     if (!run.started) {
       const msg = state.chatMessages[chatId]?.find((m) => m.id === run.assistantMsgId);
       if (msg) {
@@ -1367,6 +1663,12 @@ function finishAIWithError(chatId, message) {
 
 function handleBackendEvent(event) {
   if (!event?.chatId) return;
+
+  if (event.type === 'tool-update' && !aiRuns.has(event.chatId)) {
+    applyLateToolUpdate(event.chatId, event.toolCall);
+    return;
+  }
+
   const run = aiRuns.get(event.chatId);
   if (!run) return;
 
@@ -1420,7 +1722,7 @@ function simulateAIResponse(chatId, userMessage) {
   scrollToEnd(false);
 
   setTimeout(() => {
-    thinkingEl.remove();
+    stopThinkingIndicator(thinkingEl);
 
     const msgEl = renderMessage(assistantMsg, false);
     runResponsePhases(phases, assistantMsgId, chatId, msgEl, () => {
@@ -1467,7 +1769,7 @@ function mapToolCalls(toolCalls, phaseKey = 0) {
     args: tc.args || {},
     additions: tc.additions,
     deletions: tc.deletions,
-    diff: tc.name === 'edit_file' ? getEditDiffForTool(tc) : undefined,
+    diff: (tc.name === 'edit' || tc.name === 'edit_file') ? getEditDiffForTool(tc) : undefined,
     result: null,
     status: 'pending',
     duration: tc.duration,
@@ -1478,7 +1780,7 @@ function attachDiffsToMessages() {
   for (const chatId of Object.keys(state.chatMessages)) {
     for (const msg of state.chatMessages[chatId]) {
       for (const tc of msg.toolCalls || []) {
-        if (tc.name === 'edit_file' && !tc.diff) {
+        if ((tc.name === 'edit' || tc.name === 'edit_file') && !tc.diff) {
           tc.diff = getEditDiffForTool(tc);
         }
       }
@@ -1512,7 +1814,7 @@ function openEditDiffFromLine(lineEl) {
   const tcId = lineEl.id?.startsWith('tc-') ? lineEl.id.slice(3) : '';
   if (!tcId) return;
   const tc = findToolCallById(tcId);
-  if (tc?.name === 'edit_file') openEditDiffPopup(tc);
+  if (tc?.name === 'edit' || tc?.name === 'edit_file') openEditDiffPopup(tc);
 }
 
 function openEditDiffPopup(tc) {
@@ -1821,6 +2123,90 @@ function streamText(fullText, msgId, chatId, onDone, options = {}) {
    THINKING INDICATOR
    ============================================================ */
 
+function stopThinkingIndicator(el) {
+  if (!el) return;
+  el._stopThinkingTypewriter?.();
+  el.remove();
+}
+
+function startThinkingTypewriter(el) {
+  const textEl = el.querySelector('.thinking-typewriter-text');
+  if (!textEl || !THINKING_MESSAGES?.length) return;
+
+  let timer = null;
+  let messageIdx = Math.floor(Math.random() * THINKING_MESSAGES.length);
+  let charIdx = 0;
+  let deleting = false;
+
+  const rand = (min, max) => min + Math.random() * (max - min);
+
+  function pickNextMessage() {
+    if (THINKING_MESSAGES.length <= 1) return 0;
+    let next = messageIdx;
+    while (next === messageIdx) {
+      next = Math.floor(Math.random() * THINKING_MESSAGES.length);
+    }
+    return next;
+  }
+
+  function typingDelay(char) {
+    let delay = rand(28, 55);
+    if (char === ' ') delay += rand(15, 45);
+    if (char === '.' || char === ',' || char === '?' || char === '!') delay += rand(80, 200);
+    if (char === '…') delay += rand(100, 220);
+    if (Math.random() < 0.06) delay += rand(40, 120);
+    return delay;
+  }
+
+  function schedule(ms, fn) {
+    timer = setTimeout(fn, ms);
+  }
+
+  function tick() {
+    if (!el.isConnected) {
+      schedule(16, tick);
+      return;
+    }
+
+    const message = THINKING_MESSAGES[messageIdx];
+
+    if (!deleting) {
+      charIdx += 1;
+      textEl.textContent = message.slice(0, charIdx);
+
+      if (charIdx >= message.length) {
+        schedule(rand(1200, 2400), () => {
+          deleting = true;
+          tick();
+        });
+        return;
+      }
+
+      schedule(typingDelay(message[charIdx - 1]), tick);
+      return;
+    }
+
+    charIdx -= 1;
+    textEl.textContent = message.slice(0, charIdx);
+
+    if (charIdx <= 0) {
+      deleting = false;
+      messageIdx = pickNextMessage();
+      schedule(rand(200, 500), tick);
+      return;
+    }
+
+    schedule(rand(12, 28), tick);
+  }
+
+  el._stopThinkingTypewriter = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+
+  tick();
+}
+
 function createThinkingIndicator() {
   const el = document.createElement('div');
   el.className = 'message assistant';
@@ -1830,16 +2216,12 @@ function createThinkingIndicator() {
       ${assistantAvatarHTML()}
       <div class="assistant-body">
         <div class="thinking-indicator">
-          <div class="thinking-dots">
-            <div class="thinking-dot"></div>
-            <div class="thinking-dot"></div>
-            <div class="thinking-dot"></div>
-          </div>
-          <span>Thinking...</span>
+          <span class="thinking-typewriter-text"></span>
         </div>
       </div>
     </div>
   `;
+  startThinkingTypewriter(el);
   return el;
 }
 

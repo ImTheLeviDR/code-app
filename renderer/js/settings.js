@@ -67,8 +67,9 @@ const SettingsStore = (() => {
   }
 
   async function refreshModelsFromBackend() {
-    if (typeof Backend === 'undefined' || !Backend.isAvailable()) return getChatModels();
+    window.dispatchEvent(new CustomEvent('models-loading', { detail: { loading: true } }));
     try {
+      if (typeof Backend === 'undefined' || !Backend.isAvailable()) return getChatModels();
       const ready = await Backend.ensureReady();
       if (!ready?.running) return getChatModels();
 
@@ -79,6 +80,8 @@ const SettingsStore = (() => {
       }
     } catch (err) {
       console.error('Failed to load models from backend:', err);
+    } finally {
+      window.dispatchEvent(new CustomEvent('models-loading', { detail: { loading: false } }));
     }
     return getChatModels();
   }

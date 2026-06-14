@@ -30,15 +30,7 @@ function categoryForProvider(provider) {
 }
 
 const TOOL_NAME_MAP = {
-  read: 'read_file',
-  write: 'write_file',
-  edit: 'edit_file',
-  apply_patch: 'edit_file',
-  bash: 'run_terminal_cmd',
-  grep: 'search_codebase',
-  glob: 'search_files',
-  websearch: 'search_codebase',
-  webfetch: 'search_files',
+  apply_patch: 'edit',
 };
 
 let client = null;
@@ -110,7 +102,7 @@ async function pollSessionResponse(chatId, sessionId) {
           error: latest.info.error,
           completed: true,
         });
-        emitEvent({ type: 'done', chatId, sessionId });
+        await emitDone(chatId, sessionId);
         activeRuns.delete(chatId);
         return;
       }
@@ -154,9 +146,7 @@ async function pollSessionResponse(chatId, sessionId) {
 
       const completed = Boolean(latest?.info?.time?.completed);
       if (completed && lastText) {
-        if (emitEvent) {
-          emitEvent({ type: 'done', chatId, sessionId });
-        }
+        await emitDone(chatId, sessionId);
         activeRuns.delete(chatId);
         return;
       }
@@ -261,38 +251,132 @@ function mapToolArgs(toolName, input = {}) {
   const args = { ...input };
   if (args.file && !args.path) args.path = args.file;
   if (args.filePath && !args.path) args.path = args.filePath;
-  if (args.pattern && !args.query) args.query = args.pattern;
   if (args.command && toolName === 'bash') return { command: args.command };
   if (args.path) return { path: args.path, ...args };
   return args;
+}
+
+function mapToolStatus(state = {}) {
+  const raw = state.status;
+  if (raw === 'completed' || raw === 'complete') return 'complete';
+  if (raw === 'error') return 'complete';
+  if (raw === 'running') return 'running';
+  if (state.output != null && state.time?.end != null) return 'complete';
+  return 'pending';
+}
+
+async function flushToolStates(chatId, sessionId) {
+  if (!client || !emitEvent) return;
+  try {
+    const msgRes = await client.session.messages({
+      path: { id: sessionId },
+      ...directoryOptions(),
+    });
+    const latest = getLatestAssistantEntry(msgRes.data || []);
+    for (const part of latest?.parts || []) {
+      if (part.type !== 'tool') continue;
+      emitEvent({
+        type: 'tool-update',
+        chatId,
+        sessionId,
+        messageId: part.messageID,
+        toolCall: mapToolToFrontend(part),
+      });
+    }
+  } catch (_) {
+    /* session may have been removed */
+  }
+}
+
+async function emitDone(chatId, sessionId) {
+  await flushToolStates(chatId, sessionId);
+  if (emitEvent) emitEvent({ type: 'done', chatId, sessionId });
+}
+
+function countDiffLines(diffText) {
+  let additions = 0;
+  let deletions = 0;
+  if (!diffText || typeof diffText !== 'string') return { additions, deletions };
+  for (const line of diffText.split('\n')) {
+    if (line.startsWith('+') && !line.startsWith('+++')) additions += 1;
+    else if (line.startsWith('-') && !line.startsWith('---')) deletions += 1;
+  }
+  return { additions, deletions };
+}
+
+function countContentLines(content) {
+  if (content == null || content === '') return 0;
+  const lines = String(content).split(/\r?\n/);
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines.length;
+}
+
+function extractLineStats(part, state, input) {
+  const meta = state.metadata || part.metadata || {};
+  const filediff = meta.filediff || meta.fileDiff;
+
+  if (filediff && typeof filediff === 'object') {
+    return {
+      additions: filediff.additions ?? 0,
+      deletions: filediff.deletions ?? filediff.removals ?? 0,
+    };
+  }
+
+  let additions = meta.additions ?? meta.added;
+  let deletions = meta.deletions ?? meta.removals ?? meta.removed;
+
+  const diffText = meta.diff || meta.patch || filediff?.patch;
+  if ((additions == null || deletions == null) && typeof diffText === 'string') {
+    const parsed = countDiffLines(diffText);
+    if (additions == null) additions = parsed.additions;
+    if (deletions == null) deletions = parsed.deletions;
+  }
+
+  if ((part.tool === 'write' || part.tool === 'create') && additions == null) {
+    const content = input.content ?? input.text ?? input.body;
+    additions = countContentLines(content);
+  }
+
+  if (additions == null || deletions == null) {
+    const text = `${state.title || ''}\n${state.output || ''}`;
+    const match = text.match(/\+(\d+)\s*[-/]\s*(\d+)/);
+    if (match) {
+      if (additions == null) additions = parseInt(match[1], 10);
+      if (deletions == null) deletions = parseInt(match[2], 10);
+    }
+  }
+
+  return {
+    additions: additions ?? 0,
+    deletions: deletions ?? 0,
+  };
 }
 
 function mapToolToFrontend(part) {
   const state = part.state || {};
   const input = state.input || {};
   const frontendName = TOOL_NAME_MAP[part.tool] || part.tool;
-  const status = state.status === 'completed'
-    ? 'complete'
-    : state.status === 'error'
-      ? 'complete'
-      : state.status === 'running'
-        ? 'running'
-        : 'pending';
+  const status = mapToolStatus(state);
+  const meta = state.metadata || part.metadata || {};
+  const args = mapToolArgs(part.tool, input);
+
+  if (!args.path && meta.filepath) args.path = meta.filepath;
+  if (!args.path && meta.file) args.path = meta.file;
+
+  const { additions, deletions } = extractLineStats(part, state, input);
 
   const tc = {
     id: part.id,
     name: frontendName,
-    args: mapToolArgs(part.tool, input),
+    args,
     status,
-    result: state.status === 'completed' ? state.output : null,
+    result: status === 'complete' ? (state.output ?? null) : null,
     duration: state.time?.end && state.time?.start
       ? Math.max(1, state.time.end - state.time.start)
       : undefined,
+    additions,
+    deletions,
   };
-
-  const meta = state.metadata || {};
-  if (meta.additions != null) tc.additions = meta.additions;
-  if (meta.deletions != null) tc.deletions = meta.deletions;
 
   return tc;
 }
@@ -356,7 +440,7 @@ function handleBusEvent(event) {
       if (!chatId) break;
 
       const role = messageRoles.get(part.messageID);
-      if (role !== 'assistant') break;
+      if (role === 'user') break;
 
       if (part.type === 'text') {
         const delta = event.properties?.delta;
@@ -381,6 +465,7 @@ function handleBusEvent(event) {
       }
 
       if (part.type === 'tool') {
+        messageRoles.set(part.messageID, 'assistant');
         emitEvent({
           type: 'tool-update',
           chatId,
@@ -417,7 +502,7 @@ function handleBusEvent(event) {
       const chatId = getChatIdForSession(sessionId);
       if (!chatId) break;
       activeRuns.delete(chatId);
-      emitEvent({ type: 'done', chatId, sessionId });
+      void emitDone(chatId, sessionId);
       break;
     }
 
