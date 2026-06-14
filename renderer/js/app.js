@@ -52,6 +52,7 @@ const dom = {
 
 function init() {
   Physics.init();
+  attachDiffsToMessages();
   state.projects.forEach((project) => {
     if (project.chats.some((chat) => chat.running)) {
       state.expandedProjects.add(project.id);
@@ -645,12 +646,20 @@ function renderFileMutationLineHTML(tc) {
   return `<span class="tool-activity-verb">${verb}</span><span class="tool-activity-file">${escapeHtml(file)}</span>${statsHtml}`;
 }
 
+function isEditToolClickable(tc, running = false) {
+  return !running && tc.name === 'edit_file' && tc.id;
+}
+
 function renderToolActivityLineHTML(tc, running = false) {
   const runClass = running ? ' running' : ' done';
   const idAttr = tc.id ? ` id="tc-${tc.id}"` : '';
 
   if (!running && isFileMutationTool(tc.name)) {
-    return `<div class="tool-activity-line done tool-file-edit-line"${idAttr}>${renderFileMutationLineHTML(tc)}</div>`;
+    const classes = isEditToolClickable(tc, running)
+      ? 'tool-activity-line done tool-file-edit-line tool-edit-clickable'
+      : 'tool-activity-line done tool-file-edit-line';
+    const attrs = isEditToolClickable(tc, running) ? ' role="button" tabindex="0"' : '';
+    return `<div class="${classes}"${idAttr}${attrs}>${renderFileMutationLineHTML(tc)}</div>`;
   }
 
   const label = running ? getToolActivityLabel(tc) : getToolActivityLabelDone(tc);
@@ -727,6 +736,15 @@ function completeToolActivityLine(tcId, msgId) {
 
   if (isFileMutationTool(tc.name)) {
     line.classList.add('tool-file-edit-line');
+    if (isEditToolClickable(tc, false)) {
+      line.classList.add('tool-edit-clickable');
+      line.setAttribute('role', 'button');
+      line.setAttribute('tabindex', '0');
+    } else {
+      line.classList.remove('tool-edit-clickable');
+      line.removeAttribute('role');
+      line.removeAttribute('tabindex');
+    }
     line.innerHTML = renderFileMutationLineHTML(tc);
   } else {
     line.classList.remove('tool-file-edit-line');
@@ -803,7 +821,7 @@ function sendMessage(text) {
 
   scrollToEnd(false);
   state.isGenerating = true;
-  disableSend(true);
+  syncSendButtonState();
   setChatRunning(chatId, true);
 
   simulateAIResponse(chatId, text.trim());
@@ -834,7 +852,7 @@ function simulateAIResponse(chatId, userMessage) {
     const msgEl = renderMessage(assistantMsg, false);
     runResponsePhases(phases, assistantMsgId, chatId, msgEl, () => {
       state.isGenerating = false;
-      disableSend(false);
+      syncSendButtonState();
       setChatRunning(chatId, false);
       focusInput(dom.chatInput);
     });
@@ -876,10 +894,124 @@ function mapToolCalls(toolCalls, phaseKey = 0) {
     args: tc.args || {},
     additions: tc.additions,
     deletions: tc.deletions,
+    diff: tc.name === 'edit_file' ? getEditDiffForTool(tc) : undefined,
     result: null,
     status: 'pending',
     duration: tc.duration,
   }));
+}
+
+function attachDiffsToMessages() {
+  for (const chatId of Object.keys(state.chatMessages)) {
+    for (const msg of state.chatMessages[chatId]) {
+      for (const tc of msg.toolCalls || []) {
+        if (tc.name === 'edit_file' && !tc.diff) {
+          tc.diff = getEditDiffForTool(tc);
+        }
+      }
+    }
+  }
+}
+
+function getEditDiffForTool(tc) {
+  if (tc.diff) return tc.diff;
+  const path = tc.args?.path || 'file';
+  const sample = EDIT_DIFF_SAMPLES?.[path];
+  if (sample) return { path, ...sample };
+
+  const file = getFileBasename(path);
+  return {
+    path,
+    hunks: [
+      {
+        lines: [
+          { type: 'ctx', text: `// ${file}` },
+          { type: 'del', text: '  // previous implementation' },
+          { type: 'add', text: '  // updated implementation' },
+          { type: 'ctx', text: '  return result;' },
+        ],
+      },
+    ],
+  };
+}
+
+function openEditDiffFromLine(lineEl) {
+  const tcId = lineEl.id?.startsWith('tc-') ? lineEl.id.slice(3) : '';
+  if (!tcId) return;
+  const tc = findToolCallById(tcId);
+  if (tc?.name === 'edit_file') openEditDiffPopup(tc);
+}
+
+function openEditDiffPopup(tc) {
+  closeEditDiffPopup();
+
+  const diff = getEditDiffForTool(tc);
+  const file = getFileBasename(diff.path || tc.args?.path);
+  const { adds, dels } = getToolLineStats(tc);
+  let stats = '';
+  if (adds > 0) stats += `<span class="tool-edit-stat tool-edit-stat-add">+${adds}</span>`;
+  if (dels > 0) stats += `<span class="tool-edit-stat tool-edit-stat-del">-${dels}</span>`;
+  const statsHtml = stats ? `<span class="diff-header-stats">${stats}</span>` : '';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'diff-overlay';
+  overlay.id = 'diffOverlay';
+  overlay.innerHTML = `
+    <div class="diff-modal" role="dialog" aria-modal="true" aria-label="Edit diff for ${escapeHtml(file)}">
+      <div class="diff-header">
+        <div class="diff-header-main">
+          <span class="diff-header-label">Edited</span>
+          <span class="diff-header-file">${escapeHtml(file)}</span>
+          ${statsHtml}
+        </div>
+        <button type="button" class="diff-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="diff-body">${renderDiffHTML(diff)}</div>
+    </div>
+  `;
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeEditDiffPopup();
+  });
+  overlay.querySelector('.diff-close-btn').addEventListener('click', () => closeEditDiffPopup());
+
+  document.body.appendChild(overlay);
+
+  const panel = overlay.querySelector('.diff-modal');
+  Physics.modalIn(overlay, panel);
+  document.addEventListener('keydown', editDiffKeyHandler);
+  overlay.querySelector('.diff-close-btn').focus();
+}
+
+function renderDiffHTML(diff) {
+  const hunks = diff?.hunks || [];
+  if (!hunks.length) {
+    return '<div class="diff-empty">No diff available</div>';
+  }
+
+  return hunks.map((hunk) => {
+    const lines = (hunk.lines || []).map((line) => {
+      const prefix = line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
+      return `
+        <div class="diff-line diff-line-${line.type}">
+          <span class="diff-line-prefix">${prefix}</span>
+          <span class="diff-line-text">${escapeHtml(line.text)}</span>
+        </div>
+      `;
+    }).join('');
+    return `<div class="diff-hunk">${lines}</div>`;
+  }).join('');
+}
+
+function closeEditDiffPopup(overlay = document.getElementById('diffOverlay')) {
+  if (!overlay) return;
+  document.removeEventListener('keydown', editDiffKeyHandler);
+  const panel = overlay.querySelector('.diff-modal');
+  Physics.modalOut(overlay, panel, () => overlay.remove());
+}
+
+function editDiffKeyHandler(e) {
+  if (e.key === 'Escape') closeEditDiffPopup();
 }
 
 function runResponsePhases(phases, msgId, chatId, msgEl, onDone) {
@@ -1172,12 +1304,12 @@ function onMessagesScroll() {
    INPUT HANDLING
    ============================================================ */
 
-function setupInput(textarea, sendBtn) {
+function setupInput(textarea) {
   textarea.addEventListener('input', () => {
     // Auto-resize
     textarea.style.height = 'auto';
     textarea.style.height = Math.min(textarea.scrollHeight, 180) + 'px';
-    sendBtn.disabled = !textarea.value.trim();
+    syncSendButtonState();
   });
 
   textarea.addEventListener('keydown', (e) => {
@@ -1187,7 +1319,7 @@ function setupInput(textarea, sendBtn) {
       const text = textarea.value;
       textarea.value = '';
       textarea.style.height = 'auto';
-      sendBtn.disabled = true;
+      syncSendButtonState();
       sendMessage(text);
     }
   });
@@ -1197,9 +1329,9 @@ function focusInput(input) {
   setTimeout(() => input.focus(), 0);
 }
 
-function disableSend(disabled) {
-  dom.chatSendBtn.disabled = disabled;
-  dom.welcomeSendBtn.disabled = disabled;
+function syncSendButtonState() {
+  dom.welcomeSendBtn.disabled = state.isGenerating || !dom.welcomeInput.value.trim();
+  dom.chatSendBtn.disabled = state.isGenerating || !dom.chatInput.value.trim();
 }
 
 /* ============================================================
@@ -1471,7 +1603,7 @@ function regenerateResponse(btn) {
   if (msgIdx !== -1) msgs.splice(msgIdx, 1);
 
   state.isGenerating = true;
-  disableSend(true);
+  syncSendButtonState();
   setChatRunning(state.selectedChatId, true);
   simulateAIResponse(state.selectedChatId, userText);
 }
@@ -1606,27 +1738,42 @@ function escapeHtml(str) {
 
 function bindEvents() {
   // Welcome input
-  setupInput(dom.welcomeInput, dom.welcomeSendBtn);
+  setupInput(dom.welcomeInput);
   dom.welcomeSendBtn.addEventListener('click', () => {
     const text = dom.welcomeInput.value;
+    if (!text.trim() || state.isGenerating) return;
     dom.welcomeInput.value = '';
     dom.welcomeInput.style.height = 'auto';
-    dom.welcomeSendBtn.disabled = true;
+    syncSendButtonState();
     sendMessage(text);
   });
 
   // Chat input
-  setupInput(dom.chatInput, dom.chatSendBtn);
+  setupInput(dom.chatInput);
   dom.chatSendBtn.addEventListener('click', () => {
     const text = dom.chatInput.value;
+    if (!text.trim() || state.isGenerating) return;
     dom.chatInput.value = '';
     dom.chatInput.style.height = 'auto';
-    dom.chatSendBtn.disabled = true;
+    syncSendButtonState();
     sendMessage(text);
   });
 
   // Messages scroll
   dom.messagesList.addEventListener('scroll', onMessagesScroll);
+
+  dom.messagesList.addEventListener('click', (e) => {
+    const line = e.target.closest('.tool-edit-clickable');
+    if (line) openEditDiffFromLine(line);
+  });
+
+  dom.messagesList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const line = e.target.closest('.tool-edit-clickable');
+    if (!line) return;
+    e.preventDefault();
+    openEditDiffFromLine(line);
+  });
 
   // Scroll to bottom button
   dom.scrollToBottom.addEventListener('click', () => scrollToEnd(false));
@@ -1660,6 +1807,10 @@ function bindEvents() {
     // Escape to go back or close dropdowns
     if (e.key === 'Escape') {
       if (typeof TitlebarMenu !== 'undefined') TitlebarMenu.closeAllMenus();
+      if (document.getElementById('diffOverlay')) {
+        closeEditDiffPopup();
+        return;
+      }
       if (SettingsStore.getIsOpen()) {
         closeSettings();
         return;
@@ -1685,6 +1836,8 @@ function bindEvents() {
       else openSettings();
     }
   });
+
+  syncSendButtonState();
 }
 
 /* ============================================================

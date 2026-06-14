@@ -674,6 +674,112 @@ const AI_RESPONSE_TEMPLATES = [
   },
 ];
 
+/* Sample diffs for edit_file tool calls (keyed by path) */
+const EDIT_DIFF_SAMPLES = {
+  'src/middleware/auth.ts': {
+    hunks: [
+      {
+        lines: [
+          { type: 'ctx', text: 'export function authMiddleware(req, res, next) {' },
+          { type: 'del', text: '  const token = req.headers.authorization;' },
+          { type: 'add', text: '  const authHeader = req.headers.authorization;' },
+          { type: 'add', text: '  const token = authHeader?.startsWith("Bearer ")' },
+          { type: 'add', text: '    ? authHeader.slice(7)' },
+          { type: 'add', text: '    : authHeader;' },
+          { type: 'ctx', text: '  const payload = jwt.verify(token, process.env.JWT_SECRET);' },
+        ],
+      },
+    ],
+  },
+  'SearchProvider.kt': {
+    hunks: [
+      {
+        lines: [
+          { type: 'ctx', text: 'fun buildSearchUrl(baseUrl: String, query: String): String {' },
+          { type: 'del', text: '    val searchUrl = baseUrl + "/" + query.encodeUrl()' },
+          { type: 'add', text: '    val normalized = baseUrl.trimEnd(\'/\')' },
+          { type: 'add', text: '    val searchUrl = "$normalized/${query.encodeUrl()}"' },
+          { type: 'ctx', text: '    return searchUrl' },
+        ],
+      },
+    ],
+  },
+  'src/handler.ts': {
+    hunks: [
+      {
+        lines: [
+          { type: 'ctx', text: 'export async function handleRequest(req: Request) {' },
+          { type: 'del', text: '  const data = fetchData();' },
+          { type: 'add', text: '  const data = await fetchData();' },
+          { type: 'ctx', text: '  return processData(data);' },
+        ],
+      },
+    ],
+  },
+  'src/index.ts': {
+    hunks: [
+      {
+        lines: [
+          { type: 'ctx', text: "export { Button } from './components/Button';" },
+          { type: 'add', text: "export { Component } from './components/Component';" },
+        ],
+      },
+    ],
+  },
+  'src/hooks/useDataFetching.ts': {
+    hunks: [
+      {
+        lines: [
+          { type: 'ctx', text: 'export function useDataFetching() {' },
+          { type: 'del', text: '  const getData = () => { /* duplicated logic */ };' },
+          { type: 'add', text: '  const fetchUserProfile = async (id: string) => {' },
+          { type: 'add', text: '    const res = await fetch(`/api/users/${id}`);' },
+          { type: 'add', text: '    if (!res.ok) return null;' },
+          { type: 'add', text: '    return res.json();' },
+          { type: 'add', text: '  };' },
+          { type: 'ctx', text: '  return { fetchUserProfile };' },
+        ],
+      },
+    ],
+  },
+  'src/api/users.ts': {
+    hunks: [
+      {
+        lines: [
+          { type: 'ctx', text: 'router.get("/users/:id", async (req, res) => {' },
+          { type: 'del', text: '  const user = await db.user.find(req.params.id);' },
+          { type: 'add', text: '  const user = await db.user.findUnique({ where: { id: req.params.id } });' },
+          { type: 'ctx', text: '  res.json(user);' },
+        ],
+      },
+    ],
+  },
+  'src/api/posts.ts': {
+    hunks: [
+      {
+        lines: [
+          { type: 'ctx', text: 'router.get("/posts/:id", async (req, res) => {' },
+          { type: 'del', text: '  const post = await db.post.find(req.params.id);' },
+          { type: 'add', text: '  const post = await db.post.findUnique({ where: { id: req.params.id } });' },
+          { type: 'ctx', text: '  res.json(post);' },
+        ],
+      },
+    ],
+  },
+  'src/services/OrderService.ts': {
+    hunks: [
+      {
+        lines: [
+          { type: 'ctx', text: 'async createOrder(input: CreateOrderInput) {' },
+          { type: 'del', text: '  return this.db.order.insert(input);' },
+          { type: 'add', text: '  return this.db.order.create({ data: input });' },
+          { type: 'ctx', text: '}' },
+        ],
+      },
+    ],
+  },
+};
+
 function getAITemplate(userMessage) {
   for (const template of AI_RESPONSE_TEMPLATES) {
     if (template.match.test(userMessage)) {
