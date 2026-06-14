@@ -925,23 +925,80 @@ function renderMessage(msg, animate = true) {
       </div>
     `;
   } else {
-    el.innerHTML = `
-      <div class="message-wrapper">
-        ${assistantAvatarHTML()}
-        <div class="assistant-body">
-          <div class="assistant-meta">
-            ${msg.toolCalls && msg.toolCalls.length ? renderToolCallsHTML(msg.toolCalls, msg.id) : ''}
-          </div>
-          <div class="md-content" id="content-${msg.id}">${msg.content ? parseMarkdown(msg.content) : ''}</div>
-          ${msg.content ? renderMessageActionsHTML() : ''}
-        </div>
-      </div>
-    `;
+    el.innerHTML = buildAssistantHTML(msg);
   }
 
   dom.messagesList.appendChild(el);
   if (animate) Physics.messageIn(el);
   return el;
+}
+
+function buildDefaultSegments(msg) {
+  const hasTools = msg.toolCalls?.length > 0;
+  const hasContent = !!msg.content;
+
+  if (!hasTools && !hasContent) return [];
+
+  const segs = [];
+  if (hasTools && hasContent && msg.eventLog?.length) {
+    const firstToolIdx = msg.eventLog.findIndex((e) => e.type === 'tool');
+    const firstTextIdx = msg.eventLog.findIndex((e) => e.type === 'text');
+    if (firstToolIdx !== -1 && (firstTextIdx === -1 || firstToolIdx < firstTextIdx)) {
+      segs.push({ type: 'tools', toolCalls: msg.toolCalls });
+      segs.push({ type: 'content', text: msg.content });
+    } else {
+      segs.push({ type: 'content', text: msg.content });
+      segs.push({ type: 'tools', toolCalls: msg.toolCalls });
+    }
+  } else if (hasTools) {
+    segs.push({ type: 'tools', toolCalls: msg.toolCalls });
+  } else {
+    segs.push({ type: 'content', text: msg.content });
+  }
+  return segs;
+}
+
+function buildAssistantHTML(msg) {
+  const segments = msg.segments?.length ? msg.segments : buildDefaultSegments(msg);
+
+  if (!segments.length) {
+    return `
+      <div class="message-wrapper">
+        ${assistantAvatarHTML()}
+        <div class="assistant-body">
+          <div class="md-content" id="content-${msg.id}"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  const parts = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const isLast = i === segments.length - 1;
+    if (seg.type === 'tools') {
+      parts.push(`<div class="assistant-meta">${renderToolCallsHTML(seg.toolCalls, msg.id)}</div>`);
+    } else {
+      if (isLast) {
+        parts.push(`<div class="md-content" id="content-${msg.id}">${parseMarkdown(seg.text || '')}</div>`);
+      } else {
+        parts.push(`<div class="md-content md-content-segment">${parseMarkdown(seg.text || '')}</div>`);
+      }
+    }
+  }
+
+  const lastSeg = segments[segments.length - 1];
+  const hasActions = lastSeg?.type === 'content';
+
+  return `
+    <div class="message-wrapper">
+      ${assistantAvatarHTML()}
+      <div class="assistant-body">
+        ${parts.join('')}
+        ${hasActions ? renderMessageActionsHTML() : ''}
+      </div>
+    </div>
+  `;
 }
 
 function assistantAvatarHTML() {
@@ -1258,7 +1315,13 @@ function getActiveToolMeta(body) {
   if (!body) return null;
   const contentEl = body.querySelector('.md-content:not(.md-content-segment)');
   if (contentEl) {
-    let sibling = contentEl.previousElementSibling;
+    let sibling = contentEl.nextElementSibling;
+    while (sibling) {
+      if (sibling.classList.contains('assistant-meta')) return sibling;
+      if (sibling.classList.contains('message-actions')) break;
+      sibling = sibling.nextElementSibling;
+    }
+    sibling = contentEl.previousElementSibling;
     while (sibling) {
       if (sibling.classList.contains('assistant-meta')) return sibling;
       sibling = sibling.previousElementSibling;
@@ -1280,8 +1343,16 @@ function getToolActivityContainer(msgId) {
     meta = document.createElement('div');
     meta.className = 'assistant-meta';
     const content = body.querySelector('.md-content');
-    if (content) body.insertBefore(meta, content);
-    else body.prepend(meta);
+    if (content) {
+      const hasText = content.textContent.trim().length > 0;
+      if (hasText) {
+        body.insertBefore(meta, content.nextSibling);
+      } else {
+        body.insertBefore(meta, content);
+      }
+    } else {
+      body.prepend(meta);
+    }
   }
 
   let container = meta.querySelector('.tool-activity');
@@ -1488,6 +1559,7 @@ async function runAIResponse(chatId, userMessage) {
     toolCalls: [],
     content: '',
     segments: [],
+    eventLog: [],
   };
   state.chatMessages[chatId].push(assistantMsg);
 
@@ -1567,7 +1639,10 @@ function appendStreamFull(run, text) {
   run.content = text;
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
-  if (msg) msg.content = run.content;
+  if (msg) {
+    msg.content = run.content;
+    if (msg.eventLog) msg.eventLog.push({ type: 'text', seq: msg.eventLog.length });
+  }
 
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
   if (!contentEl) return;
@@ -1589,7 +1664,10 @@ function appendStreamDelta(run, delta) {
   run.content += delta;
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
-  if (msg) msg.content = run.content;
+  if (msg) {
+    msg.content = run.content;
+    if (msg.eventLog) msg.eventLog.push({ type: 'text', seq: msg.eventLog.length });
+  }
 
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
   if (!contentEl) return;
@@ -1613,6 +1691,10 @@ function upsertToolCall(run, toolCall) {
 
   run.toolCalls.set(toolCall.id, toolCall);
   msg.toolCalls = Array.from(run.toolCalls.values());
+
+  if ((toolCall.status === 'pending' || toolCall.status === 'running') && msg.eventLog) {
+    msg.eventLog.push({ type: 'tool', seq: msg.eventLog.length });
+  }
 
   if (toolCall.status === 'pending' || toolCall.status === 'running') {
     hideInlineThinking(run.assistantMsgId);
@@ -1674,6 +1756,35 @@ function applyLateToolUpdate(chatId, toolCall, sessionId = null) {
   saveChatState();
 }
 
+function buildSegmentsFromDOM(msgId, chatId) {
+  const msg = state.chatMessages[chatId]?.find((m) => m.id === msgId);
+  if (!msg) return;
+  const body = document.querySelector(`#msg-${msgId} .assistant-body`);
+  if (!body) return;
+  const segments = [];
+  let contentAdded = false;
+  for (const child of body.children) {
+    if (child.classList.contains('assistant-meta')) {
+      const lines = child.querySelectorAll('.tool-activity-line');
+      const toolCalls = [];
+      lines.forEach((line) => {
+        const id = line.id?.replace(/^tc-/, '');
+        const tc = msg.toolCalls?.find((t) => t.id === id);
+        if (tc) toolCalls.push(tc);
+      });
+      if (toolCalls.length) segments.push({ type: 'tools', toolCalls });
+    } else if (child.classList.contains('md-content') && !child.classList.contains('md-content-segment')) {
+      if (msg.content && !contentAdded) {
+        segments.push({ type: 'content', text: msg.content });
+        contentAdded = true;
+      }
+    } else if (child.classList.contains('md-content-segment')) {
+      segments.push({ type: 'content', text: child.innerHTML });
+    }
+  }
+  if (segments.length) msg.segments = segments;
+}
+
 function finalizeAssistantMessage(run) {
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
@@ -1694,6 +1805,8 @@ function finalizeAssistantMessage(run) {
   } else if (!msg.toolCalls?.length) {
     contentEl.innerHTML = '<p><em>No response received.</em></p>';
   }
+
+  buildSegmentsFromDOM(run.assistantMsgId, run.chatId);
 }
 
 function finishAIRun(chatId) {
@@ -1798,6 +1911,7 @@ function simulateAIResponse(chatId, userMessage) {
     toolCalls: startsWithTools ? mapToolCalls(phases[0].toolCalls, 0) : [],
     content: '',
     segments: [],
+    eventLog: [],
   };
   state.chatMessages[chatId].push(assistantMsg);
 
@@ -1864,7 +1978,17 @@ function mapToolCalls(toolCalls, phaseKey = 0) {
 function attachDiffsToMessages() {
   for (const chatId of Object.keys(state.chatMessages)) {
     for (const msg of state.chatMessages[chatId]) {
-      for (const tc of msg.toolCalls || []) {
+      const allTools = [];
+      if (msg.segments?.length) {
+        for (const seg of msg.segments) {
+          if (seg.type === 'tools' && seg.toolCalls) {
+            allTools.push(...seg.toolCalls);
+          }
+        }
+      } else if (msg.toolCalls?.length) {
+        allTools.push(...msg.toolCalls);
+      }
+      for (const tc of allTools) {
         if ((tc.name === 'edit' || tc.name === 'edit_file') && !tc.diff) {
           tc.diff = getEditDiffForTool(tc);
         }
@@ -1979,6 +2103,14 @@ function runResponsePhases(phases, msgId, chatId, msgEl, onDone) {
 
   function runNextPhase() {
     if (phaseIdx >= phases.length) {
+      const msg = state.chatMessages[chatId]?.find((m) => m.id === msgId);
+      if (msg) {
+        msg.segments = msg.segments || [];
+        if (msg.content) {
+          msg.segments.push({ type: 'content', text: msg.content });
+          msg.content = '';
+        }
+      }
       onDone();
       return;
     }
@@ -2005,12 +2137,21 @@ function startToolsPhase(toolCallsTemplate, msgId, chatId, msgEl, phaseKey, onDo
   }
 
   const toolCalls = mapToolCalls(toolCallsTemplate, phaseKey);
-  const msg = state.chatMessages[chatId]?.find((m) => m.id === msgId);
-  if (msg) msg.toolCalls = toolCalls;
 
   const body = msgEl.querySelector('.assistant-body');
   const contentEl = document.getElementById(`content-${msgId}`);
   const hasPriorText = Boolean(contentEl?.innerHTML.trim());
+
+  const msg = state.chatMessages[chatId]?.find((m) => m.id === msgId);
+  if (msg) {
+    msg.segments = msg.segments || [];
+    if (hasPriorText && msg.content) {
+      msg.segments.push({ type: 'content', text: msg.content });
+      msg.content = '';
+    }
+    msg.toolCalls = toolCalls;
+    msg.segments.push({ type: 'tools', toolCalls });
+  }
 
   if (hasPriorText) {
     const prior = document.createElement('div');
@@ -2079,6 +2220,14 @@ function findToolCallById(tcId) {
     for (const msg of state.chatMessages[chatId]) {
       const tc = msg.toolCalls?.find((t) => t.id === tcId);
       if (tc) return tc;
+      if (msg.segments?.length) {
+        for (const seg of msg.segments) {
+          if (seg.type === 'tools') {
+            const found = seg.toolCalls?.find((t) => t.id === tcId);
+            if (found) return found;
+          }
+        }
+      }
     }
   }
   return null;
