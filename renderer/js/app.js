@@ -50,6 +50,7 @@ function saveChatState() {
       chatMessages: state.chatMessages,
       nextMsgId: state.nextMsgId,
       selectedProjectId: state.selectedProjectId,
+      expandedChatLists: Array.from(state.expandedChatLists),
     }));
   } catch (err) {
     console.error('Failed to save chats:', err);
@@ -85,6 +86,7 @@ function createInitialState() {
       selectedProjectId: saved.selectedProjectId,
       selectedChatId: null,
       expandedProjects: new Set(expanded),
+      expandedChatLists: new Set(saved.expandedChatLists || []),
       chatMessages: saved.chatMessages || {},
       nextMsgId: saved.nextMsgId || 1000,
       isGenerating: false,
@@ -98,6 +100,7 @@ function createInitialState() {
     selectedProjectId: null,
     selectedChatId: null,
     expandedProjects: new Set(),
+    expandedChatLists: new Set(),
     chatMessages: {},
     nextMsgId: 1000,
     isGenerating: false,
@@ -682,16 +685,36 @@ function renderSidebar() {
         ${project.name[0].toUpperCase()}
       </div>
       <span class="project-name">${project.name}</span>
+      <button class="project-add-chat" title="New chat">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
     `;
 
     header.addEventListener('click', () => toggleProject(project.id));
+
+    const addChatBtn = header.querySelector('.project-add-chat');
+    addChatBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.selectedProjectId = project.id;
+      if (!state.expandedProjects.has(project.id)) {
+        state.expandedProjects.add(project.id);
+      }
+      showWelcomeScreen();
+      focusInput(dom.welcomeInput);
+    });
 
     // Chats list
     const chatsDiv = document.createElement('div');
     chatsDiv.className = `project-chats ${isExpanded ? 'expanded' : 'collapsed'}`;
     chatsDiv.id = `chats-${project.id}`;
 
-    const visibleChats = project.chats.slice(0, 5);
+    const maxVisibleChats = 5;
+    const isChatListExpanded = state.expandedChatLists.has(project.id);
+    const visibleChats = isChatListExpanded
+      ? project.chats
+      : project.chats.slice(0, maxVisibleChats);
     const hiddenCount = project.chats.length - visibleChats.length;
 
     visibleChats.forEach((chat) => {
@@ -705,9 +728,22 @@ function renderSidebar() {
       showMore.textContent = `Show ${hiddenCount} more`;
       showMore.addEventListener('click', (e) => {
         e.stopPropagation();
-        // TODO: expand
+        state.expandedChatLists.add(project.id);
+        saveChatState();
+        renderSidebar();
       });
       chatsDiv.appendChild(showMore);
+    } else if (isChatListExpanded && project.chats.length > maxVisibleChats) {
+      const showLess = document.createElement('button');
+      showLess.className = 'show-more-btn';
+      showLess.textContent = 'Show less';
+      showLess.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.expandedChatLists.delete(project.id);
+        saveChatState();
+        renderSidebar();
+      });
+      chatsDiv.appendChild(showLess);
     }
 
     group.appendChild(header);

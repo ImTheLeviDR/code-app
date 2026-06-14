@@ -522,6 +522,32 @@ textarea {
   white-space: nowrap;
 }
 
+.project-add-chat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.project-header:hover .project-add-chat {
+  opacity: 1;
+}
+
+.project-add-chat:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .project-chats {
   overflow: hidden;
 }
