@@ -1,7 +1,90 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 
 let mainWindow;
+let tray = null;
+let trayMenu = null;
+let isQuitting = false;
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(process.execPath);
+}
+
+// Notification area icon (32x32, shown under "Show hidden icons")
+const TRAY_ICON_PATH = path.join(__dirname, 'tray-icon.png');
+
+function createTrayIcon() {
+  const icon = nativeImage.createFromPath(TRAY_ICON_PATH);
+  if (icon.isEmpty()) {
+    return nativeImage.createFromDataURL(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAKklEQVQ4y2NgGAWjYBSMglEwCkbBKEhPT1f7' +
+      'DwAAGA8B/XH3+1QAAAAASUVORK5CYII='
+    );
+  }
+  if (process.platform === 'darwin') icon.setTemplateImage(true);
+  return icon;
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (process.platform === 'win32') mainWindow.setSkipTaskbar(false);
+  if (!mainWindow.isVisible()) mainWindow.show();
+
+  if (process.platform === 'win32') {
+    mainWindow.setAlwaysOnTop(true, 'pop-up-menu');
+    mainWindow.focus();
+    mainWindow.setAlwaysOnTop(false);
+    return;
+  }
+
+  mainWindow.focus();
+}
+
+function createTray() {
+  if (tray) return;
+
+  tray = new Tray(createTrayIcon());
+  tray.setToolTip('Code app');
+
+  trayMenu = Menu.buildFromTemplate([
+    { label: 'Show Code app', click: showMainWindow },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+
+  // Left-click the notification icon (including "Show hidden icons").
+  // Do not use setContextMenu() on Windows — it can swallow left-click.
+  tray.on('click', showMainWindow);
+  tray.on('double-click', showMainWindow);
+  tray.on('right-click', () => {
+    tray.popUpContextMenu(trayMenu);
+  });
+}
+
+function hideMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  mainWindow.hide();
+  if (process.platform === 'win32') {
+    mainWindow.setSkipTaskbar(true);
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -25,6 +108,12 @@ function createWindow() {
     mainWindow.show();
   });
 
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    hideMainWindow();
+  });
+
   mainWindow.on('maximize', () => {
     mainWindow.webContents.send('window-state', 'maximized');
   });
@@ -34,14 +123,26 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return;
+  createWindow();
+  createTray();
+});
+
+app.on('second-instance', () => {
+  showMainWindow();
+});
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // Keep running in the notification area.
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  showMainWindow();
 });
 
 ipcMain.on('window-minimize', () => mainWindow?.minimize());
@@ -52,4 +153,8 @@ ipcMain.on('window-maximize', () => {
     mainWindow?.maximize();
   }
 });
-ipcMain.on('window-close', () => mainWindow?.close());
+ipcMain.on('window-close', () => hideMainWindow());
+ipcMain.on('window-quit', () => {
+  isQuitting = true;
+  app.quit();
+});

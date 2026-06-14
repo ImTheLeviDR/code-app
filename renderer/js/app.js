@@ -42,6 +42,8 @@ const dom = {
   minimizeBtn:      $('minimizeBtn'),
   maximizeBtn:      $('maximizeBtn'),
   closeBtn:         $('closeBtn'),
+  titlebarLogoWrap:   $('titlebarLogoWrap'),
+  titlebarDragRegion: $('titlebarDragRegion'),
 };
 
 /* ============================================================
@@ -50,6 +52,11 @@ const dom = {
 
 function init() {
   Physics.init();
+  state.projects.forEach((project) => {
+    if (project.chats.some((chat) => chat.running)) {
+      state.expandedProjects.add(project.id);
+    }
+  });
   renderSidebar();
   initModelDropdowns();
   window.addEventListener('settings-changed', refreshModelDropdowns);
@@ -163,6 +170,7 @@ function createModelDropdown(container) {
   }
 
   function open() {
+    if (typeof TitlebarMenu !== 'undefined') TitlebarMenu.closeAllMenus();
     closeAllModelDropdowns(true);
     container.classList.add('open');
     trigger.setAttribute('aria-expanded', 'true');
@@ -229,13 +237,34 @@ function createModelDropdown(container) {
    WINDOW CONTROLS
    ============================================================ */
 
+const MAXIMIZE_ICON = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect width="9" height="9" x=".5" y=".5" fill="none" stroke="currentColor"/></svg>';
+const RESTORE_ICON = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 1.5h5v5h-5v-5zm.5.5v4h4v-4H4zM1.5 3.5h5v5h-5v-5zm.5.5v4h4v-4H2z" fill="none" stroke="currentColor" stroke-width=".9"/></svg>';
+
+function updateMaximizeButton(isMaximized) {
+  dom.maximizeBtn.innerHTML = isMaximized ? RESTORE_ICON : MAXIMIZE_ICON;
+  dom.maximizeBtn.title = isMaximized ? 'Restore down' : 'Maximize';
+  dom.maximizeBtn.setAttribute('aria-label', isMaximized ? 'Restore down' : 'Maximize');
+  dom.maximizeBtn.classList.toggle('is-maximized', isMaximized);
+}
+
 function setupWindowControls() {
+  const toggleMaximize = () => {
+    if (window.electronAPI) window.electronAPI.maximize();
+  };
+
+  dom.titlebarLogoWrap?.addEventListener('click', () => {
+    toggleSidebar();
+  });
+
+  dom.titlebarDragRegion?.addEventListener('dblclick', toggleMaximize);
+
   if (!window.electronAPI) return;
+
   dom.minimizeBtn.addEventListener('click', () => window.electronAPI.minimize());
-  dom.maximizeBtn.addEventListener('click', () => window.electronAPI.maximize());
+  dom.maximizeBtn.addEventListener('click', toggleMaximize);
   dom.closeBtn.addEventListener('click', () => window.electronAPI.close());
   window.electronAPI.onWindowState((state) => {
-    // Could update maximize icon here
+    updateMaximizeButton(state === 'maximized');
   });
 }
 
@@ -301,16 +330,49 @@ function renderSidebar() {
   });
 }
 
+function findChatById(chatId) {
+  for (const project of state.projects) {
+    const chat = project.chats.find((c) => c.id === chatId);
+    if (chat) return chat;
+  }
+  return null;
+}
+
+function renderChatItemContent(chat) {
+  const isRunning = !!chat.running;
+
+  return `
+    <span class="chat-item-title">${escapeHtml(chat.title)}</span>
+    ${isRunning
+      ? '<span class="chat-item-spinner" aria-label="Running"></span>'
+      : `<span class="chat-item-time">${chat.time}</span>`}
+  `;
+}
+
+function syncChatItem(chatId) {
+  const chat = findChatById(chatId);
+  const el = document.querySelector(`.chat-item[data-chat-id="${chatId}"]`);
+  if (!chat || !el) return;
+
+  el.classList.toggle('running', !!chat.running);
+  el.innerHTML = renderChatItemContent(chat);
+}
+
+function setChatRunning(chatId, running) {
+  const chat = findChatById(chatId);
+  if (!chat) return;
+
+  chat.running = running;
+  syncChatItem(chatId);
+}
+
 function createChatItem(chat, projectId) {
   const item = document.createElement('div');
-  item.className = `chat-item${chat.id === state.selectedChatId ? ' active' : ''}`;
+  item.className = `chat-item${chat.id === state.selectedChatId ? ' active' : ''}${chat.running ? ' running' : ''}`;
   item.dataset.chatId = chat.id;
   item.dataset.projectId = projectId;
 
-  item.innerHTML = `
-    <span class="chat-item-title">${escapeHtml(chat.title)}</span>
-    <span class="chat-item-time">${chat.time}</span>
-  `;
+  item.innerHTML = renderChatItemContent(chat);
 
   item.addEventListener('click', () => openChat(chat.id, chat.title, projectId));
   return item;
@@ -742,6 +804,7 @@ function sendMessage(text) {
   scrollToEnd(false);
   state.isGenerating = true;
   disableSend(true);
+  setChatRunning(chatId, true);
 
   simulateAIResponse(chatId, text.trim());
 }
@@ -772,6 +835,7 @@ function simulateAIResponse(chatId, userMessage) {
     runResponsePhases(phases, assistantMsgId, chatId, msgEl, () => {
       state.isGenerating = false;
       disableSend(false);
+      setChatRunning(chatId, false);
       focusInput(dom.chatInput);
     });
   }, 600);
@@ -1408,6 +1472,7 @@ function regenerateResponse(btn) {
 
   state.isGenerating = true;
   disableSend(true);
+  setChatRunning(state.selectedChatId, true);
   simulateAIResponse(state.selectedChatId, userText);
 }
 
@@ -1421,23 +1486,105 @@ function setRandomWelcomeSubtitle() {
 }
 
 function animateWelcomeInputPlaceholders() {
-  const placeholders = [
-    'Ask anything...',
-    'Refactor my authentication module...',
-    'Debug this TypeScript error...',
-    'Write tests for my API endpoints...',
-    'Explain how this code works...',
-    'Create a React component for...',
-    'Optimize my database queries...',
+  const prefix = 'Try ';
+  const suffixes = [
+    'anything new...',
+    'refactor my authentication module...',
+    'debug this TypeScript error...',
+    'write tests for my API endpoints...',
+    'explain how this code works...',
+    'create a React component for...',
+    'optimize my database queries...',
   ];
-  let idx = 0;
 
-  function cycle() {
-    idx = (idx + 1) % placeholders.length;
-    dom.welcomeInput.setAttribute('placeholder', placeholders[idx]);
+  let suffixIdx = 0;
+  let charIdx = 0;
+  let deleting = false;
+  let timer = null;
+
+  const rand = (min, max) => min + Math.random() * (max - min);
+
+  function setPlaceholder(text) {
+    dom.welcomeInput.setAttribute('placeholder', prefix + text);
   }
 
-  setInterval(cycle, 3500);
+  function typingDelay(char, prevChar) {
+    let delay = rand(42, 78);
+
+    if (prevChar === ' ') delay += rand(10, 38);
+    if (char === ' ') delay += rand(24, 90);
+    if (char === ',') delay += rand(95, 220);
+    if (char === '.' || char === '?' || char === '!') delay += rand(150, 360);
+
+    if (char === ' ' && Math.random() < 0.14) {
+      delay += rand(120, 280);
+    }
+
+    if (Math.random() < 0.08) delay += rand(60, 150);
+
+    return delay;
+  }
+
+  function deletingDelay(deletedChar, charBefore) {
+    let delay = rand(12, 30);
+
+    if (deletedChar === ' ') delay += rand(18, 60);
+    if (charBefore === ' ') delay += rand(8, 30);
+    if (deletedChar === '.' || deletedChar === ',') delay += rand(28, 75);
+    if (Math.random() < 0.22) delay *= rand(0.45, 0.75);
+
+    return delay;
+  }
+
+  function isActive() {
+    return dom.welcomeScreen.style.display !== 'none' && !dom.welcomeInput.value;
+  }
+
+  function schedule(ms) {
+    clearTimeout(timer);
+    timer = setTimeout(step, ms);
+  }
+
+  function step() {
+    if (!isActive()) {
+      schedule(rand(250, 400));
+      return;
+    }
+
+    const suffix = suffixes[suffixIdx];
+
+    if (!deleting) {
+      charIdx = Math.min(charIdx + 1, suffix.length);
+      setPlaceholder(suffix.slice(0, charIdx));
+
+      if (charIdx >= suffix.length) {
+        deleting = true;
+        schedule(rand(1200, 2400));
+      } else {
+        const char = suffix[charIdx - 1];
+        const prevChar = charIdx > 1 ? suffix[charIdx - 2] : '';
+        schedule(typingDelay(char, prevChar));
+      }
+      return;
+    }
+
+    const deleteIdx = charIdx - 1;
+    charIdx = deleteIdx;
+    setPlaceholder(suffix.slice(0, charIdx));
+
+    if (charIdx <= 0) {
+      deleting = false;
+      suffixIdx = (suffixIdx + 1) % suffixes.length;
+      schedule(rand(320, 720));
+    } else {
+      const deletedChar = suffix[deleteIdx];
+      const charBefore = deleteIdx > 0 ? suffix[deleteIdx - 1] : '';
+      schedule(deletingDelay(deletedChar, charBefore));
+    }
+  }
+
+  setPlaceholder('');
+  schedule(rand(450, 800));
 }
 
 /* ============================================================
@@ -1512,6 +1659,7 @@ function bindEvents() {
     }
     // Escape to go back or close dropdowns
     if (e.key === 'Escape') {
+      if (typeof TitlebarMenu !== 'undefined') TitlebarMenu.closeAllMenus();
       if (SettingsStore.getIsOpen()) {
         closeSettings();
         return;
@@ -1524,6 +1672,11 @@ function bindEvents() {
         const overlay = document.getElementById('searchOverlay');
         if (!overlay) showWelcomeScreen();
       }
+    }
+    // Cmd/Ctrl+B for sidebar toggle
+    if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+      e.preventDefault();
+      toggleSidebar();
     }
     // Cmd/Ctrl+, for settings
     if ((e.metaKey || e.ctrlKey) && e.key === ',') {
@@ -1538,9 +1691,114 @@ function bindEvents() {
    TOAST NOTIFICATIONS
    ============================================================ */
 
+let toastDismissTimer = null;
+let toastInteractionCleanup = null;
+
+function clearToastTimers() {
+  if (toastDismissTimer) {
+    clearTimeout(toastDismissTimer);
+    toastDismissTimer = null;
+  }
+  if (toastInteractionCleanup) {
+    toastInteractionCleanup();
+    toastInteractionCleanup = null;
+  }
+}
+
+function dismissToast(toast, animate = true) {
+  if (!toast?.isConnected) return;
+  clearToastTimers();
+
+  if (animate) {
+    Physics.animate(toast, { opacity: 0, y: -8 }, {
+      preset: 'stiff',
+      onComplete: () => toast.remove(),
+    });
+    return;
+  }
+
+  toast.remove();
+}
+
+function setupToastInteractions(toast) {
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let originX = 0;
+  let originY = 0;
+
+  function onMouseDown(e) {
+    if (e.button !== 0) return;
+
+    dragging = true;
+    toast.classList.add('toast-dragging');
+    clearToastTimers();
+
+    const rect = toast.getBoundingClientRect();
+    toast.style.right = 'auto';
+    toast.style.top = `${rect.top}px`;
+    toast.style.left = `${rect.left}px`;
+    toast.style.transform = 'none';
+
+    startX = e.clientX;
+    startY = e.clientY;
+    originX = rect.left;
+    originY = rect.top;
+    e.preventDefault();
+  }
+
+  function onMouseMove(e) {
+    if (!dragging) return;
+
+    const x = originX + (e.clientX - startX);
+    const y = originY + (e.clientY - startY);
+    toast.style.left = `${x}px`;
+    toast.style.top = `${y}px`;
+
+    const rect = toast.getBoundingClientRect();
+    const margin = 24;
+    const isOutside =
+      rect.right < -margin ||
+      rect.left > window.innerWidth + margin ||
+      rect.bottom < -margin ||
+      rect.top > window.innerHeight + margin;
+
+    if (isOutside) {
+      dragging = false;
+      dismissToast(toast, false);
+    }
+  }
+
+  function onMouseUp() {
+    if (!dragging) return;
+    dragging = false;
+    if (!toast.isConnected) return;
+    toast.classList.remove('toast-dragging');
+    toastDismissTimer = setTimeout(() => dismissToast(toast), 2500);
+  }
+
+  function onAuxClick(e) {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    dismissToast(toast);
+  }
+
+  toast.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+  toast.addEventListener('auxclick', onAuxClick);
+
+  return () => {
+    toast.removeEventListener('mousedown', onMouseDown);
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+    toast.removeEventListener('auxclick', onAuxClick);
+  };
+}
+
 function showToast(message) {
   const existing = document.getElementById('toast');
-  if (existing) existing.remove();
+  if (existing) dismissToast(existing, false);
 
   const toast = document.createElement('div');
   toast.id = 'toast';
@@ -1549,17 +1807,14 @@ function showToast(message) {
   document.body.appendChild(toast);
 
   Physics.animate(toast, { opacity: 1, y: 0 }, {
-    from: { opacity: 0, y: 14 },
+    from: { opacity: 0, y: -12 },
     preset: 'bouncy',
-    anchorX: 'center',
   });
 
-  setTimeout(() => {
-    Physics.animate(toast, { opacity: 0, y: 10 }, {
-      preset: 'stiff',
-      anchorX: 'center',
-      onComplete: () => toast.remove(),
-    });
+  toastInteractionCleanup = setupToastInteractions(toast);
+
+  toastDismissTimer = setTimeout(() => {
+    dismissToast(toast);
   }, 2500);
 }
 

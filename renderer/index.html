@@ -11,25 +11,38 @@
 
     <!-- Custom title bar -->
     <div class="titlebar" id="titlebar">
-      <div class="titlebar-drag-region"></div>
       <div class="titlebar-left">
-        <div class="titlebar-logo">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <span class="titlebar-title">Code app</span>
+        <button
+          type="button"
+          class="titlebar-logo-wrap"
+          id="titlebarLogoWrap"
+          title="Toggle sidebar"
+          aria-label="Toggle sidebar"
+        >
+          <div class="titlebar-logo">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </button>
+        <nav class="titlebar-menubar" id="titlebarMenubar" role="menubar" aria-label="Application menu"></nav>
       </div>
+      <div
+        class="titlebar-drag-region"
+        id="titlebarDragRegion"
+        title="Drag to move · Double-click to maximize"
+        aria-hidden="true"
+      ></div>
       <div class="titlebar-right">
         <div class="titlebar-controls">
-          <button class="ctrl-btn minimize-btn" id="minimizeBtn" title="Minimize">
-            <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
+          <button class="ctrl-btn minimize-btn" id="minimizeBtn" type="button" title="Minimize" aria-label="Minimize">
+            <svg width="10" height="1" viewBox="0 0 10 1" aria-hidden="true"><rect width="10" height="1" fill="currentColor"/></svg>
           </button>
-          <button class="ctrl-btn maximize-btn" id="maximizeBtn" title="Maximize">
-            <svg width="10" height="10" viewBox="0 0 10 10"><rect width="9" height="9" x=".5" y=".5" fill="none" stroke="currentColor"/></svg>
+          <button class="ctrl-btn maximize-btn" id="maximizeBtn" type="button" title="Maximize" aria-label="Maximize">
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect width="9" height="9" x=".5" y=".5" fill="none" stroke="currentColor"/></svg>
           </button>
-          <button class="ctrl-btn close-btn" id="closeBtn" title="Close">
-            <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <button class="ctrl-btn close-btn" id="closeBtn" type="button" title="Hide to notification area" aria-label="Hide to notification area">
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
           </button>
         </div>
       </div>
@@ -102,7 +115,7 @@
               <textarea
                 class="message-input"
                 id="welcomeInput"
-                placeholder="Ask anything..."
+                placeholder="Try "
                 rows="1"
               ></textarea>
               <div class="input-footer">
@@ -203,5 +216,6 @@
   <script src="js/data.js"></script>
   <script src="js/settings.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/titlebar-menu.js"></script>
 </body>
 </html>

@@ -101,7 +101,7 @@ const PROJECTS = [
     name: 'SnycMod',
     color: '#0ea5e9',
     chats: [
-      { id: 's1', title: 'Make a 1.8-76.1.2 (latest) fabr...', time: '1mo' },
+      { id: 's1', title: 'Make a 1.8-76.1.2 (latest) fabr...', time: '1mo', running: true },
     ],
   },
   {
@@ -109,8 +109,8 @@ const PROJECTS = [
     name: 'llexa',
     color: '#10b981',
     chats: [
-      { id: 'l1', title: 'Troubleshoot ECONNREFUSED', time: '1mo' },
-      { id: 'l2', title: 'Find DATABASE_URL usage', time: '1mo' },
+      { id: 'l1', title: 'Troubleshoot ECONNREFUSED', time: '1mo', running: true },
+      { id: 'l2', title: 'Find DATABASE_URL usage', time: '1mo', running: true },
       { id: 'l3', title: 'Fix deprecation warnings', time: '1mo' },
       { id: 'l6', title: 'Verify JWT middleware', time: '2w' },
       { id: 'l4', title: 'Update deployment docs', time: '1mo' },
@@ -131,7 +131,7 @@ const PROJECTS = [
     name: 'Kvaesitso',
     color: '#ec4899',
     chats: [
-      { id: 'k1', title: 'Fix web search URL issue', time: '2mo' },
+      { id: 'k1', title: 'Fix web search URL issue', time: '2mo', running: true },
       { id: 'k2', title: 'Improve drawer search suggestions', time: '2mo' },
     ],
   },
