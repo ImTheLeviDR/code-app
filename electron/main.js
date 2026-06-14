@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require('electron');
 const path = require('path');
+const { registerBackendHandlers, shutdownBackend, ensureStarted } = require('./backend-bridge');
 
 let mainWindow;
 let tray = null;
@@ -123,10 +124,25 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+function getWorkspacePath() {
+  return path.join(app.getPath('userData'), 'workspace');
+}
+
+app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
   createWindow();
   createTray();
+
+  registerBackendHandlers({
+    getMainWindow: () => mainWindow,
+    getWorkspace: getWorkspacePath,
+  });
+
+  try {
+    await ensureStarted(() => mainWindow, getWorkspacePath());
+  } catch (err) {
+    console.error('OpenCode backend:', err.message);
+  }
 });
 
 app.on('second-instance', () => {
@@ -139,6 +155,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  shutdownBackend();
 });
 
 app.on('activate', () => {
@@ -157,4 +174,14 @@ ipcMain.on('window-close', () => hideMainWindow());
 ipcMain.on('window-quit', () => {
   isQuitting = true;
   app.quit();
+});
+
+ipcMain.handle('dialog:open-folder', async () => {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openDirectory'],
+    title: 'Open Folder',
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
 });

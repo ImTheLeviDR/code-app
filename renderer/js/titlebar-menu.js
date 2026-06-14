@@ -10,6 +10,7 @@ const TitlebarMenu = (() => {
       label: 'File',
       items: [
         { label: 'New Chat', shortcut: 'Ctrl+N', action: 'new-chat' },
+        { label: 'Open Folder', shortcut: 'Ctrl+O', action: 'open-folder' },
         { label: 'Search Chats', shortcut: 'Ctrl+K', action: 'search' },
         { type: 'separator' },
         { label: 'Settings', shortcut: 'Ctrl+,', action: 'settings' },
@@ -98,8 +99,15 @@ const TitlebarMenu = (() => {
 
     switch (action) {
       case 'new-chat':
+        if (!getSelectedProject()) {
+          openProjectFolder();
+          break;
+        }
         showWelcomeScreen();
         focusInput(dom.welcomeInput);
+        break;
+      case 'open-folder':
+        openProjectFolder();
         break;
       case 'search':
         openSearch();

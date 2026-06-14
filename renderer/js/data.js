@@ -26,16 +26,18 @@ const WELCOME_SUBTITLES = [
 ];
 
 const MODELS = [
-  { id: 'gpt-5.4', label: 'GPT-5.4' },
-  { id: 'gpt-5.2', label: 'GPT-5.2' },
-  { id: 'gpt-4.1', label: 'GPT-4.1' },
-  { id: 'o3', label: 'o3' },
-  { id: 'o4-mini', label: 'o4-mini' },
-  { id: 'claude-sonnet-4', label: 'Claude Sonnet 4' },
-  { id: 'claude-opus-4', label: 'Claude Opus 4' },
+  { id: 'opencode/big-pickle', name: 'Big Pickle', category: 'Free', providerId: 'opencode' },
+  { id: 'opencode/mimo-v2.5-free', name: 'MiMo v2.5', category: 'Free', providerId: 'opencode' },
+  { id: 'opencode/deepseek-v4-flash-free', name: 'DeepSeek V4 Flash', category: 'Free', providerId: 'opencode' },
 ];
 
+const FREE_MODEL_IDS = new Set(MODELS.map((m) => m.id));
+
 const PROVIDER_PRESETS = {
+  openrouter: {
+    name: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+  },
   openai: {
     name: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
@@ -54,15 +56,36 @@ const PROVIDER_PRESETS = {
   },
 };
 
+function resolveOpencodeProviderId(provider) {
+  if (provider.type === 'custom') {
+    return `custom-${provider.id.replace(/^prov-/, '')}`;
+  }
+  const builtins = {
+    openrouter: 'openrouter',
+    openai: 'openai',
+    anthropic: 'anthropic',
+    google: 'google',
+  };
+  return builtins[provider.type] || provider.type;
+}
+
 const DEFAULT_SETTINGS = {
   providers: [
+    {
+      id: 'prov-openrouter',
+      type: 'openrouter',
+      name: 'OpenRouter',
+      baseUrl: PROVIDER_PRESETS.openrouter.baseUrl,
+      apiKey: '',
+      enabled: true,
+    },
     {
       id: 'prov-openai',
       type: 'openai',
       name: 'OpenAI',
       baseUrl: PROVIDER_PRESETS.openai.baseUrl,
       apiKey: '',
-      enabled: true,
+      enabled: false,
     },
     {
       id: 'prov-anthropic',
@@ -71,290 +94,6 @@ const DEFAULT_SETTINGS = {
       baseUrl: PROVIDER_PRESETS.anthropic.baseUrl,
       apiKey: '',
       enabled: false,
-    },
-  ],
-};
-
-const PROJECTS = [
-  {
-    id: 'assistant',
-    name: 'assistant',
-    color: '#6d28d9',
-    chats: [
-      { id: 'a1', title: 'Make a new folder, called "age..."', time: '1mo' },
-    ],
-  },
-  {
-    id: 'snycmod',
-    name: 'SnycMod',
-    color: '#0ea5e9',
-    chats: [
-      { id: 's1', title: 'Make a 1.8-76.1.2 (latest) fabr...', time: '1mo', running: true },
-    ],
-  },
-  {
-    id: 'llexa',
-    name: 'llexa',
-    color: '#10b981',
-    chats: [
-      { id: 'l1', title: 'Troubleshoot ECONNREFUSED', time: '1mo', running: true },
-      { id: 'l2', title: 'Find DATABASE_URL usage', time: '1mo', running: true },
-      { id: 'l3', title: 'Fix deprecation warnings', time: '1mo' },
-      { id: 'l6', title: 'Verify JWT middleware', time: '2w' },
-      { id: 'l4', title: 'Update deployment docs', time: '1mo' },
-      { id: 'l5', title: 'Fix vercel.json for multi-sites', time: '1mo' },
-    ],
-  },
-  {
-    id: 'translator',
-    name: 'translator',
-    color: '#f59e0b',
-    chats: [
-      { id: 't1', title: 'Remove status indicator bar', time: '2mo' },
-      { id: 't2', title: 'Redesign frontend with dark mode', time: '2mo' },
-    ],
-  },
-  {
-    id: 'kvaesitso',
-    name: 'Kvaesitso',
-    color: '#ec4899',
-    chats: [
-      { id: 'k1', title: 'Fix web search URL issue', time: '2mo', running: true },
-      { id: 'k2', title: 'Improve drawer search suggestions', time: '2mo' },
-    ],
-  },
-  {
-    id: 'eaglensserver',
-    name: 'eaglensserver',
-    color: '#64748b',
-    chats: [
-      { id: 'e1', title: 'Update websocket server config', time: '2mo' },
-    ],
-  },
-  {
-    id: 'archive',
-    name: 'archive',
-    color: '#374151',
-    chats: [
-      { id: 'ar1', title: 'Migrate old API routes', time: '3mo' },
-      { id: 'ar2', title: 'Clean up unused dependencies', time: '3mo' },
-    ],
-  },
-];
-
-/* Pre-populated messages for existing chats */
-const CHAT_MESSAGES = {
-  l1: [
-    {
-      id: 'l1m1',
-      role: 'user',
-      content: "I'm getting ECONNREFUSED errors when trying to connect to my database. Here's the error:\n\nError: connect ECONNREFUSED 127.0.0.1:5432\n    at TCPConnectWrap.afterConnect [as oncomplete]",
-    },
-    {
-      id: 'l1m2',
-      role: 'assistant',
-      toolCalls: [
-        {
-          id: 'tc1',
-          name: 'read_file',
-          args: { path: '.env' },
-          result: 'DATABASE_URL=postgresql://localhost:5432/mydb\nNODE_ENV=production\nPORT=3000',
-          status: 'complete',
-        },
-        {
-          id: 'tc2',
-          name: 'run_terminal_cmd',
-          args: { command: 'pg_isready -h localhost -p 5432' },
-          result: 'localhost:5432 - no response',
-          status: 'complete',
-        },
-      ],
-      content: "I've investigated the database connection issue. Here's what I found:\n\n**Root cause:** PostgreSQL isn't running on your machine. The `pg_isready` check confirms port 5432 has no response.\n\nYour `.env` configuration looks correct, the issue is the service itself isn't started.\n\n**To fix this:**\n\n```bash\n# Linux / WSL\nsudo service postgresql start\n\n# macOS with Homebrew\nbrew services start postgresql@15\n\n# Windows (PowerShell as admin)\nStart-Service -Name 'postgresql-x64-15'\n```\n\nAfter starting the service, verify it's running:\n\n```bash\npg_isready -h localhost -p 5432\n# Should output: localhost:5432 - accepting connections\n```\n\nIf you're on a remote server or Docker, you may also need to check that the container is running and the port is exposed.",
-    },
-    {
-      id: 'l1m3',
-      role: 'user',
-      content: 'That worked! The service was stopped. Now I have a different error though, "password authentication failed for user postgres"',
-    },
-    {
-      id: 'l1m4',
-      role: 'assistant',
-      toolCalls: [
-        {
-          id: 'tc3',
-          name: 'read_file',
-          args: { path: 'prisma/schema.prisma' },
-          result: 'datasource db {\n  provider = "postgresql"\n  url      = env("DATABASE_URL")\n}\n\ngenerator client {\n  provider = "prisma-client-js"\n}',
-          status: 'complete',
-        },
-      ],
-      content: 'Authentication failed, the password in your `DATABASE_URL` doesn\'t match the PostgreSQL user\'s actual password.\n\n**Fix the connection string in `.env`:**\n\n```bash\n# Format: postgresql://USER:PASSWORD@HOST:PORT/DBNAME\nDATABASE_URL="postgresql://postgres:yourpassword@localhost:5432/mydb"\n```\n\nIf you\'ve forgotten the postgres password, reset it:\n\n```bash\nsudo -u postgres psql\nALTER USER postgres PASSWORD \'newpassword\';\n\\q\n```\n\nThen update your `.env` with the new password.',
-    },
-  ],
-
-  l6: [
-    {
-      id: 'l6m1',
-      role: 'user',
-      content: 'Can you verify my JWT middleware implementation? Requests with valid tokens still return 401.',
-    },
-    {
-      id: 'l6m2',
-      role: 'assistant',
-      toolCalls: [
-        {
-          id: 'tc13',
-          name: 'search_codebase',
-          args: { query: 'jwt middleware verify' },
-          result: 'Found in src/middleware/auth.ts',
-          status: 'complete',
-        },
-        {
-          id: 'tc14',
-          name: 'read_file',
-          args: { path: 'src/middleware/auth.ts' },
-          result: 'const token = req.headers.authorization;\nconst payload = jwt.verify(token, process.env.JWT_SECRET);',
-          status: 'complete',
-        },
-        {
-          id: 'tc15',
-          name: 'edit_file',
-          args: { path: 'src/middleware/auth.ts' },
-          additions: 3,
-          deletions: 2,
-          result: 'Applied fix',
-          status: 'complete',
-        },
-      ],
-      content:
-        "JWT middleware usually validates the `Authorization` header, decodes the token, and attaches the user to `req`. The typical failure modes are clock skew, wrong secret, or reading from the wrong header.\n\nI'll search the repo for how your app wires this up.\n\nFound it in `src/middleware/auth.ts`. The middleware reads `req.headers.authorization` but never strips the `Bearer ` prefix — I've patched it to parse the header correctly. That matches how the login route signs tokens in `src/routes/auth.ts`.",
-    },
-  ],
-
-  l2: [
-    {
-      id: 'l2m1',
-      role: 'user',
-      content: 'Find all places in the codebase where DATABASE_URL is used',
-    },
-    {
-      id: 'l2m2',
-      role: 'assistant',
-      toolCalls: [
-        {
-          id: 'tc4',
-          name: 'search_codebase',
-          args: { query: 'DATABASE_URL', include_pattern: '**/*.{ts,js,env*}' },
-          result: 'Found 8 matches in 6 files:\n- .env (line 1)\n- .env.example (line 3)\n- src/db/client.ts (line 4)\n- src/db/migrate.ts (line 2)\n- docker-compose.yml (line 18)\n- README.md (line 42)',
-          status: 'complete',
-        },
-        {
-          id: 'tc5',
-          name: 'read_file',
-          args: { path: 'src/db/client.ts' },
-          result: "import { PrismaClient } from '@prisma/client';\n\nconst globalForPrisma = globalThis as unknown as {\n  prisma: PrismaClient | undefined;\n};\n\nexport const prisma =\n  globalForPrisma.prisma ??\n  new PrismaClient({\n    datasourceUrl: process.env.DATABASE_URL,\n  });\n\nif (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;",
-          status: 'complete',
-        },
-      ],
-      content: 'Found **8 usages** across 6 files. Here\'s a summary:\n\n| File | Usage |\n|------|-------|\n| `.env` | Definition |\n| `.env.example` | Template placeholder |\n| `src/db/client.ts` | Prisma client init |\n| `src/db/migrate.ts` | Migration runner |\n| `docker-compose.yml` | Container env var |\n| `README.md` | Documentation |\n\nThe primary usage is in `src/db/client.ts` where Prisma reads it at startup. Everything looks standard, no hardcoded fallbacks which is good practice.',
-    },
-  ],
-
-  t2: [
-    {
-      id: 't2m1',
-      role: 'user',
-      content: 'I want to redesign the frontend with a dark mode first approach. Start by updating the color system',
-    },
-    {
-      id: 't2m2',
-      role: 'assistant',
-      toolCalls: [
-        {
-          id: 'tc6',
-          name: 'read_file',
-          args: { path: 'src/styles/globals.css' },
-          result: ':root {\n  --bg: #ffffff;\n  --text: #000000;\n  --primary: #3b82f6;\n}\n\nbody {\n  background: var(--bg);\n  color: var(--text);\n}',
-          status: 'complete',
-        },
-        {
-          id: 'tc7',
-          name: 'write_file',
-          args: { path: 'src/styles/globals.css' },
-          additions: 48,
-          deletions: 12,
-          result: 'Written 48 lines',
-          status: 'complete',
-        },
-      ],
-      content: "I've redesigned the color system with a dark-first approach — dark mode is the baseline, with light mode as a `prefers-color-scheme` override. Users who prefer light mode still get it automatically.",
-    },
-  ],
-
-  k1: [
-    {
-      id: 'k1m1',
-      role: 'user',
-      content: 'The web search feature is broken. When I search for something, the URL it opens is wrong, it has double slashes',
-    },
-    {
-      id: 'k1m2',
-      role: 'assistant',
-      toolCalls: [
-        {
-          id: 'tc8',
-          name: 'search_codebase',
-          args: { query: 'searchUrl', file_pattern: '**/*.kt' },
-          result: 'Found in SearchProvider.kt line 84',
-          status: 'complete',
-        },
-        {
-          id: 'tc9',
-          name: 'read_file',
-          args: { path: 'app/src/main/kotlin/ir/alirezaivaz/kvaesitso/search/SearchProvider.kt', line_range: '80-95' },
-          result: 'val searchUrl = baseUrl + "/" + query.encodeUrl()\n// outputs: https://google.com//search?q=hello',
-          status: 'complete',
-        },
-        {
-          id: 'tc10',
-          name: 'edit_file',
-          args: { path: 'SearchProvider.kt', line: 84 },
-          additions: 1,
-          deletions: 1,
-          result: 'Applied fix',
-          status: 'complete',
-        },
-      ],
-      content: "Found it! The bug is in `SearchProvider.kt`, the base URL already ends with `/` and you're prepending another `/`.\n\nI've applied the fix. The `trimEnd('/')` call normalizes the base URL before concatenation so it works correctly regardless of whether the stored URL has a trailing slash.",
-    },
-  ],
-
-  s1: [
-    {
-      id: 's1m1',
-      role: 'user',
-      content: 'Make a fabric mod for Minecraft 1.8-76.1.2 that adds a night vision potion that lasts forever',
-    },
-    {
-      id: 's1m2',
-      role: 'assistant',
-      toolCalls: [
-        {
-          id: 'tc11',
-          name: 'create_file',
-          args: { path: 'src/main/java/com/example/NightVisionMod.java' },
-          result: 'File created',
-          status: 'complete',
-        },
-        {
-          id: 'tc12',
-          name: 'write_file',
-          args: { path: 'src/main/resources/fabric.mod.json' },
-          result: 'Written',
-          status: 'complete',
-        },
-      ],
-      content: "Here's the complete Fabric mod setup:\n\n**`NightVisionMod.java`**\n```java\n@Mod(\"nightvision\")\npublic class NightVisionMod implements ModInitializer {\n    @Override\n    public void onInitialize() {\n        ServerTickEvents.END_SERVER_TICK.register(server -> {\n            for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {\n                if (!player.hasStatusEffect(StatusEffects.NIGHT_VISION)) {\n                    player.addStatusEffect(new StatusEffectInstance(\n                        StatusEffects.NIGHT_VISION,\n                        Integer.MAX_VALUE, // forever\n                        0,    // level I\n                        true, // ambient (no particles)\n                        false // no icon\n                    ));\n                }\n            }\n        });\n    }\n}\n```\n\nThis applies Night Vision to all players every tick (only adds it if not already present, so it's efficient). The `Integer.MAX_VALUE` duration makes it effectively permanent.",
     },
   ],
 };

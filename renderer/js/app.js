@@ -4,22 +4,173 @@
 
 'use strict';
 
+const CHAT_STORAGE_KEY = 'code-app-chats';
+const PROJECT_COLORS = ['#6d28d9', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#64748b', '#8b5cf6', '#06b6d4'];
+const LEGACY_PROJECT_IDS = new Set([
+  'default', 'assistant', 'snycmod', 'llexa', 'translator', 'kvaesitso', 'eaglensserver', 'archive',
+]);
+
+function loadPersistedChatState() {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.projects?.length) return null;
+
+    parsed.projects = parsed.projects.filter(
+      (p) => p.folderPath && !LEGACY_PROJECT_IDS.has(p.id),
+    );
+    if (!parsed.projects.length) {
+      localStorage.removeItem(CHAT_STORAGE_KEY);
+      return null;
+    }
+
+    for (const project of parsed.projects) {
+      for (const chat of project.chats || []) {
+        delete chat.running;
+      }
+    }
+
+    const validIds = new Set(parsed.projects.map((p) => p.id));
+    if (!validIds.has(parsed.selectedProjectId)) {
+      parsed.selectedProjectId = parsed.projects[0]?.id || null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveChatState() {
+  try {
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({
+      projects: state.projects,
+      chatMessages: state.chatMessages,
+      nextMsgId: state.nextMsgId,
+      selectedProjectId: state.selectedProjectId,
+    }));
+  } catch (err) {
+    console.error('Failed to save chats:', err);
+  }
+}
+
+function createInitialState() {
+  const saved = loadPersistedChatState();
+  if (saved) {
+    const expanded = saved.selectedProjectId ? [saved.selectedProjectId] : [];
+    return {
+      projects: saved.projects,
+      selectedProjectId: saved.selectedProjectId,
+      selectedChatId: null,
+      expandedProjects: new Set(expanded),
+      chatMessages: saved.chatMessages || {},
+      nextMsgId: saved.nextMsgId || 1000,
+      isGenerating: false,
+      userHasScrolledUp: false,
+      selectedModelId: MODELS[0].id,
+    };
+  }
+
+  return {
+    projects: [],
+    selectedProjectId: null,
+    selectedChatId: null,
+    expandedProjects: new Set(),
+    chatMessages: {},
+    nextMsgId: 1000,
+    isGenerating: false,
+    userHasScrolledUp: false,
+    selectedModelId: MODELS[0].id,
+  };
+}
+
 /* ---- State ---- */
-const state = {
-  projects: PROJECTS,
-  selectedProjectId: 'assistant',
-  selectedChatId: null,
-  expandedProjects: new Set(['llexa', 'assistant']),
-  chatMessages: { ...CHAT_MESSAGES },   // chatId -> Message[]
-  nextMsgId: 1000,
-  isGenerating: false,
-  userHasScrolledUp: false,
-  selectedModelId: MODELS[0].id,
-};
+const state = createInitialState();
+
+function getSelectedProject() {
+  if (!state.selectedProjectId) return null;
+  return state.projects.find((p) => p.id === state.selectedProjectId) || null;
+}
+
+function projectIdFromPath(folderPath) {
+  const norm = folderPath.replace(/\\/g, '/').toLowerCase();
+  let hash = 0;
+  for (let i = 0; i < norm.length; i++) {
+    hash = ((hash << 5) - hash) + norm.charCodeAt(i);
+    hash |= 0;
+  }
+  return `proj-${Math.abs(hash)}`;
+}
+
+function projectNameFromPath(folderPath) {
+  const parts = folderPath.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts[parts.length - 1] || folderPath;
+}
+
+function colorForProject(id) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = ((hash << 5) - hash) + id.charCodeAt(i);
+    hash |= 0;
+  }
+  return PROJECT_COLORS[Math.abs(hash) % PROJECT_COLORS.length];
+}
+
+async function setActiveProjectWorkspace(projectId) {
+  const project = state.projects.find((p) => p.id === projectId);
+  if (!project?.folderPath) return;
+  if (typeof Backend !== 'undefined' && Backend.isAvailable()) {
+    try {
+      await Backend.setWorkspace(project.folderPath);
+    } catch (err) {
+      console.error('Failed to set workspace:', err);
+    }
+  }
+}
+
+async function openProjectFolder() {
+  if (!window.electronAPI?.openFolderDialog) {
+    showToast('Open folder is available in the desktop app');
+    return;
+  }
+
+  const folderPath = await window.electronAPI.openFolderDialog();
+  if (!folderPath) return;
+
+  let project = state.projects.find((p) => p.folderPath === folderPath);
+  if (!project) {
+    const id = projectIdFromPath(folderPath);
+    project = {
+      id,
+      name: projectNameFromPath(folderPath),
+      color: colorForProject(id),
+      folderPath,
+      chats: [],
+    };
+    state.projects.unshift(project);
+    showToast(`Added project: ${project.name}`);
+  } else {
+    showToast(`Opened ${project.name}`);
+  }
+
+  state.selectedProjectId = project.id;
+  state.expandedProjects.add(project.id);
+  state.selectedChatId = null;
+
+  await setActiveProjectWorkspace(project.id);
+  renderSidebar();
+  updateProjectSelection();
+  updateActiveChat();
+  showWelcomeScreen();
+  saveChatState();
+  focusInput(dom.welcomeInput);
+}
 
 let modelDropdowns = [];
 let openModelDropdown = null;
 let modelDropdownClickBound = false;
+const aiRuns = new Map();
 
 /* ---- DOM refs ---- */
 const $ = (id) => document.getElementById(id);
@@ -53,18 +204,40 @@ const dom = {
 function init() {
   Physics.init();
   attachDiffsToMessages();
-  state.projects.forEach((project) => {
-    if (project.chats.some((chat) => chat.running)) {
-      state.expandedProjects.add(project.id);
-    }
-  });
   renderSidebar();
   initModelDropdowns();
+  initBackend();
+  updateProjectSelection();
   window.addEventListener('settings-changed', refreshModelDropdowns);
   showWelcomeScreen({ animateWelcome: true });
   bindEvents();
   setupWindowControls();
   animateWelcomeInputPlaceholders();
+}
+
+function initBackend() {
+  if (typeof Backend === 'undefined' || !Backend.isAvailable()) {
+    showToast('AI backend unavailable — restart the app');
+    return;
+  }
+
+  Backend.onEvent(handleBackendEvent);
+
+  Backend.ensureReady()
+    .then((status) => {
+      if (!status?.running) {
+        showToast(status?.error || 'Failed to start AI backend');
+        return;
+      }
+      return setActiveProjectWorkspace(state.selectedProjectId);
+    })
+    .then(() => SettingsStore.syncProvidersToBackend())
+    .then(() => SettingsStore.refreshModelsFromBackend())
+    .then(() => refreshModelDropdowns())
+    .catch((err) => {
+      console.error('Backend init failed:', err);
+      showToast('AI backend failed to start');
+    });
 }
 
 /* ============================================================
@@ -75,8 +248,108 @@ function getAvailableModels() {
   return SettingsStore.getChatModels();
 }
 
+const MODEL_CATEGORY_ORDER = ['Free', 'OpenRouter', 'OpenAI', 'Anthropic', 'Google'];
+
+function getModelDisplayName(model) {
+  return model?.name || model?.label || model?.id?.split('/').pop() || model?.id || '';
+}
+
+function groupModelsByCategory(models) {
+  const groups = new Map();
+  for (const model of models) {
+    const category = model.category || model.providerName || 'Other';
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category).push(model);
+  }
+
+  return [...groups.entries()].sort(([a], [b]) => {
+    const ai = MODEL_CATEGORY_ORDER.indexOf(a);
+    const bi = MODEL_CATEGORY_ORDER.indexOf(b);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return a.localeCompare(b);
+  });
+}
+
 function getModelLabel(modelId) {
-  return getAvailableModels().find((m) => m.id === modelId)?.label ?? modelId;
+  const model = getAvailableModels().find((m) => m.id === modelId);
+  return model ? getModelDisplayName(model) : modelId;
+}
+
+function buildModelMenuHTML(models, selectedId) {
+  const checkSvg = `<svg class="model-option-check" width="14" height="14" viewBox="0 0 24 24" fill="none">
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+
+  const groups = groupModelsByCategory(models);
+  const groupsHtml = groups.map(([category, items]) => `
+    <div class="model-dropdown-group" data-category="${escapeHtml(category)}">
+      <div class="model-dropdown-group-label">${escapeHtml(category)}</div>
+      ${items.map((model) => {
+        const name = getModelDisplayName(model);
+        return `
+        <button
+          class="model-option${model.id === selectedId ? ' selected' : ''}"
+          type="button"
+          role="option"
+          data-model-id="${model.id}"
+          data-search="${escapeHtml(`${name} ${category}`.toLowerCase())}"
+          aria-selected="${model.id === selectedId}"
+        >
+          <span class="model-option-name">${escapeHtml(name)}</span>
+          ${checkSvg}
+        </button>`;
+      }).join('')}
+    </div>
+  `).join('');
+
+  return `
+    <div class="model-dropdown-panel">
+      <div class="model-dropdown-search-wrap">
+        <svg class="model-dropdown-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
+          <path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <input
+          type="text"
+          class="model-dropdown-search"
+          placeholder="Search models…"
+          spellcheck="false"
+          autocomplete="off"
+          aria-label="Search models"
+        />
+      </div>
+      <div class="model-dropdown-list">
+        ${groupsHtml}
+        <div class="model-dropdown-empty is-filtered-hidden">No models match your search</div>
+      </div>
+    </div>
+  `;
+}
+
+function filterModelDropdown(menu, query) {
+  const q = query.trim().toLowerCase();
+  let anyVisible = false;
+
+  menu.querySelectorAll('.model-dropdown-group').forEach((group) => {
+    let groupVisible = false;
+    const category = (group.dataset.category || '').toLowerCase();
+
+    group.querySelectorAll('.model-option').forEach((opt) => {
+      const name = (opt.querySelector('.model-option-name')?.textContent || '').trim().toLowerCase();
+      const haystack = `${name} ${category}`;
+      const match = !q || haystack.includes(q);
+      opt.classList.toggle('is-filtered-hidden', !match);
+      if (match) groupVisible = true;
+    });
+
+    group.classList.toggle('is-filtered-hidden', !groupVisible);
+    if (groupVisible) anyVisible = true;
+  });
+
+  const empty = menu.querySelector('.model-dropdown-empty');
+  if (empty) empty.classList.toggle('is-filtered-hidden', anyVisible || !q);
 }
 
 function closeAllModelDropdowns(instant = false) {
@@ -117,37 +390,93 @@ function createModelDropdown(container) {
   const chevronSvg = `<svg class="model-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none">
     <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>`;
-  const checkSvg = `<svg class="model-option-check" width="14" height="14" viewBox="0 0 24 24" fill="none">
-    <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>`;
 
   container.innerHTML = `
     <button class="model-selector-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
       <span class="model-selected-label">${escapeHtml(getModelLabel(state.selectedModelId))}</span>
       ${chevronSvg}
     </button>
-    <div class="model-dropdown-menu" role="listbox">
-      ${getAvailableModels().map((model) => `
-        <button
-          class="model-option${model.id === state.selectedModelId ? ' selected' : ''}"
-          type="button"
-          role="option"
-          data-model-id="${model.id}"
-          aria-selected="${model.id === state.selectedModelId}"
-        >
-          <span>${escapeHtml(model.label)}</span>
-          ${checkSvg}
-        </button>
-      `).join('')}
+    <div class="model-dropdown-menu" role="presentation">
+      ${buildModelMenuHTML(getAvailableModels(), state.selectedModelId)}
     </div>
   `;
 
   const trigger = container.querySelector('.model-selector-trigger');
   const menu = container.querySelector('.model-dropdown-menu');
   const labelEl = container.querySelector('.model-selected-label');
-  const options = Array.from(container.querySelectorAll('.model-option'));
+  const searchInput = container.querySelector('.model-dropdown-search');
 
   menu.style.visibility = 'hidden';
+
+  function getVisibleOptions() {
+    return Array.from(container.querySelectorAll('.model-option:not(.is-filtered-hidden)'));
+  }
+
+  function bindOptionEvents() {
+    const options = Array.from(container.querySelectorAll('.model-option'));
+    options.forEach((opt, idx) => {
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setSelectedModel(opt.dataset.modelId);
+        close();
+      });
+
+      opt.addEventListener('keydown', (e) => {
+        const visible = getVisibleOptions();
+        const visIdx = visible.indexOf(opt);
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          visible[(visIdx + 1) % visible.length]?.focus();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (visIdx <= 0) searchInput?.focus();
+          else visible[visIdx - 1]?.focus();
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          setSelectedModel(opt.dataset.modelId);
+          close();
+          trigger.focus();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          close();
+          trigger.focus();
+        }
+      });
+    });
+  }
+
+  bindOptionEvents();
+
+  function applySearchFilter() {
+    filterModelDropdown(menu, searchInput?.value || '');
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('input', applySearchFilter);
+    searchInput.addEventListener('keyup', applySearchFilter);
+
+    searchInput.addEventListener('click', (e) => e.stopPropagation());
+
+    searchInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        getVisibleOptions()[0]?.focus();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+        trigger.focus();
+      } else if (e.key === 'Enter') {
+        const first = getVisibleOptions()[0];
+        if (first) {
+          e.preventDefault();
+          setSelectedModel(first.dataset.modelId);
+          close();
+          trigger.focus();
+        }
+      }
+    });
+  }
 
   function close(instant = false) {
     if (!container.classList.contains('open')) return;
@@ -156,6 +485,10 @@ function createModelDropdown(container) {
       container.classList.remove('open');
       trigger.setAttribute('aria-expanded', 'false');
       menu.style.visibility = 'hidden';
+      if (searchInput) {
+        searchInput.value = '';
+        applySearchFilter();
+      }
       if (openModelDropdown === api) openModelDropdown = null;
     };
 
@@ -181,13 +514,22 @@ function createModelDropdown(container) {
       from: { opacity: 0, y: 6, scale: 0.97 },
       preset: 'snappy',
     });
-    const selected = options.find((opt) => opt.classList.contains('selected'));
-    (selected || options[0])?.focus();
+    if (searchInput) {
+      searchInput.value = '';
+      applySearchFilter();
+      requestAnimationFrame(() => searchInput.focus());
+    }
+    const selected = container.querySelector('.model-option.selected:not(.is-filtered-hidden)');
+    if (selected) {
+      requestAnimationFrame(() => {
+        selected.scrollIntoView({ block: 'nearest' });
+      });
+    }
   }
 
   function syncSelection() {
     labelEl.textContent = getModelLabel(state.selectedModelId);
-    options.forEach((opt) => {
+    container.querySelectorAll('.model-option').forEach((opt) => {
       const isSelected = opt.dataset.modelId === state.selectedModelId;
       opt.classList.toggle('selected', isSelected);
       opt.setAttribute('aria-selected', String(isSelected));
@@ -196,38 +538,8 @@ function createModelDropdown(container) {
 
   trigger.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (container.classList.contains('open')) {
-      close();
-    } else {
-      open();
-    }
-  });
-
-  options.forEach((opt, idx) => {
-    opt.addEventListener('click', (e) => {
-      e.stopPropagation();
-      setSelectedModel(opt.dataset.modelId);
-      close();
-    });
-
-    opt.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        options[(idx + 1) % options.length].focus();
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        options[(idx - 1 + options.length) % options.length].focus();
-      } else if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        setSelectedModel(opt.dataset.modelId);
-        close();
-        trigger.focus();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        close();
-        trigger.focus();
-      }
-    });
+    if (container.classList.contains('open')) close();
+    else open();
   });
 
   const api = { close, syncSelection };
@@ -275,6 +587,18 @@ function setupWindowControls() {
 
 function renderSidebar() {
   dom.projectsList.innerHTML = '';
+
+  if (!state.projects.length) {
+    dom.projectsList.innerHTML = `
+      <div class="projects-empty">
+        <p class="projects-empty-text">Open a folder to create a project.</p>
+        <button class="projects-empty-btn" type="button" data-action="open-folder">Open Folder</button>
+      </div>
+    `;
+    dom.projectsList.querySelector('[data-action="open-folder"]')
+      ?.addEventListener('click', () => openProjectFolder());
+    return;
+  }
 
   state.projects.forEach((project) => {
     const group = document.createElement('div');
@@ -366,6 +690,7 @@ function setChatRunning(chatId, running) {
   const wasRunning = chat.running;
   chat.running = running;
   syncChatItem(chatId);
+  saveChatState();
 
   // Show notification when task finishes
   if (wasRunning && !running) {
@@ -410,14 +735,17 @@ function toggleProject(projectId) {
 
   state.selectedProjectId = projectId;
   updateProjectSelection();
+  setActiveProjectWorkspace(projectId);
 }
 
 function updateProjectSelection() {
   updateNavActive();
 
-  const project = state.projects.find((p) => p.id === state.selectedProjectId);
+  const project = getSelectedProject();
   if (project) {
     dom.welcomeTitle.textContent = `What should we work on in ${project.name}?`;
+  } else {
+    dom.welcomeTitle.textContent = 'Open a folder to get started';
   }
 }
 
@@ -450,6 +778,7 @@ function showWelcomeScreen(options = {}) {
   state.selectedChatId = null;
   updateActiveChat();
   updateNavActive();
+  updateProjectSelection();
   setRandomWelcomeSubtitle();
 
   dom.settingsScreen.style.display = 'none';
@@ -485,6 +814,7 @@ function openChat(chatId, chatTitle, projectId) {
   state.selectedProjectId = projectId;
   updateActiveChat();
   updateProjectSelection();
+  setActiveProjectWorkspace(projectId);
   showChatScreen(chatId, chatTitle, projectId);
 }
 
@@ -790,8 +1120,14 @@ function sendMessage(text) {
 
   // If on welcome screen, create a new chat
   if (!state.selectedChatId) {
+    const project = getSelectedProject();
+    if (!project) {
+      showToast('Open a folder first');
+      openProjectFolder();
+      return;
+    }
+
     newChatFromWelcome = true;
-    const project = state.projects.find((p) => p.id === state.selectedProjectId) || state.projects[0];
     const newChatId = `new-${Date.now()}`;
     const newChat = {
       id: newChatId,
@@ -808,6 +1144,7 @@ function sendMessage(text) {
     }
     renderSidebar();
     showChatScreen(newChatId, newChat.title, project.id);
+    saveChatState();
   }
 
   const chatId = state.selectedChatId;
@@ -821,6 +1158,7 @@ function sendMessage(text) {
   };
   state.chatMessages[chatId].push(userMsg);
   renderMessage(userMsg, !newChatFromWelcome);
+  saveChatState();
 
   // Animate send button
   Physics.pulse(newChatFromWelcome ? dom.welcomeSendBtn : dom.chatSendBtn);
@@ -830,7 +1168,236 @@ function sendMessage(text) {
   syncSendButtonState();
   setChatRunning(chatId, true);
 
-  simulateAIResponse(chatId, text.trim());
+  runAIResponse(chatId, text.trim());
+}
+
+async function runAIResponse(chatId, userMessage) {
+  const assistantMsgId = `msg-${state.nextMsgId++}`;
+  const assistantMsg = {
+    id: assistantMsgId,
+    role: 'assistant',
+    toolCalls: [],
+    content: '',
+  };
+  state.chatMessages[chatId].push(assistantMsg);
+
+  const thinkingEl = createThinkingIndicator();
+  dom.messagesList.appendChild(thinkingEl);
+  scrollToEnd(false);
+
+  aiRuns.set(chatId, {
+    chatId,
+    assistantMsgId,
+    thinkingEl,
+    msgEl: null,
+    toolCalls: new Map(),
+    content: '',
+    started: false,
+  });
+
+  const modelId = state.selectedModelId;
+  if (!modelId.startsWith('opencode/')) {
+    const providerPrefix = modelId.split('/')[0];
+    const hasKey = SettingsStore.getProviders().some(
+      (p) => p.enabled
+        && p.apiKey?.trim()
+        && resolveOpencodeProviderId(p) === providerPrefix,
+    );
+    if (!hasKey) {
+      thinkingEl.remove();
+      const msgs = state.chatMessages[chatId];
+      const idx = msgs.findIndex((m) => m.id === assistantMsgId);
+      if (idx !== -1) msgs.splice(idx, 1);
+      aiRuns.delete(chatId);
+      finishAIWithError(
+        chatId,
+        'This model needs an API key. Open Settings → Providers, add your key, click Sync — or pick a free OpenCode model.',
+      );
+      return;
+    }
+  }
+
+  if (typeof Backend === 'undefined' || !Backend.isAvailable()) {
+    thinkingEl.remove();
+    const msgs = state.chatMessages[chatId];
+    const idx = msgs.findIndex((m) => m.id === assistantMsgId);
+    if (idx !== -1) msgs.splice(idx, 1);
+    aiRuns.delete(chatId);
+    finishAIWithError(chatId, 'AI backend is not running');
+    return;
+  }
+
+  try {
+    await Backend.sendMessage({
+      chatId,
+      text: userMessage,
+      modelId: state.selectedModelId,
+      title: findChatById(chatId)?.title,
+    });
+  } catch (err) {
+    finishAIWithError(chatId, err.message || 'Failed to send message');
+  }
+}
+
+function ensureAssistantVisible(run) {
+  if (run.started) return;
+  run.started = true;
+  run.thinkingEl?.remove();
+
+  const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
+  if (!msg) return;
+
+  run.msgEl = renderMessage(msg, false);
+}
+
+function appendStreamFull(run, text) {
+  if (!text) return;
+  run.content = text;
+
+  const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
+  if (msg) msg.content = run.content;
+
+  const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
+  if (!contentEl) return;
+
+  contentEl.classList.add('is-streaming');
+  contentEl.innerHTML = `
+    <span class="md-stream-wrap">
+      <span class="md-stream-body">${parseMarkdown(closeOpenFences(run.content))}</span>
+      <span class="streaming-cursor"></span>
+    </span>
+  `;
+
+  if (!state.userHasScrolledUp) scrollToEnd(false);
+}
+
+function appendStreamDelta(run, delta) {
+  if (!delta) return;
+  run.content += delta;
+
+  const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
+  if (msg) msg.content = run.content;
+
+  const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
+  if (!contentEl) return;
+
+  contentEl.classList.add('is-streaming');
+  contentEl.innerHTML = `
+    <span class="md-stream-wrap">
+      <span class="md-stream-body">${parseMarkdown(closeOpenFences(run.content))}</span>
+      <span class="streaming-cursor"></span>
+    </span>
+  `;
+
+  if (!state.userHasScrolledUp) scrollToEnd(false);
+}
+
+function upsertToolCall(run, toolCall) {
+  if (!toolCall?.id) return;
+
+  const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
+  if (!msg) return;
+
+  run.toolCalls.set(toolCall.id, toolCall);
+  msg.toolCalls = Array.from(run.toolCalls.values());
+
+  if (toolCall.status === 'running') {
+    showToolActivityLine(toolCall, run.assistantMsgId);
+  } else if (toolCall.status === 'complete') {
+    completeToolActivityLine(toolCall.id, run.assistantMsgId);
+  }
+}
+
+function finalizeAssistantMessage(run) {
+  const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
+  const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
+  if (!contentEl || !msg) return;
+
+  contentEl.classList.remove('is-streaming');
+  if (run.content) {
+    contentEl.innerHTML = parseMarkdown(run.content);
+    const body = contentEl.parentElement;
+    if (body && !body.querySelector('.message-actions')) {
+      const actionsWrapper = document.createElement('div');
+      actionsWrapper.innerHTML = renderMessageActionsHTML();
+      body.appendChild(actionsWrapper.firstElementChild);
+    }
+  } else if (!msg.toolCalls?.length) {
+    contentEl.innerHTML = '<p><em>No response received.</em></p>';
+  }
+}
+
+function finishAIRun(chatId) {
+  const run = aiRuns.get(chatId);
+  if (!run) return;
+
+  finalizeAssistantMessage(run);
+  aiRuns.delete(chatId);
+  state.isGenerating = false;
+  syncSendButtonState();
+  setChatRunning(chatId, false);
+  saveChatState();
+  focusInput(dom.chatInput);
+}
+
+function finishAIWithError(chatId, message) {
+  const run = aiRuns.get(chatId);
+  if (run) {
+    run.thinkingEl?.remove();
+    if (!run.started) {
+      const msg = state.chatMessages[chatId]?.find((m) => m.id === run.assistantMsgId);
+      if (msg) {
+        msg.content = `**Error:** ${message}`;
+        renderMessage(msg, false);
+      }
+    } else {
+      run.content += `\n\n**Error:** ${message}`;
+      finalizeAssistantMessage(run);
+    }
+    aiRuns.delete(chatId);
+  }
+
+  state.isGenerating = false;
+  syncSendButtonState();
+  setChatRunning(chatId, false);
+  saveChatState();
+  showToast(message);
+  focusInput(dom.chatInput);
+}
+
+function handleBackendEvent(event) {
+  if (!event?.chatId) return;
+  const run = aiRuns.get(event.chatId);
+  if (!run) return;
+
+  switch (event.type) {
+    case 'text-delta':
+      ensureAssistantVisible(run);
+      appendStreamDelta(run, event.text);
+      break;
+    case 'text-full':
+      ensureAssistantVisible(run);
+      appendStreamFull(run, event.text);
+      break;
+    case 'tool-update':
+      ensureAssistantVisible(run);
+      upsertToolCall(run, event.toolCall);
+      break;
+    case 'assistant-message':
+      if (event.error) {
+        const errMsg = event.error.data?.message || event.error.name || 'Model error';
+        finishAIWithError(event.chatId, errMsg);
+      }
+      break;
+    case 'done':
+      finishAIRun(event.chatId);
+      break;
+    case 'error':
+      finishAIWithError(event.chatId, event.message || 'AI request failed');
+      break;
+    default:
+      break;
+  }
 }
 
 function simulateAIResponse(chatId, userMessage) {
@@ -1611,7 +2178,7 @@ function regenerateResponse(btn) {
   state.isGenerating = true;
   syncSendButtonState();
   setChatRunning(state.selectedChatId, true);
-  simulateAIResponse(state.selectedChatId, userText);
+  runAIResponse(state.selectedChatId, userText);
 }
 
 /* ============================================================
@@ -1786,6 +2353,10 @@ function bindEvents() {
 
   // Sidebar nav
   document.querySelector('[data-action="new-chat"]').addEventListener('click', () => {
+    if (!getSelectedProject()) {
+      openProjectFolder();
+      return;
+    }
     showWelcomeScreen();
     focusInput(dom.welcomeInput);
   });
@@ -1807,8 +2378,17 @@ function bindEvents() {
     // Cmd/Ctrl+N for new chat
     if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
       e.preventDefault();
+      if (!getSelectedProject()) {
+        openProjectFolder();
+        return;
+      }
       showWelcomeScreen();
       focusInput(dom.welcomeInput);
+    }
+    // Cmd/Ctrl+O for open folder
+    if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
+      e.preventDefault();
+      openProjectFolder();
     }
     // Escape to go back or close dropdowns
     if (e.key === 'Escape') {

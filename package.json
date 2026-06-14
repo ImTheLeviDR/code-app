@@ -9,5 +9,9 @@
   },
   "devDependencies": {
     "electron": "^31.0.0"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.17.6",
+    "opencode-ai": "^1.17.6"
   }
 }

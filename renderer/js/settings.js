@@ -16,6 +16,7 @@ const SettingsStore = (() => {
   let focusProviderField = null;
   let animateExpandId = null;
   let staggerProviders = false;
+  let providerSyncState = {};
 
   function loadSettingsFromStorage() {
     try {
@@ -24,23 +25,107 @@ const SettingsStore = (() => {
         const parsed = JSON.parse(raw);
         if (parsed?.providers?.length) {
           parsed.providers = parsed.providers.map(({ models, imageModels, ...provider }) => provider);
-          return parsed;
+          return migrateSettings(parsed);
         }
       }
     } catch (_) { /* use defaults */ }
     return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   }
 
-  function save() {
+  function migrateSettings(settings) {
+    const next = { ...settings, providers: [...settings.providers] };
+    if (!next.providers.some((p) => p.type === 'openrouter')) {
+      next.providers.unshift({
+        id: 'prov-openrouter',
+        type: 'openrouter',
+        name: 'OpenRouter',
+        baseUrl: PROVIDER_PRESETS.openrouter.baseUrl,
+        apiKey: '',
+        enabled: true,
+      });
+    }
+    return next;
+  }
+
+  function persistSettings() {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
     window.dispatchEvent(new CustomEvent('settings-changed'));
+  }
+
+  function save() {
+    persistSettings();
+    syncProvidersToBackend();
   }
 
   function getProviders()  { return settings.providers; }
   function getProvider(id) { return settings.providers.find((p) => p.id === id); }
 
   function getChatModels() {
+    const cached = typeof Backend !== 'undefined' ? Backend.getCachedModels() : null;
+    if (cached?.length) return cached;
     return MODELS;
+  }
+
+  async function refreshModelsFromBackend() {
+    if (typeof Backend === 'undefined' || !Backend.isAvailable()) return getChatModels();
+    try {
+      const ready = await Backend.ensureReady();
+      if (!ready?.running) return getChatModels();
+
+      const models = await Backend.getModels(settings.providers);
+      if (models?.length) {
+        window.dispatchEvent(new CustomEvent('settings-changed'));
+        return models;
+      }
+    } catch (err) {
+      console.error('Failed to load models from backend:', err);
+    }
+    return getChatModels();
+  }
+
+  async function syncProvidersToBackend({ showFeedback = false } = {}) {
+    if (typeof Backend === 'undefined' || !Backend.isAvailable()) {
+      if (isOpen && activeCategory === 'providers') renderContent();
+      return;
+    }
+    try {
+      const ready = await Backend.ensureReady();
+      if (!ready?.running) {
+        showToast(ready?.error || 'AI backend is not running');
+        if (isOpen && activeCategory === 'providers') renderContent();
+        return;
+      }
+
+      const results = await Backend.syncProviders(settings.providers);
+      providerSyncState = {};
+
+      if (results?.error) {
+        showToast(results.error);
+        if (isOpen && activeCategory === 'providers') renderContent();
+        return;
+      }
+
+      if (Array.isArray(results)) {
+        for (const result of results) {
+          if (result?.id) providerSyncState[result.id] = result;
+        }
+        const keyed = results.filter((r) => {
+          if (r.skipped) return false;
+          const provider = settings.providers.find((p) => p.id === r.id);
+          return Boolean(provider?.apiKey?.trim());
+        });
+        if (showFeedback && keyed.length > 0) {
+          const connected = keyed.filter((r) => r.ok).length;
+          showToast(`Synced ${connected}/${keyed.length} provider${keyed.length === 1 ? '' : 's'}`);
+        }
+      }
+
+      await refreshModelsFromBackend();
+      if (isOpen && activeCategory === 'providers') renderContent();
+    } catch (err) {
+      console.error('Failed to sync providers:', err);
+      showToast('Failed to sync providers');
+    }
   }
 
   function updateProvider(id, patch, rerender = false) {
@@ -133,10 +218,21 @@ const SettingsStore = (() => {
   }
 
   function renderRowStatus(provider) {
-    if (provider.apiKey) {
-      return '<span class="prov-row-status is-set">Configured</span>';
+    if (!provider.enabled) {
+      return '<span class="prov-row-status">Disabled</span>';
     }
-    return '<span class="prov-row-status is-missing">No key</span>';
+    if (!provider.apiKey?.trim()) {
+      return '<span class="prov-row-status is-missing">No key</span>';
+    }
+
+    const sync = providerSyncState[provider.id];
+    if (sync?.ok) {
+      return '<span class="prov-row-status is-set">Connected</span>';
+    }
+    if (sync && !sync.ok && !sync.skipped) {
+      return '<span class="prov-row-status is-error">Not connected</span>';
+    }
+    return '<span class="prov-row-status is-missing">Not synced</span>';
   }
 
   function patchProviderRow(row, provider) {
@@ -312,6 +408,7 @@ const SettingsStore = (() => {
                     <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
                   </svg>
                 </button>
+                <button class="prov-text-btn prov-test-btn" type="button" data-action="test-provider">Test</button>
               </div>
             </div>
 
@@ -341,6 +438,7 @@ const SettingsStore = (() => {
   }
 
   const POPULAR_PROVIDERS = [
+    { type: 'openrouter', name: 'OpenRouter' },
     { type: 'openai', name: 'OpenAI' },
     { type: 'anthropic', name: 'Anthropic' },
     { type: 'google', name: 'Google' },
@@ -359,11 +457,16 @@ const SettingsStore = (() => {
   }
 
   function renderProvidersContent() {
+    const connectedCount = Object.values(providerSyncState).filter((s) => s.ok).length;
     return `
       <div class="settings-section">
         <div class="settings-section-header">
           <h2>Providers</h2>
-          <p>API keys are stored locally on this device.</p>
+          <p>Add your API keys below. Keys stay on this device and are sent to the local OpenCode agent when you sync. Get an <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">OpenRouter API key</a> for hundreds of models through one key.</p>
+          <div class="prov-sync-row">
+            <button class="prov-sync-btn" type="button" data-action="sync-providers">Sync providers</button>
+            <span class="prov-sync-meta">${connectedCount} connected · Free OpenCode models work without a key</span>
+          </div>
         </div>
 
         <div class="prov-group">
@@ -433,8 +536,12 @@ const SettingsStore = (() => {
         </div>
         <div class="settings-about-rows">
           <div class="settings-about-row">
+            <span class="settings-about-row-label">AI Agent</span>
+            <span class="settings-about-row-value">OpenCode — 75+ providers</span>
+          </div>
+          <div class="settings-about-row">
             <span class="settings-about-row-label">Storage</span>
-            <span class="settings-about-row-value">Local — data never leaves your device</span>
+            <span class="settings-about-row-value">Local — API keys stored on device</span>
           </div>
           <div class="settings-about-row">
             <span class="settings-about-row-label">Runtime</span>
@@ -566,13 +673,18 @@ const SettingsStore = (() => {
           e.stopPropagation();
           const value = input.type === 'checkbox' ? input.checked : input.value;
           if (field === 'name' && !value.trim()) return;
-          updateProvider(id, { [field]: value }, false);
-          if (field === 'enabled') patchProviderRow(row, getProvider(id));
+          Object.assign(getProvider(id), { [field]: value });
+          persistSettings();
+          if (field === 'enabled') {
+            patchProviderRow(row, getProvider(id));
+            syncProvidersToBackend();
+          }
         });
 
-        if (field === 'apiKey') {
+        if (field === 'apiKey' || field === 'baseUrl') {
           input.addEventListener('blur', () => {
             patchProviderRow(row, getProvider(id));
+            syncProvidersToBackend();
           });
         }
 
@@ -603,6 +715,38 @@ const SettingsStore = (() => {
         const input = row.querySelector('.settings-api-key-input');
         input.type = input.type === 'password' ? 'text' : 'password';
       });
+
+      row.querySelector('[data-action="test-provider"]')?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const provider = getProvider(id);
+        if (!provider?.apiKey?.trim()) {
+          showToast('Add an API key first');
+          return;
+        }
+        if (provider.type === 'custom' && !provider.baseUrl?.trim()) {
+          showToast('Add a base URL first');
+          return;
+        }
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.textContent = 'Testing…';
+        try {
+          const result = await Backend.testProvider(provider);
+          providerSyncState[id] = {
+            id,
+            ok: result.ok,
+            providerId: result.providerId,
+          };
+          patchProviderRow(row, provider);
+          showToast(result.ok ? `${provider.name} connected` : `Could not connect to ${provider.name}`);
+          if (result.ok) await refreshModelsFromBackend();
+        } catch (err) {
+          showToast(`Test failed: ${err.message || 'Unknown error'}`);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Test';
+        }
+      });
     });
 
     container.querySelectorAll('[data-action="add-preset"]').forEach((btn) => {
@@ -620,6 +764,10 @@ const SettingsStore = (() => {
     container.querySelector('[data-action="add-custom"]')?.addEventListener('click', () => {
       addProvider('custom', { expand: true, focusBaseUrl: true });
       showToast('Custom provider added');
+    });
+
+    container.querySelector('[data-action="sync-providers"]')?.addEventListener('click', () => {
+      syncProvidersToBackend({ showFeedback: true });
     });
   }
 
@@ -671,6 +819,7 @@ const SettingsStore = (() => {
     staggerProviders = true;
     render();
     showSettingsScreen();
+    syncProvidersToBackend();
   }
 
   function close() {
@@ -687,6 +836,8 @@ const SettingsStore = (() => {
     getIsOpen,
     getChatModels,
     getProviders,
+    refreshModelsFromBackend,
+    syncProvidersToBackend,
   };
 })();
 
