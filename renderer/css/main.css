@@ -522,6 +522,32 @@ textarea {
   white-space: nowrap;
 }
 
+.project-add-chat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.project-header:hover .project-add-chat {
+  opacity: 1;
+}
+
+.project-add-chat:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .project-chats {
   overflow: hidden;
 }
@@ -1269,23 +1295,6 @@ textarea {
   display: inline;
 }
 
-.md-content.is-streaming .streaming-cursor {
-  display: inline-block;
-  vertical-align: text-bottom;
-  transform: translateY(4px);
-}
-
-.streaming-cursor {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  background: var(--accent);
-  border-radius: 50%;
-  margin-left: 5px;
-  vertical-align: text-bottom;
-  transform: translateY(4px);
-}
-
 .md-content-segment {
   margin-bottom: 0;
 }
@@ -1404,29 +1413,16 @@ textarea {
   display: inline;
 }
 
-.md-content.is-streaming .streaming-cursor {
-  display: inline-block;
-  vertical-align: text-bottom;
-  transform: translateY(4px);
-}
-
-.streaming-cursor {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  background: var(--accent);
-  border-radius: 50%;
-  margin-left: 5px;
-  vertical-align: text-bottom;
-  transform: translateY(4px);
-}
-
 /* Thinking indicator */
 .thinking-indicator {
   padding: 10px 0;
   color: var(--text-muted);
   font-size: 12.5px;
   min-height: 1.4em;
+}
+
+.tool-thinking-indicator {
+  padding: 4px 0 10px;
 }
 
 .thinking-typewriter-text {
@@ -1472,6 +1468,15 @@ textarea {
 
 .tool-activity-line.done:not(.tool-edit-clickable) {
   pointer-events: none;
+  opacity: 0.6;
+}
+
+.tool-activity-line.done .tool-activity-text {
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  -webkit-text-fill-color: initial;
+  color: var(--text-muted);
 }
 
 .tool-edit-clickable {

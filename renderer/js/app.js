@@ -50,6 +50,7 @@ function saveChatState() {
       chatMessages: state.chatMessages,
       nextMsgId: state.nextMsgId,
       selectedProjectId: state.selectedProjectId,
+      expandedChatLists: Array.from(state.expandedChatLists),
     }));
   } catch (err) {
     console.error('Failed to save chats:', err);
@@ -85,6 +86,7 @@ function createInitialState() {
       selectedProjectId: saved.selectedProjectId,
       selectedChatId: null,
       expandedProjects: new Set(expanded),
+      expandedChatLists: new Set(saved.expandedChatLists || []),
       chatMessages: saved.chatMessages || {},
       nextMsgId: saved.nextMsgId || 1000,
       isGenerating: false,
@@ -98,6 +100,7 @@ function createInitialState() {
     selectedProjectId: null,
     selectedChatId: null,
     expandedProjects: new Set(),
+    expandedChatLists: new Set(),
     chatMessages: {},
     nextMsgId: 1000,
     isGenerating: false,
@@ -682,16 +685,36 @@ function renderSidebar() {
         ${project.name[0].toUpperCase()}
       </div>
       <span class="project-name">${project.name}</span>
+      <button class="project-add-chat" title="New chat">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
     `;
 
     header.addEventListener('click', () => toggleProject(project.id));
+
+    const addChatBtn = header.querySelector('.project-add-chat');
+    addChatBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.selectedProjectId = project.id;
+      if (!state.expandedProjects.has(project.id)) {
+        state.expandedProjects.add(project.id);
+      }
+      showWelcomeScreen();
+      focusInput(dom.welcomeInput);
+    });
 
     // Chats list
     const chatsDiv = document.createElement('div');
     chatsDiv.className = `project-chats ${isExpanded ? 'expanded' : 'collapsed'}`;
     chatsDiv.id = `chats-${project.id}`;
 
-    const visibleChats = project.chats.slice(0, 5);
+    const maxVisibleChats = 5;
+    const isChatListExpanded = state.expandedChatLists.has(project.id);
+    const visibleChats = isChatListExpanded
+      ? project.chats
+      : project.chats.slice(0, maxVisibleChats);
     const hiddenCount = project.chats.length - visibleChats.length;
 
     visibleChats.forEach((chat) => {
@@ -705,9 +728,22 @@ function renderSidebar() {
       showMore.textContent = `Show ${hiddenCount} more`;
       showMore.addEventListener('click', (e) => {
         e.stopPropagation();
-        // TODO: expand
+        state.expandedChatLists.add(project.id);
+        saveChatState();
+        renderSidebar();
       });
       chatsDiv.appendChild(showMore);
+    } else if (isChatListExpanded && project.chats.length > maxVisibleChats) {
+      const showLess = document.createElement('button');
+      showLess.className = 'show-more-btn';
+      showLess.textContent = 'Show less';
+      showLess.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.expandedChatLists.delete(project.id);
+        saveChatState();
+        renderSidebar();
+      });
+      chatsDiv.appendChild(showLess);
     }
 
     group.appendChild(header);
@@ -925,23 +961,80 @@ function renderMessage(msg, animate = true) {
       </div>
     `;
   } else {
-    el.innerHTML = `
-      <div class="message-wrapper">
-        ${assistantAvatarHTML()}
-        <div class="assistant-body">
-          <div class="assistant-meta">
-            ${msg.toolCalls && msg.toolCalls.length ? renderToolCallsHTML(msg.toolCalls, msg.id) : ''}
-          </div>
-          <div class="md-content" id="content-${msg.id}">${msg.content ? parseMarkdown(msg.content) : ''}</div>
-          ${msg.content ? renderMessageActionsHTML() : ''}
-        </div>
-      </div>
-    `;
+    el.innerHTML = buildAssistantHTML(msg);
   }
 
   dom.messagesList.appendChild(el);
   if (animate) Physics.messageIn(el);
   return el;
+}
+
+function buildDefaultSegments(msg) {
+  const hasTools = msg.toolCalls?.length > 0;
+  const hasContent = !!msg.content;
+
+  if (!hasTools && !hasContent) return [];
+
+  const segs = [];
+  if (hasTools && hasContent && msg.eventLog?.length) {
+    const firstToolIdx = msg.eventLog.findIndex((e) => e.type === 'tool');
+    const firstTextIdx = msg.eventLog.findIndex((e) => e.type === 'text');
+    if (firstToolIdx !== -1 && (firstTextIdx === -1 || firstToolIdx < firstTextIdx)) {
+      segs.push({ type: 'tools', toolCalls: msg.toolCalls });
+      segs.push({ type: 'content', text: msg.content });
+    } else {
+      segs.push({ type: 'content', text: msg.content });
+      segs.push({ type: 'tools', toolCalls: msg.toolCalls });
+    }
+  } else if (hasTools) {
+    segs.push({ type: 'tools', toolCalls: msg.toolCalls });
+  } else {
+    segs.push({ type: 'content', text: msg.content });
+  }
+  return segs;
+}
+
+function buildAssistantHTML(msg) {
+  const segments = msg.segments?.length ? msg.segments : buildDefaultSegments(msg);
+
+  if (!segments.length) {
+    return `
+      <div class="message-wrapper">
+        ${assistantAvatarHTML()}
+        <div class="assistant-body">
+          <div class="md-content" id="content-${msg.id}"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  const parts = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const isLast = i === segments.length - 1;
+    if (seg.type === 'tools') {
+      parts.push(`<div class="assistant-meta">${renderToolCallsHTML(seg.toolCalls, msg.id)}</div>`);
+    } else {
+      if (isLast) {
+        parts.push(`<div class="md-content" id="content-${msg.id}">${parseMarkdown(seg.text || '')}</div>`);
+      } else {
+        parts.push(`<div class="md-content md-content-segment">${parseMarkdown(seg.text || '')}</div>`);
+      }
+    }
+  }
+
+  const lastSeg = segments[segments.length - 1];
+  const hasActions = lastSeg?.type === 'content';
+
+  return `
+    <div class="message-wrapper">
+      ${assistantAvatarHTML()}
+      <div class="assistant-body">
+        ${parts.join('')}
+        ${hasActions ? renderMessageActionsHTML() : ''}
+      </div>
+    </div>
+  `;
 }
 
 function assistantAvatarHTML() {
@@ -1214,12 +1307,10 @@ function renderFileMutationLineHTML(tc) {
 
   if (kind === 'edit') {
     if (file && (adds > 0 || dels > 0)) {
-      let html = '<span class="tool-activity-text">Edited </span>';
+      let html = `<span class="tool-activity-text">Edited ${escapeHtml(file)} </span>`;
       if (adds > 0) html += `<span class="tool-edit-stat tool-edit-stat-add">+${adds}</span>`;
       if (adds > 0 && dels > 0) html += '<span class="tool-activity-text"> </span>';
       if (dels > 0) html += `<span class="tool-edit-stat tool-edit-stat-del">-${dels}</span>`;
-      const lineWord = adds + dels === 1 ? 'line' : 'lines';
-      html += `<span class="tool-activity-text"> ${lineWord} in ${escapeHtml(file)}</span>`;
       return html;
     }
     const text = file ? `Edited ${file}` : 'Edited file';
@@ -1260,7 +1351,13 @@ function getActiveToolMeta(body) {
   if (!body) return null;
   const contentEl = body.querySelector('.md-content:not(.md-content-segment)');
   if (contentEl) {
-    let sibling = contentEl.previousElementSibling;
+    let sibling = contentEl.nextElementSibling;
+    while (sibling) {
+      if (sibling.classList.contains('assistant-meta')) return sibling;
+      if (sibling.classList.contains('message-actions')) break;
+      sibling = sibling.nextElementSibling;
+    }
+    sibling = contentEl.previousElementSibling;
     while (sibling) {
       if (sibling.classList.contains('assistant-meta')) return sibling;
       sibling = sibling.previousElementSibling;
@@ -1282,8 +1379,16 @@ function getToolActivityContainer(msgId) {
     meta = document.createElement('div');
     meta.className = 'assistant-meta';
     const content = body.querySelector('.md-content');
-    if (content) body.insertBefore(meta, content);
-    else body.prepend(meta);
+    if (content) {
+      const hasText = content.textContent.trim().length > 0;
+      if (hasText) {
+        body.insertBefore(meta, content.nextSibling);
+      } else {
+        body.insertBefore(meta, content);
+      }
+    } else {
+      body.prepend(meta);
+    }
   }
 
   let container = meta.querySelector('.tool-activity');
@@ -1293,6 +1398,51 @@ function getToolActivityContainer(msgId) {
     meta.appendChild(container);
   }
   return container;
+}
+
+function getInlineThinkingContainer(msgId) {
+  const msgEl = document.getElementById(`msg-${msgId}`);
+  if (!msgEl) return null;
+
+  const body = msgEl.querySelector('.assistant-body');
+  if (!body) return null;
+
+  let thinking = body.querySelector('.tool-thinking-indicator');
+  if (thinking) return thinking;
+
+  const toolContainer = getToolActivityContainer(msgId);
+  const meta = toolContainer?.parentElement;
+  if (!meta) return null;
+
+  thinking = document.createElement('div');
+  thinking.className = 'thinking-indicator tool-thinking-indicator';
+  thinking.innerHTML = '<span class="thinking-typewriter-text"></span>';
+
+  const toolActivity = meta.querySelector('.tool-activity');
+  if (toolActivity) meta.insertBefore(thinking, toolActivity.nextSibling);
+  else meta.appendChild(thinking);
+
+  startThinkingTypewriter(thinking);
+  return thinking;
+}
+
+function hasRunningToolCalls(run) {
+  return Array.from(run?.toolCalls?.values() || [])
+    .some((tc) => (tc.status || 'complete') !== 'complete');
+}
+
+function showInlineThinking(run) {
+  if (!run || run.content || hasRunningToolCalls(run)) return;
+
+  const thinking = getInlineThinkingContainer(run.assistantMsgId);
+  if (thinking && !state.userHasScrolledUp) scrollToEnd(false);
+}
+
+function hideInlineThinking(msgId) {
+  const thinking = document.querySelector(`#msg-${msgId} .tool-thinking-indicator`);
+  if (!thinking) return;
+  thinking._stopThinkingTypewriter?.();
+  thinking.remove();
 }
 
 function showToolActivityLine(tc, msgId) {
@@ -1319,6 +1469,56 @@ function showToolActivityLine(tc, msgId) {
     line.removeAttribute('tabindex');
   }
   line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabel(tc))}</span>`;
+}
+
+function showToolActivityLineInline(tc, msgId, chatId) {
+  const msgEl = document.getElementById(`msg-${msgId}`);
+  if (!msgEl) return;
+
+  const body = msgEl.querySelector('.assistant-body');
+  if (!body) return;
+
+  const contentEl = document.getElementById(`content-${msgId}`);
+  const hasPriorText = Boolean(contentEl?.innerHTML.trim());
+
+  if (hasPriorText) {
+    const prior = document.createElement('div');
+    prior.className = 'md-content md-content-segment';
+    prior.innerHTML = contentEl.innerHTML;
+    body.insertBefore(prior, contentEl);
+    contentEl.innerHTML = '';
+    contentEl.classList.remove('is-streaming');
+
+    const meta = document.createElement('div');
+    meta.className = 'assistant-meta';
+    const container = document.createElement('div');
+    container.className = 'tool-activity';
+    meta.appendChild(container);
+    body.insertBefore(meta, contentEl);
+
+    container.querySelectorAll('.tool-activity-line.running').forEach((el) => {
+      const otherId = el.id?.replace(/^tc-/, '');
+      if (otherId && otherId !== tc.id) {
+        completeToolActivityLine(otherId, msgId);
+      }
+    });
+
+    let line = document.getElementById(`tc-${tc.id}`);
+    if (!line) {
+      line = document.createElement('div');
+      line.className = 'tool-activity-line running';
+      line.id = `tc-${tc.id}`;
+      container.appendChild(line);
+    } else {
+      line.classList.remove('done', 'tool-file-edit-line', 'tool-edit-clickable');
+      line.classList.add('running');
+      line.removeAttribute('role');
+      line.removeAttribute('tabindex');
+    }
+    line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabel(tc))}</span>`;
+  } else {
+    showToolActivityLine(tc, msgId);
+  }
 }
 
 function completeToolActivityLine(tcId, msgId) {
@@ -1444,6 +1644,8 @@ async function runAIResponse(chatId, userMessage) {
     role: 'assistant',
     toolCalls: [],
     content: '',
+    segments: [],
+    eventLog: [],
   };
   state.chatMessages[chatId].push(assistantMsg);
 
@@ -1519,10 +1721,14 @@ function ensureAssistantVisible(run) {
 
 function appendStreamFull(run, text) {
   if (!text) return;
+  hideInlineThinking(run.assistantMsgId);
   run.content = text;
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
-  if (msg) msg.content = run.content;
+  if (msg) {
+    msg.content = run.content;
+    if (msg.eventLog) msg.eventLog.push({ type: 'text', seq: msg.eventLog.length });
+  }
 
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
   if (!contentEl) return;
@@ -1531,7 +1737,6 @@ function appendStreamFull(run, text) {
   contentEl.innerHTML = `
     <span class="md-stream-wrap">
       <span class="md-stream-body">${parseMarkdown(closeOpenFences(run.content))}</span>
-      <span class="streaming-cursor"></span>
     </span>
   `;
 
@@ -1540,10 +1745,14 @@ function appendStreamFull(run, text) {
 
 function appendStreamDelta(run, delta) {
   if (!delta) return;
+  hideInlineThinking(run.assistantMsgId);
   run.content += delta;
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
-  if (msg) msg.content = run.content;
+  if (msg) {
+    msg.content = run.content;
+    if (msg.eventLog) msg.eventLog.push({ type: 'text', seq: msg.eventLog.length });
+  }
 
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
   if (!contentEl) return;
@@ -1552,7 +1761,6 @@ function appendStreamDelta(run, delta) {
   contentEl.innerHTML = `
     <span class="md-stream-wrap">
       <span class="md-stream-body">${parseMarkdown(closeOpenFences(run.content))}</span>
-      <span class="streaming-cursor"></span>
     </span>
   `;
 
@@ -1568,7 +1776,12 @@ function upsertToolCall(run, toolCall) {
   run.toolCalls.set(toolCall.id, toolCall);
   msg.toolCalls = Array.from(run.toolCalls.values());
 
+  if ((toolCall.status === 'pending' || toolCall.status === 'running') && msg.eventLog) {
+    msg.eventLog.push({ type: 'tool', seq: msg.eventLog.length });
+  }
+
   if (toolCall.status === 'pending' || toolCall.status === 'running') {
+    hideInlineThinking(run.assistantMsgId);
     if (toolCall.name === 'question') {
       syncInlineQuestion(run.assistantMsgId, {
         chatId: run.chatId,
@@ -1578,11 +1791,12 @@ function upsertToolCall(run, toolCall) {
         requestId: null,
       });
     } else {
-      showToolActivityLine(toolCall, run.assistantMsgId);
+      showToolActivityLineInline(toolCall, run.assistantMsgId, run.chatId);
     }
   } else if (toolCall.status === 'complete') {
     if (toolCall.name === 'question') removeInlineQuestion(run.assistantMsgId);
     completeToolActivityLine(toolCall.id, run.assistantMsgId);
+    showInlineThinking(run);
   }
 }
 
@@ -1626,9 +1840,38 @@ function applyLateToolUpdate(chatId, toolCall, sessionId = null) {
   saveChatState();
 }
 
+function buildSegmentsFromDOM(msgId, chatId) {
+  const msg = state.chatMessages[chatId]?.find((m) => m.id === msgId);
+  if (!msg) return;
+  const body = document.querySelector(`#msg-${msgId} .assistant-body`);
+  if (!body) return;
+  const segments = [];
+  for (const child of body.children) {
+    if (child.classList.contains('assistant-meta')) {
+      const lines = child.querySelectorAll('.tool-activity-line');
+      const toolCalls = [];
+      lines.forEach((line) => {
+        const id = line.id?.replace(/^tc-/, '');
+        const tc = msg.toolCalls?.find((t) => t.id === id);
+        if (tc) toolCalls.push(tc);
+      });
+      if (toolCalls.length) segments.push({ type: 'tools', toolCalls });
+    } else if (child.classList.contains('md-content-segment')) {
+      const text = child.textContent || '';
+      if (text.trim()) segments.push({ type: 'content', text });
+    } else if (child.classList.contains('md-content') && !child.classList.contains('md-content-segment')) {
+      if (msg.content) {
+        segments.push({ type: 'content', text: msg.content });
+      }
+    }
+  }
+  if (segments.length) msg.segments = segments;
+}
+
 function finalizeAssistantMessage(run) {
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
+  hideInlineThinking(run.assistantMsgId);
   if (!contentEl || !msg) return;
 
   finalizeToolCallsUI(run.assistantMsgId, msg.toolCalls);
@@ -1645,6 +1888,8 @@ function finalizeAssistantMessage(run) {
   } else if (!msg.toolCalls?.length) {
     contentEl.innerHTML = '<p><em>No response received.</em></p>';
   }
+
+  buildSegmentsFromDOM(run.assistantMsgId, run.chatId);
 }
 
 function finishAIRun(chatId) {
@@ -1652,6 +1897,7 @@ function finishAIRun(chatId) {
   if (!run) return;
 
   finalizeAssistantMessage(run);
+  stopThinkingIndicator(run.thinkingEl);
   aiRuns.delete(chatId);
   state.isGenerating = false;
   syncSendButtonState();
@@ -1663,6 +1909,7 @@ function finishAIRun(chatId) {
 function finishAIWithError(chatId, message) {
   const run = aiRuns.get(chatId);
   if (run) {
+    hideInlineThinking(run.assistantMsgId);
     stopThinkingIndicator(run.thinkingEl);
     if (!run.started) {
       const msg = state.chatMessages[chatId]?.find((m) => m.id === run.assistantMsgId);
@@ -1746,6 +1993,8 @@ function simulateAIResponse(chatId, userMessage) {
     role: 'assistant',
     toolCalls: startsWithTools ? mapToolCalls(phases[0].toolCalls, 0) : [],
     content: '',
+    segments: [],
+    eventLog: [],
   };
   state.chatMessages[chatId].push(assistantMsg);
 
@@ -1812,7 +2061,17 @@ function mapToolCalls(toolCalls, phaseKey = 0) {
 function attachDiffsToMessages() {
   for (const chatId of Object.keys(state.chatMessages)) {
     for (const msg of state.chatMessages[chatId]) {
-      for (const tc of msg.toolCalls || []) {
+      const allTools = [];
+      if (msg.segments?.length) {
+        for (const seg of msg.segments) {
+          if (seg.type === 'tools' && seg.toolCalls) {
+            allTools.push(...seg.toolCalls);
+          }
+        }
+      } else if (msg.toolCalls?.length) {
+        allTools.push(...msg.toolCalls);
+      }
+      for (const tc of allTools) {
         if ((tc.name === 'edit' || tc.name === 'edit_file') && !tc.diff) {
           tc.diff = getEditDiffForTool(tc);
         }
@@ -1927,6 +2186,14 @@ function runResponsePhases(phases, msgId, chatId, msgEl, onDone) {
 
   function runNextPhase() {
     if (phaseIdx >= phases.length) {
+      const msg = state.chatMessages[chatId]?.find((m) => m.id === msgId);
+      if (msg) {
+        msg.segments = msg.segments || [];
+        if (msg.content) {
+          msg.segments.push({ type: 'content', text: msg.content });
+          msg.content = '';
+        }
+      }
       onDone();
       return;
     }
@@ -1953,12 +2220,21 @@ function startToolsPhase(toolCallsTemplate, msgId, chatId, msgEl, phaseKey, onDo
   }
 
   const toolCalls = mapToolCalls(toolCallsTemplate, phaseKey);
-  const msg = state.chatMessages[chatId]?.find((m) => m.id === msgId);
-  if (msg) msg.toolCalls = toolCalls;
 
   const body = msgEl.querySelector('.assistant-body');
   const contentEl = document.getElementById(`content-${msgId}`);
   const hasPriorText = Boolean(contentEl?.innerHTML.trim());
+
+  const msg = state.chatMessages[chatId]?.find((m) => m.id === msgId);
+  if (msg) {
+    msg.segments = msg.segments || [];
+    if (hasPriorText && msg.content) {
+      msg.segments.push({ type: 'content', text: msg.content });
+      msg.content = '';
+    }
+    msg.toolCalls = toolCalls;
+    msg.segments.push({ type: 'tools', toolCalls });
+  }
 
   if (hasPriorText) {
     const prior = document.createElement('div');
@@ -2027,6 +2303,14 @@ function findToolCallById(tcId) {
     for (const msg of state.chatMessages[chatId]) {
       const tc = msg.toolCalls?.find((t) => t.id === tcId);
       if (tc) return tc;
+      if (msg.segments?.length) {
+        for (const seg of msg.segments) {
+          if (seg.type === 'tools') {
+            const found = seg.toolCalls?.find((t) => t.id === tcId);
+            if (found) return found;
+          }
+        }
+      }
     }
   }
   return null;
@@ -2082,7 +2366,6 @@ function streamText(fullText, msgId, chatId, onDone, options = {}) {
     : prefix + fullText;
 
   let streamBody = contentEl.querySelector('.md-stream-body');
-  let cursor = contentEl.querySelector('.streaming-cursor');
 
   if (!streamBody) {
     contentEl.classList.add('is-streaming');
@@ -2091,10 +2374,7 @@ function streamText(fullText, msgId, chatId, onDone, options = {}) {
     streamWrap.className = 'md-stream-wrap';
     streamBody = document.createElement('span');
     streamBody.className = 'md-stream-body';
-    cursor = document.createElement('span');
-    cursor.className = 'streaming-cursor';
     streamWrap.appendChild(streamBody);
-    streamWrap.appendChild(cursor);
     contentEl.appendChild(streamWrap);
     if (prefix && !hasSegment) streamBody.innerHTML = parseMarkdown(prefix);
   }

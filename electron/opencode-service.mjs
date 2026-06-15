@@ -79,7 +79,11 @@ async function pollSessionResponse(chatId, sessionId) {
   const seenTools = new Map();
 
   try {
-    for (let attempt = 0; attempt < 180; attempt++) {
+    let idlePolls = 0;
+    let lastActivity = Date.now();
+    const IDLE_POLL_LIMIT = 16; // 8s of continuous idle with no response text
+
+    for (let attempt = 0; ; attempt++) {
       if (!client || !chatSessions.has(chatId)) return;
 
       const [statusRes, msgRes] = await Promise.all([
@@ -118,6 +122,7 @@ async function pollSessionResponse(chatId, sessionId) {
         for (const part of latest.parts) {
           if (part.type === 'text' && part.text && part.text !== lastText) {
             lastText = part.text;
+            lastActivity = Date.now();
             emitEvent({
               type: 'text-full',
               chatId,
@@ -133,6 +138,7 @@ async function pollSessionResponse(chatId, sessionId) {
             const signature = JSON.stringify(mapped);
             if (signature !== prev) {
               seenTools.set(part.id, signature);
+              lastActivity = Date.now();
               emitEvent({
                 type: 'tool-update',
                 chatId,
@@ -163,7 +169,15 @@ async function pollSessionResponse(chatId, sessionId) {
         return;
       }
 
-      if (!isBusy && !completed && attempt >= 8 && !lastText) {
+      // If busy or has activity, reset idle counters and keep polling
+      if (isBusy || (Date.now() - lastActivity) < 5000) {
+        idlePolls = 0;
+        await sleep(500);
+        continue;
+      }
+
+      // Not busy and no recent activity — check exit conditions
+      if (!lastText && attempt >= 8) {
         if (emitEvent) {
           emitEvent({
             type: 'error',
@@ -175,15 +189,20 @@ async function pollSessionResponse(chatId, sessionId) {
         return;
       }
 
-      await sleep(500);
-    }
+      idlePolls++;
+      if (idlePolls >= IDLE_POLL_LIMIT) {
+        if (emitEvent) {
+          emitEvent({
+            type: 'error',
+            chatId,
+            message: 'Response timed out. Check your model and provider API key in Settings.',
+          });
+        }
+        activeRuns.delete(chatId);
+        return;
+      }
 
-    if (emitEvent) {
-      emitEvent({
-        type: 'error',
-        chatId,
-        message: 'Response timed out. Check your model and provider API key in Settings.',
-      });
+      await sleep(500);
     }
   } finally {
     activePolls.delete(sessionId);
