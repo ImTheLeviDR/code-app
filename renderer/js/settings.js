@@ -1,5 +1,5 @@
 /* ============================================================
-   SETTINGS — Full-page settings with category navigation
+   SETTINGS - Full-page settings with category navigation
    ============================================================ */
 
 'use strict';
@@ -44,6 +44,12 @@ const SettingsStore = (() => {
         enabled: true,
       });
     }
+    next.notifications = {
+      taskCompleteEnabled: next.notifications?.taskCompleteEnabled !== false,
+      taskCompleteSoundId: TaskSounds.isValid(next.notifications?.taskCompleteSoundId)
+        ? next.notifications.taskCompleteSoundId
+        : 'chime',
+    };
     return next;
   }
 
@@ -499,6 +505,58 @@ const SettingsStore = (() => {
     `;
   }
 
+  function renderNotificationsContent() {
+    const { taskCompleteEnabled, taskCompleteSoundId } = settings.notifications;
+    const sounds = TaskSounds.list();
+
+    return `
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <h2>Notifications</h2>
+          <p>Choose how you're alerted when a chat task finishes.</p>
+        </div>
+
+        <div class="settings-notif-toggle-row">
+          <div class="settings-notif-toggle-copy">
+            <div class="settings-label">Task complete sound</div>
+            <div class="settings-label-note">Play a sound when any chat finishes running</div>
+          </div>
+          <label class="settings-toggle" title="${taskCompleteEnabled ? 'Disable' : 'Enable'} task complete sound">
+            <input
+              type="checkbox"
+              class="settings-toggle-input"
+              data-notif-field="taskCompleteEnabled"
+              ${taskCompleteEnabled ? 'checked' : ''}
+            />
+            <span class="settings-toggle-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-sound-list${taskCompleteEnabled ? '' : ' is-disabled'}">
+          ${sounds.map((sound) => `
+            <div
+              class="settings-sound-option${sound.id === taskCompleteSoundId ? ' active' : ''}"
+              role="button"
+              tabindex="0"
+              data-sound-id="${sound.id}"
+            >
+              <div class="settings-sound-option-main">
+                <span class="settings-sound-option-label">${escapeHtml(sound.label)}</span>
+                <span class="settings-sound-option-desc">${escapeHtml(sound.description)}</span>
+              </div>
+              <button
+                class="settings-sound-preview-btn"
+                type="button"
+                data-action="preview-sound"
+                data-sound-id="${sound.id}"
+              >Preview</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
   function renderComingSoon(label) {
     const icons = {
       appearance: `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`,
@@ -540,11 +598,11 @@ const SettingsStore = (() => {
         <div class="settings-about-rows">
           <div class="settings-about-row">
             <span class="settings-about-row-label">AI Agent</span>
-            <span class="settings-about-row-value">OpenCode — 75+ providers</span>
+            <span class="settings-about-row-value">OpenCode - 75+ providers</span>
           </div>
           <div class="settings-about-row">
             <span class="settings-about-row-label">Storage</span>
-            <span class="settings-about-row-value">Local — API keys stored on device</span>
+            <span class="settings-about-row-value">Local - API keys stored on device</span>
           </div>
           <div class="settings-about-row">
             <span class="settings-about-row-label">Runtime</span>
@@ -567,6 +625,11 @@ const SettingsStore = (() => {
           id: "providers",
           label: "Providers",
           icon: `<path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
+        },
+        {
+          id: "notifications",
+          label: "Notifications",
+          icon: `<path d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-5-5.9V4a2 2 0 10-4 0v1.1A6 6 0 004 11v3.2c0 .5-.2 1-.6 1.4L2 17h5m8 0a3 3 0 01-6 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
         },
         {
           id: "appearance",
@@ -623,6 +686,8 @@ const SettingsStore = (() => {
     switch (activeCategory) {
       case "providers":
         return renderProvidersContent();
+      case "notifications":
+        return renderNotificationsContent();
       case "about":
         return renderAboutContent();
       default:
@@ -760,7 +825,7 @@ const SettingsStore = (() => {
           return;
         }
         addProvider(type, { expand: true, focusKey: true });
-        showToast('Provider added — paste your API key');
+        showToast('Provider added - paste your API key');
       });
     });
 
@@ -771,6 +836,55 @@ const SettingsStore = (() => {
 
     container.querySelector('[data-action="sync-providers"]')?.addEventListener('click', () => {
       syncProvidersToBackend({ showFeedback: true });
+    });
+
+    bindNotificationsEvents(container);
+  }
+
+  function bindNotificationsEvents(container) {
+    const soundList = container.querySelector('.settings-sound-list');
+    if (!soundList) return;
+
+    const toggle = container.querySelector('[data-notif-field="taskCompleteEnabled"]');
+    toggle?.addEventListener('change', () => {
+      settings.notifications.taskCompleteEnabled = toggle.checked;
+      soundList.classList.toggle('is-disabled', !toggle.checked);
+      persistSettings();
+      if (toggle.checked) TaskSounds.play(settings.notifications.taskCompleteSoundId);
+    });
+
+    container.querySelectorAll('.settings-sound-option').forEach((row) => {
+      const selectSound = () => {
+        const id = row.dataset.soundId;
+        if (!id || id === settings.notifications.taskCompleteSoundId) {
+          if (settings.notifications.taskCompleteEnabled) TaskSounds.play(id);
+          return;
+        }
+        settings.notifications.taskCompleteSoundId = id;
+        persistSettings();
+        container.querySelectorAll('.settings-sound-option').forEach((el) => {
+          el.classList.toggle('active', el.dataset.soundId === id);
+        });
+        if (settings.notifications.taskCompleteEnabled) TaskSounds.play(id);
+      };
+
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('[data-action="preview-sound"]')) return;
+        selectSound();
+      });
+
+      row.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        selectSound();
+      });
+    });
+
+    container.querySelectorAll('[data-action="preview-sound"]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        TaskSounds.play(btn.dataset.soundId);
+      });
     });
   }
 
@@ -833,10 +947,18 @@ const SettingsStore = (() => {
 
   function getIsOpen() { return isOpen; }
 
+  function getNotificationSettings() {
+    return {
+      taskCompleteEnabled: settings.notifications?.taskCompleteEnabled !== false,
+      taskCompleteSoundId: settings.notifications?.taskCompleteSoundId || 'chime',
+    };
+  }
+
   return {
     open,
     close,
     getIsOpen,
+    getNotificationSettings,
     getChatModels,
     getProviders,
     refreshModelsFromBackend,

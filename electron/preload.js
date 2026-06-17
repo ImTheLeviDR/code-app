@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   quit: () => ipcRenderer.send('window-quit'),
   onWindowState: (cb) => ipcRenderer.on('window-state', (_, state) => cb(state)),
   openFolderDialog: () => ipcRenderer.invoke('dialog:open-folder'),
+  signalShellReady: () => ipcRenderer.send('app-shell-ready'),
+  signalAppReady: () => ipcRenderer.send('app-ready'),
 });
 
 contextBridge.exposeInMainWorld('backendAPI', {
@@ -16,6 +18,8 @@ contextBridge.exposeInMainWorld('backendAPI', {
   testProvider: (provider) => ipcRenderer.invoke('backend:test-provider', provider),
   getModels: (providers) => ipcRenderer.invoke('backend:get-models', providers),
   sendMessage: (payload) => ipcRenderer.invoke('backend:send-message', payload),
+  restoreSessions: (mappings) => ipcRenderer.invoke('backend:restore-sessions', mappings),
+  fetchSessionMessages: (payload) => ipcRenderer.invoke('backend:fetch-session-messages', payload),
   abort: (chatId) => ipcRenderer.invoke('backend:abort', chatId),
   setWorkspace: (folderPath) => ipcRenderer.invoke('backend:set-workspace', folderPath),
   replyQuestion: (payload) => ipcRenderer.invoke('backend:reply-question', payload),

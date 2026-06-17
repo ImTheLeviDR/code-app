@@ -1,5 +1,5 @@
 /* ============================================================
-   Physics — damped-spring motion (F = -kx - cv)
+   Physics - damped-spring motion (F = -kx - cv)
    ============================================================ */
 
 'use strict';
@@ -60,6 +60,9 @@ const Physics = (() => {
       case 'x':
       case 'y':
         return 0;
+      case 'left':
+      case 'top':
+        return parseFloat(el.style[key]) || 0;
       default:
         return 0;
     }
@@ -88,6 +91,8 @@ const Physics = (() => {
     if (states.scaleY) parts.push(`scaleY(${states.scaleY.value})`);
     if (states.rotate) parts.push(`rotate(${states.rotate.value}deg)`);
     if (parts.length) el.style.transform = parts.join(' ');
+    if (states.left) el.style.left = `${states.left.value}px`;
+    if (states.top) el.style.top = `${states.top.value}px`;
     if (states.opacity) el.style.opacity = String(states.opacity.value);
     if (states.height) el.style.height = `${Math.max(0, states.height.value)}px`;
     writeState(el, states);
@@ -447,6 +452,7 @@ const Physics = (() => {
 
   return {
     PRESETS,
+    cancel,
     animate,
     animateScroll,
     stagger,
@@ -469,6 +475,5 @@ const Physics = (() => {
     init,
     switchScreens,
     resetMotion,
-    cancel,
   };
 })();

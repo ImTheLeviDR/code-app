@@ -1,5 +1,5 @@
 /* ============================================================
-   BACKEND CLIENT — IPC bridge to OpenCode service
+   BACKEND CLIENT - IPC bridge to OpenCode service
    ============================================================ */
 
 'use strict';
@@ -59,6 +59,18 @@ const Backend = (() => {
     return window.backendAPI.sendMessage(payload);
   }
 
+  async function restoreChatSessions(mappings) {
+    if (!isAvailable()) return { restored: 0, failed: 0 };
+    await ensureReady();
+    return window.backendAPI.restoreSessions(mappings);
+  }
+
+  async function fetchSessionMessages(sessionId, workspace) {
+    if (!isAvailable()) return [];
+    await ensureReady();
+    return window.backendAPI.fetchSessionMessages({ sessionId, workspace });
+  }
+
   async function abort(chatId) {
     if (!isAvailable()) return false;
     return window.backendAPI.abort(chatId);
@@ -112,6 +124,8 @@ const Backend = (() => {
     getModels,
     getCachedModels,
     sendMessage,
+    restoreChatSessions,
+    fetchSessionMessages,
     abort,
     setWorkspace,
     replyQuestion,
