@@ -1,5 +1,5 @@
 /* ============================================================
-   Physics — damped-spring motion (F = -kx - cv)
+   Physics - damped-spring motion (F = -kx - cv)
    ============================================================ */
 
 'use strict';

@@ -145,7 +145,7 @@ const AI_RESPONSE_TEMPLATES = [
         },
         {
           type: 'stream',
-          text: "Found it — the async function isn't being awaited. Let me check if this pattern appears anywhere else.",
+          text: "Found it - the async function isn't being awaited. Let me check if this pattern appears anywhere else.",
         },
         {
           type: 'tools',
@@ -290,7 +290,7 @@ const AI_RESPONSE_TEMPLATES = [
         {
           type: 'stream',
           text:
-            'Confirmed — `getUserById` is called without `await` on line 42 of `src/api/users.ts`. I also found the same pattern in `src/api/posts.ts` (line 28).',
+            'Confirmed - `getUserById` is called without `await` on line 42 of `src/api/users.ts`. I also found the same pattern in `src/api/posts.ts` (line 28).',
         },
         {
           type: 'tools',
@@ -301,7 +301,7 @@ const AI_RESPONSE_TEMPLATES = [
         },
         {
           type: 'stream',
-          text: 'Worth fixing both to avoid the same bug elsewhere — patches applied.',
+          text: 'Worth fixing both to avoid the same bug elsewhere - patches applied.',
         },
       ],
     },
@@ -388,7 +388,7 @@ const AI_RESPONSE_TEMPLATES = [
         {
           type: 'stream',
           text:
-            "There's no central config yet — `DATABASE_URL` and `JWT_SECRET` are read in three different files.",
+            "There's no central config yet - `DATABASE_URL` and `JWT_SECRET` are read in three different files.",
         },
         {
           type: 'tools',
@@ -417,7 +417,7 @@ const AI_RESPONSE_TEMPLATES = [
         },
         {
           type: 'stream',
-          text: "Hmm, the project structure looks a bit scattered — config, utilities, and business logic are all mixed together in `src/`. Let me check the entry point to understand how it's wired up.",
+          text: "Hmm, the project structure looks a bit scattered - config, utilities, and business logic are all mixed together in `src/`. Let me check the entry point to understand how it's wired up.",
         },
         {
           type: 'tools',

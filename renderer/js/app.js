@@ -32,9 +32,30 @@ function loadPersistedChatState() {
       }
     }
 
+    const validChatIds = new Set();
+    for (const project of parsed.projects) {
+      for (const chat of project.chats || []) {
+        validChatIds.add(chat.id);
+        if (!parsed.chatMessages) parsed.chatMessages = {};
+        if (!parsed.chatMessages[chat.id]) parsed.chatMessages[chat.id] = [];
+      }
+    }
+
+    for (const chatId of Object.keys(parsed.chatMessages || {})) {
+      if (!validChatIds.has(chatId)) delete parsed.chatMessages[chatId];
+    }
+
+    for (const chatId of Object.keys(parsed.chatMessages || {})) {
+      parsed.chatMessages[chatId] = pruneEmptyAssistantMessages(parsed.chatMessages[chatId]);
+    }
+
     const validIds = new Set(parsed.projects.map((p) => p.id));
     if (!validIds.has(parsed.selectedProjectId)) {
       parsed.selectedProjectId = parsed.projects[0]?.id || null;
+    }
+
+    if (parsed.selectedChatId && !validChatIds.has(parsed.selectedChatId)) {
+      parsed.selectedChatId = null;
     }
 
     return parsed;
@@ -43,13 +64,40 @@ function loadPersistedChatState() {
   }
 }
 
+function isEmptyAssistantMessage(msg) {
+  if (msg.role !== 'assistant') return false;
+  const hasContent = Boolean(msg.content?.trim());
+  const hasTools = Boolean(msg.toolCalls?.length)
+    || Boolean(msg.segments?.some((seg) => seg.type === 'tools' && seg.toolCalls?.length));
+  return !hasContent && !hasTools;
+}
+
+function pruneEmptyAssistantMessages(messages = []) {
+  return messages.filter((msg) => !isEmptyAssistantMessage(msg));
+}
+
+function sanitizeChatMessagesForPersistence(chatMessages) {
+  const sanitized = {};
+  for (const [chatId, msgs] of Object.entries(chatMessages)) {
+    sanitized[chatId] = pruneEmptyAssistantMessages(msgs);
+  }
+  return sanitized;
+}
+
+let saveChatStateTimer = null;
+function scheduleSaveChatState() {
+  clearTimeout(saveChatStateTimer);
+  saveChatStateTimer = setTimeout(saveChatState, 400);
+}
+
 function saveChatState() {
   try {
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({
       projects: state.projects,
-      chatMessages: state.chatMessages,
+      chatMessages: sanitizeChatMessagesForPersistence(state.chatMessages),
       nextMsgId: state.nextMsgId,
       selectedProjectId: state.selectedProjectId,
+      selectedChatId: state.selectedChatId,
       expandedChatLists: Array.from(state.expandedChatLists),
     }));
   } catch (err) {
@@ -84,7 +132,7 @@ function createInitialState() {
     return {
       projects: saved.projects,
       selectedProjectId: saved.selectedProjectId,
-      selectedChatId: null,
+      selectedChatId: saved.selectedChatId || null,
       expandedProjects: new Set(expanded),
       expandedChatLists: new Set(saved.expandedChatLists || []),
       chatMessages: saved.chatMessages || {},
@@ -195,6 +243,8 @@ let modelDropdowns = [];
 let openModelDropdown = null;
 let modelDropdownClickBound = false;
 let modelsLoading = typeof Backend !== 'undefined' && Backend.isAvailable();
+let backendReadyPromise = null;
+const chatsNeedingContextSync = new Set();
 const aiRuns = new Map();
 const questionRequests = new Map();
 
@@ -227,30 +277,33 @@ const dom = {
    INIT
    ============================================================ */
 
-function init() {
+async function init() {
   Physics.init();
   attachDiffsToMessages();
+  initializeContextSyncQueue();
   renderSidebar();
   initModelDropdowns();
-  initBackend();
+  await initBackend();
   updateProjectSelection();
   window.addEventListener('settings-changed', refreshModelDropdowns);
   window.addEventListener('models-loading', (e) => {
     modelsLoading = Boolean(e.detail?.loading);
     syncModelDropdownLabels();
   });
-  showWelcomeScreen({ animateWelcome: true });
+  restoreActiveScreen();
   bindEvents();
   setupWindowControls();
   animateWelcomeInputPlaceholders();
+  window.addEventListener('beforeunload', saveChatState);
+  window.addEventListener('pagehide', saveChatState);
 }
 
 function initBackend() {
   if (typeof Backend === 'undefined' || !Backend.isAvailable()) {
     modelsLoading = false;
-    showToast('AI backend unavailable — restart the app');
+    showToast('AI backend unavailable - restart the app');
     syncModelDropdownLabels();
-    return;
+    return Promise.resolve();
   }
 
   modelsLoading = true;
@@ -258,7 +311,7 @@ function initBackend() {
 
   Backend.onEvent(handleBackendEvent);
 
-  Backend.ensureReady()
+  backendReadyPromise = Backend.ensureReady()
     .then((status) => {
       if (!status?.running) {
         showToast(status?.error || 'Failed to start AI backend');
@@ -266,6 +319,8 @@ function initBackend() {
       }
       return setActiveProjectWorkspace(state.selectedProjectId);
     })
+    .then(() => syncChatSessionsToBackend())
+    .then(() => recoverChatsFromBackend())
     .then(() => SettingsStore.syncProvidersToBackend())
     .then(() => SettingsStore.refreshModelsFromBackend())
     .then(() => refreshModelDropdowns())
@@ -277,6 +332,8 @@ function initBackend() {
       modelsLoading = false;
       syncModelDropdownLabels();
     });
+
+  return backendReadyPromise;
 }
 
 /* ============================================================
@@ -760,6 +817,191 @@ function findChatById(chatId) {
   return null;
 }
 
+function findChatProject(chatId) {
+  return state.projects.find((p) => p.chats?.some((c) => c.id === chatId)) || null;
+}
+
+function getChatSessionId(chatId) {
+  return findChatById(chatId)?.sessionId || null;
+}
+
+function setChatSessionId(chatId, sessionId) {
+  const chat = findChatById(chatId);
+  if (!chat || !sessionId || chat.sessionId === sessionId) return;
+  chat.sessionId = sessionId;
+  saveChatState();
+}
+
+function getChatWorkspace(chatId) {
+  return findChatProject(chatId)?.folderPath || null;
+}
+
+function buildHistoryForBackend(chatId, excludeMsgId = null) {
+  const msgs = state.chatMessages[chatId] || [];
+  const filtered = msgs
+    .filter((m) => {
+      if (m.id === excludeMsgId) return false;
+      if (m.role === 'user') return Boolean(m.content?.trim());
+      if (m.role === 'assistant') return Boolean(m.content?.trim());
+      return false;
+    })
+    .map((m) => ({ role: m.role, content: m.content.trim() }));
+  return filtered;
+}
+
+function collectChatSessionMappings() {
+  const mappings = [];
+  for (const project of state.projects) {
+    for (const chat of project.chats || []) {
+      if (chat.sessionId) {
+        mappings.push({
+          chatId: chat.id,
+          sessionId: chat.sessionId,
+          workspace: project.folderPath || null,
+        });
+      }
+    }
+  }
+  return mappings;
+}
+
+function chatNeedsRecovery(chatId) {
+  const msgs = state.chatMessages[chatId] || [];
+  if (!msgs.length) return true;
+  if (msgs.some(isEmptyAssistantMessage)) return true;
+
+  for (let i = 0; i < msgs.length; i++) {
+    if (msgs[i].role !== 'user') continue;
+    const next = msgs[i + 1];
+    if (!next || next.role !== 'assistant' || isEmptyAssistantMessage(next)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function mergeTranscriptIntoChat(chatId, transcript) {
+  if (!transcript?.length) return false;
+
+  const existing = state.chatMessages[chatId] || [];
+  const hasAssistantContent = existing.some(
+    (m) => m.role === 'assistant' && !isEmptyAssistantMessage(m),
+  );
+  if (hasAssistantContent) return false;
+
+  const merged = [];
+  let msgId = state.nextMsgId;
+  for (const entry of transcript) {
+    if (!entry.content?.trim() && !entry.toolCalls?.length) continue;
+    merged.push({
+      id: `msg-${msgId++}`,
+      role: entry.role,
+      content: entry.content || '',
+      toolCalls: entry.toolCalls || [],
+      segments: [],
+      eventLog: [],
+    });
+  }
+
+  if (!merged.length) return false;
+  state.chatMessages[chatId] = merged;
+  state.nextMsgId = msgId;
+  return true;
+}
+
+async function recoverChatsFromBackend() {
+  if (typeof Backend === 'undefined' || !Backend.isAvailable()) return;
+
+  let changed = false;
+  for (const project of state.projects) {
+    for (const chat of project.chats || []) {
+      if (!chat.sessionId || !project.folderPath || !chatNeedsRecovery(chat.id)) continue;
+      try {
+        const transcript = await Backend.fetchSessionMessages(chat.sessionId, project.folderPath);
+        if (mergeTranscriptIntoChat(chat.id, transcript)) changed = true;
+      } catch (err) {
+        console.error(`Failed to recover chat ${chat.id}:`, err);
+      }
+    }
+  }
+
+  if (changed) {
+    attachDiffsToMessages();
+    saveChatState();
+    if (state.selectedChatId) renderMessages(state.selectedChatId);
+  }
+}
+
+async function waitForBackendReady() {
+  if (!backendReadyPromise) return;
+  await backendReadyPromise;
+}
+
+function initializeContextSyncQueue() {
+  chatsNeedingContextSync.clear();
+  for (const project of state.projects) {
+    for (const chat of project.chats || []) {
+      const msgs = state.chatMessages[chat.id] || [];
+      if (msgs.some((m) => m.role === 'user' && m.content?.trim())) {
+        chatsNeedingContextSync.add(chat.id);
+      }
+    }
+  }
+}
+
+async function syncChatSessionsToBackend() {
+  if (typeof Backend === 'undefined' || !Backend.isAvailable()) return;
+
+  let sessionsChanged = false;
+  for (const project of state.projects) {
+    for (const chat of project.chats || []) {
+      if (!chat.sessionId || !project.folderPath) continue;
+      const localHistory = buildHistoryForBackend(chat.id);
+      if (!localHistory.length) continue;
+
+      try {
+        const transcript = await Backend.fetchSessionMessages(chat.sessionId, project.folderPath);
+        if (!transcript.length) {
+          delete chat.sessionId;
+          sessionsChanged = true;
+        }
+      } catch (err) {
+        console.error(`Failed to validate session for chat ${chat.id}:`, err);
+        delete chat.sessionId;
+        sessionsChanged = true;
+      }
+    }
+  }
+
+  const mappings = collectChatSessionMappings();
+  if (mappings.length) {
+    try {
+      await Backend.restoreChatSessions(mappings);
+    } catch (err) {
+      console.error('Failed to restore chat sessions:', err);
+    }
+  }
+
+  if (sessionsChanged) saveChatState();
+}
+
+function restoreActiveScreen() {
+  if (state.selectedChatId) {
+    const chat = findChatById(state.selectedChatId);
+    const project = findChatProject(state.selectedChatId);
+    if (chat && project) {
+      state.selectedProjectId = project.id;
+      state.expandedProjects.add(project.id);
+      updateProjectSelection();
+      updateActiveChat();
+      showChatScreen(state.selectedChatId, chat.title, project.id);
+      return;
+    }
+    state.selectedChatId = null;
+  }
+  showWelcomeScreen({ animateWelcome: true });
+}
+
 function renderChatItemContent(chat) {
   const isRunning = !!chat.running;
 
@@ -787,11 +1029,11 @@ function setChatRunning(chatId, running) {
   const wasRunning = chat.running;
   chat.running = running;
   syncChatItem(chatId);
-  saveChatState();
 
   // Show notification when task finishes
   if (wasRunning && !running) {
     showToast(`Task finished: ${chat.title}`);
+    saveChatState();
   }
 }
 
@@ -877,6 +1119,7 @@ function showWelcomeScreen(options = {}) {
   updateNavActive();
   updateProjectSelection();
   setRandomWelcomeSubtitle();
+  saveChatState();
 
   dom.settingsScreen.style.display = 'none';
   dom.appBody.classList.remove('settings-open');
@@ -913,6 +1156,7 @@ function openChat(chatId, chatTitle, projectId) {
   updateProjectSelection();
   setActiveProjectWorkspace(projectId);
   showChatScreen(chatId, chatTitle, projectId);
+  saveChatState();
 }
 
 function updateActiveChat() {
@@ -1680,7 +1924,7 @@ async function runAIResponse(chatId, userMessage) {
       aiRuns.delete(chatId);
       finishAIWithError(
         chatId,
-        'This model needs an API key. Open Settings → Providers, add your key, click Sync — or pick a free OpenCode model.',
+        'This model needs an API key. Open Settings → Providers, add your key, click Sync - or pick a free OpenCode model.',
       );
       return;
     }
@@ -1697,12 +1941,22 @@ async function runAIResponse(chatId, userMessage) {
   }
 
   try {
-    await Backend.sendMessage({
+    await waitForBackendReady();
+    const priorUserMsg = [...(state.chatMessages[chatId] || [])]
+      .reverse()
+      .find((m) => m.role === 'user' && m.content?.trim());
+    const result = await Backend.sendMessage({
       chatId,
       text: userMessage,
       modelId: state.selectedModelId,
       title: findChatById(chatId)?.title,
+      sessionId: getChatSessionId(chatId),
+      history: buildHistoryForBackend(chatId, priorUserMsg?.id),
+      workspace: getChatWorkspace(chatId),
+      forceHistory: chatsNeedingContextSync.has(chatId),
     });
+    if (result?.sessionId) setChatSessionId(chatId, result.sessionId);
+    chatsNeedingContextSync.delete(chatId);
   } catch (err) {
     finishAIWithError(chatId, err.message || 'Failed to send message');
   }
@@ -1728,6 +1982,7 @@ function appendStreamFull(run, text) {
   if (msg) {
     msg.content = run.content;
     if (msg.eventLog) msg.eventLog.push({ type: 'text', seq: msg.eventLog.length });
+    scheduleSaveChatState();
   }
 
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
@@ -1752,6 +2007,7 @@ function appendStreamDelta(run, delta) {
   if (msg) {
     msg.content = run.content;
     if (msg.eventLog) msg.eventLog.push({ type: 'text', seq: msg.eventLog.length });
+    scheduleSaveChatState();
   }
 
   const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
@@ -1972,6 +2228,7 @@ function handleBackendEvent(event) {
       }
       break;
     case 'done':
+      if (event.sessionId) setChatSessionId(event.chatId, event.sessionId);
       finishAIRun(event.chatId);
       break;
     case 'error':
@@ -2610,7 +2867,7 @@ function closeOpenFences(text) {
   // Count ``` occurrences to detect an unclosed code block
   const fences = text.match(/```/g);
   if (fences && fences.length % 2 !== 0) {
-    // Unclosed fence — close it so the parser renders a proper block
+    // Unclosed fence - close it so the parser renders a proper block
     return text + '\n```';
   }
   return text;

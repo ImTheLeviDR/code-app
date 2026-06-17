@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('backendAPI', {
   testProvider: (provider) => ipcRenderer.invoke('backend:test-provider', provider),
   getModels: (providers) => ipcRenderer.invoke('backend:get-models', providers),
   sendMessage: (payload) => ipcRenderer.invoke('backend:send-message', payload),
+  restoreSessions: (mappings) => ipcRenderer.invoke('backend:restore-sessions', mappings),
+  fetchSessionMessages: (payload) => ipcRenderer.invoke('backend:fetch-session-messages', payload),
   abort: (chatId) => ipcRenderer.invoke('backend:abort', chatId),
   setWorkspace: (folderPath) => ipcRenderer.invoke('backend:set-workspace', folderPath),
   replyQuestion: (payload) => ipcRenderer.invoke('backend:reply-question', payload),

@@ -70,7 +70,7 @@ function createTray() {
   ]);
 
   // Left-click the notification icon (including "Show hidden icons").
-  // Do not use setContextMenu() on Windows — it can swallow left-click.
+  // Do not use setContextMenu() on Windows - it can swallow left-click.
   tray.on('click', showMainWindow);
   tray.on('double-click', showMainWindow);
   tray.on('right-click', () => {

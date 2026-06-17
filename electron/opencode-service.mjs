@@ -42,8 +42,9 @@ let emitEvent = null;
 
 let activeWorkspace = null;
 
-function directoryOptions() {
-  return activeWorkspace ? { query: { directory: activeWorkspace } } : {};
+function directoryOptions(workspace) {
+  const dir = workspace || activeWorkspace;
+  return dir ? { query: { directory: dir } } : {};
 }
 
 export function setWorkspace(folderPath) {
@@ -57,6 +58,7 @@ export function getActiveWorkspace() {
 
 const chatSessions = new Map();
 const sessionChats = new Map();
+const chatWorkspaces = new Map();
 const activeRuns = new Map();
 const activePolls = new Set();
 const messageRoles = new Map();
@@ -71,10 +73,11 @@ function getLatestAssistantEntry(messages = []) {
   return assistants[assistants.length - 1] || null;
 }
 
-async function pollSessionResponse(chatId, sessionId) {
+async function pollSessionResponse(chatId, sessionId, workspace) {
   if (activePolls.has(sessionId)) return;
   activePolls.add(sessionId);
 
+  const ws = workspace || chatWorkspaces.get(chatId);
   let lastText = '';
   const seenTools = new Map();
 
@@ -87,10 +90,10 @@ async function pollSessionResponse(chatId, sessionId) {
       if (!client || !chatSessions.has(chatId)) return;
 
       const [statusRes, msgRes] = await Promise.all([
-        client.session.status({ ...directoryOptions() }),
+        client.session.status({ ...directoryOptions(ws) }),
         client.session.messages({
           path: { id: sessionId },
-          ...directoryOptions(),
+          ...directoryOptions(ws),
         }),
       ]);
 
@@ -176,7 +179,7 @@ async function pollSessionResponse(chatId, sessionId) {
         continue;
       }
 
-      // Not busy and no recent activity — check exit conditions
+      // Not busy and no recent activity - check exit conditions
       if (!lastText && attempt >= 8) {
         if (emitEvent) {
           emitEvent({
@@ -298,10 +301,11 @@ function mapToolStatus(state = {}) {
 
 async function flushToolStates(chatId, sessionId) {
   if (!client || !emitEvent) return;
+  const ws = chatWorkspaces.get(chatId);
   try {
     const msgRes = await client.session.messages({
       path: { id: sessionId },
-      ...directoryOptions(),
+      ...directoryOptions(ws),
     });
     const latest = getLatestAssistantEntry(msgRes.data || []);
     for (const part of latest?.parts || []) {
@@ -792,6 +796,7 @@ export async function stopOpencodeService() {
   eventLoopDone = null;
   chatSessions.clear();
   sessionChats.clear();
+  chatWorkspaces.clear();
   activeRuns.clear();
   messageRoles.clear();
 }
@@ -938,44 +943,184 @@ export async function getAvailableModels(providers = []) {
   return models;
 }
 
-async function getOrCreateSession(chatId, title) {
+function registerChatSession(chatId, sessionId, workspace) {
+  if (!chatId || !sessionId) return;
+  chatSessions.set(chatId, sessionId);
+  sessionChats.set(sessionId, chatId);
+  if (workspace) chatWorkspaces.set(chatId, workspace);
+}
+
+async function verifySessionExists(sessionId, workspace) {
+  if (!client || !sessionId) return false;
+  try {
+    const result = await client.session.get({
+      path: { id: sessionId },
+      ...directoryOptions(workspace),
+    });
+    return !result.error && Boolean(result.data?.id);
+  } catch {
+    return false;
+  }
+}
+
+async function sessionMessageCount(sessionId, workspace) {
+  if (!client || !sessionId) return 0;
+  try {
+    const result = await client.session.messages({
+      path: { id: sessionId },
+      ...directoryOptions(workspace),
+    });
+    return (result.data || []).filter((entry) => {
+      const role = entry.info?.role;
+      return role === 'user' || role === 'assistant';
+    }).length;
+  } catch {
+    return 0;
+  }
+}
+
+function extractTranscriptFromSession(messages = []) {
+  const transcript = [];
+  for (const entry of messages) {
+    const role = entry.info?.role;
+    if (role !== 'user' && role !== 'assistant') continue;
+
+    let content = '';
+    const toolCalls = [];
+    for (const part of entry.parts || []) {
+      if (part.type === 'text' && part.text) content += part.text;
+      if (part.type === 'tool') toolCalls.push(mapToolToFrontend(part));
+    }
+
+    if (content.trim() || toolCalls.length) {
+      transcript.push({
+        role,
+        content: content.trim(),
+        toolCalls,
+      });
+    }
+  }
+  return transcript;
+}
+
+export async function fetchSessionMessages(sessionId, workspace) {
+  if (!client || !sessionId) return [];
+  try {
+    const result = await client.session.messages({
+      path: { id: sessionId },
+      ...directoryOptions(workspace),
+    });
+    return extractTranscriptFromSession(result.data || []);
+  } catch {
+    return [];
+  }
+}
+
+async function serverLacksLocalHistory(sessionId, workspace, history = []) {
+  if (!history.length) return false;
+  const transcript = await fetchSessionMessages(sessionId, workspace);
+  if (!transcript.length) return true;
+
+  for (const localEntry of history) {
+    if (!localEntry.content?.trim()) continue;
+    const localText = localEntry.content.trim();
+    const found = transcript.some(
+      (entry) => entry.role === localEntry.role && entry.content?.trim() === localText,
+    );
+    if (!found) return true;
+  }
+  return false;
+}
+
+function formatHistoryContext(history = []) {
+  const lines = history
+    .filter((entry) => entry?.content?.trim())
+    .map((entry) => {
+      const label = entry.role === 'assistant' ? 'Assistant' : 'User';
+      return `${label}: ${entry.content.trim()}`;
+    });
+  if (!lines.length) return '';
+  return `[Continuing previous conversation]\n${lines.join('\n\n')}\n\n---\n\n`;
+}
+
+async function getOrCreateSession(chatId, title, knownSessionId, workspace) {
   if (chatSessions.has(chatId)) return chatSessions.get(chatId);
+
+  if (knownSessionId && await verifySessionExists(knownSessionId, workspace)) {
+    registerChatSession(chatId, knownSessionId, workspace);
+    return knownSessionId;
+  }
 
   const result = await client.session.create({
     body: { title: title || 'New chat' },
-    ...directoryOptions(),
+    ...directoryOptions(workspace),
   });
 
   const sessionId = result.data?.id;
   if (!sessionId) throw new Error('Failed to create OpenCode session');
 
-  chatSessions.set(chatId, sessionId);
-  sessionChats.set(sessionId, chatId);
+  registerChatSession(chatId, sessionId, workspace);
   return sessionId;
 }
 
-export async function sendChatMessage({ chatId, text, modelId, title }) {
+export async function restoreChatSessions(mappings = []) {
+  if (!client) return { restored: 0, failed: 0 };
+  let restored = 0;
+  let failed = 0;
+
+  for (const { chatId, sessionId, workspace } of mappings) {
+    if (!chatId || !sessionId || chatSessions.has(chatId)) continue;
+    if (await verifySessionExists(sessionId, workspace)) {
+      registerChatSession(chatId, sessionId, workspace);
+      restored += 1;
+    } else {
+      failed += 1;
+    }
+  }
+
+  return { restored, failed };
+}
+
+export async function sendChatMessage({ chatId, text, modelId, title, sessionId, history, workspace, forceHistory }) {
   if (!client) throw new Error('OpenCode server is not running');
   if (!text?.trim()) throw new Error('Message is required');
   if (!modelId) throw new Error('Model is required');
 
-  const sessionId = await getOrCreateSession(chatId, title);
+  if (workspace) {
+    activeWorkspace = workspace;
+    chatWorkspaces.set(chatId, workspace);
+  }
+
+  const resolvedSessionId = await getOrCreateSession(chatId, title, sessionId, workspace);
   const slash = modelId.indexOf('/');
   const providerID = slash >= 0 ? modelId.slice(0, slash) : 'openai';
   const modelID = slash >= 0 ? modelId.slice(slash + 1) : modelId;
 
-  activeRuns.set(chatId, { sessionId, modelId });
+  let messageText = text.trim();
+  const createdNewSession = !sessionId || resolvedSessionId !== sessionId;
+  const serverMessageCount = await sessionMessageCount(resolvedSessionId, workspace);
+  const lacksLocalHistory = history?.length
+    ? await serverLacksLocalHistory(resolvedSessionId, workspace, history)
+    : false;
+  const needsHistory = history?.length && (
+    forceHistory || createdNewSession || serverMessageCount === 0 || lacksLocalHistory
+  );
+  if (needsHistory) {
+    messageText = formatHistoryContext(history) + messageText;
+  }
+
+  activeRuns.set(chatId, { sessionId: resolvedSessionId, modelId });
 
   await client.session.promptAsync({
-    path: { id: sessionId },
+    path: { id: resolvedSessionId },
     body: {
       model: { providerID, modelID },
-      parts: [{ type: 'text', text: text.trim() }],
+      parts: [{ type: 'text', text: messageText }],
     },
-    ...directoryOptions(),
+    ...directoryOptions(workspace),
   });
 
-  pollSessionResponse(chatId, sessionId).catch((err) => {
+  pollSessionResponse(chatId, resolvedSessionId, workspace).catch((err) => {
     if (emitEvent) {
       emitEvent({
         type: 'error',
@@ -985,7 +1130,7 @@ export async function sendChatMessage({ chatId, text, modelId, title }) {
     }
   });
 
-  return { sessionId, providerID, modelID };
+  return { sessionId: resolvedSessionId, providerID, modelID };
 }
 
 export async function abortChat(chatId) {

@@ -1,5 +1,5 @@
 /* ============================================================
-   SETTINGS — Full-page settings with category navigation
+   SETTINGS - Full-page settings with category navigation
    ============================================================ */
 
 'use strict';
@@ -540,11 +540,11 @@ const SettingsStore = (() => {
         <div class="settings-about-rows">
           <div class="settings-about-row">
             <span class="settings-about-row-label">AI Agent</span>
-            <span class="settings-about-row-value">OpenCode — 75+ providers</span>
+            <span class="settings-about-row-value">OpenCode - 75+ providers</span>
           </div>
           <div class="settings-about-row">
             <span class="settings-about-row-label">Storage</span>
-            <span class="settings-about-row-value">Local — API keys stored on device</span>
+            <span class="settings-about-row-value">Local - API keys stored on device</span>
           </div>
           <div class="settings-about-row">
             <span class="settings-about-row-label">Runtime</span>
@@ -760,7 +760,7 @@ const SettingsStore = (() => {
           return;
         }
         addProvider(type, { expand: true, focusKey: true });
-        showToast('Provider added — paste your API key');
+        showToast('Provider added - paste your API key');
       });
     });
 

@@ -101,6 +101,18 @@ function registerBackendHandlers({ getMainWindow, getWorkspace }) {
     return result;
   });
 
+  ipcMain.handle('backend:restore-sessions', async (_evt, mappings) => {
+    const result = await safeCall(getMainWindow, getWorkspace, (mod) => mod.restoreChatSessions(mappings));
+    if (result?.error) return { restored: 0, failed: 0, error: result.error };
+    return result;
+  });
+
+  ipcMain.handle('backend:fetch-session-messages', async (_evt, payload) => {
+    const result = await safeCall(getMainWindow, getWorkspace, (mod) => mod.fetchSessionMessages(payload.sessionId, payload.workspace));
+    if (result?.error) return [];
+    return result;
+  });
+
   ipcMain.handle('backend:abort', async (_evt, chatId) => {
     const mod = await loadService();
     if (!mod?.getStatus().running) return false;
