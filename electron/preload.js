@@ -9,6 +9,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFolderDialog: () => ipcRenderer.invoke('dialog:open-folder'),
   signalShellReady: () => ipcRenderer.send('app-shell-ready'),
   signalAppReady: () => ipcRenderer.send('app-ready'),
+  saveChatsSync: (data) => ipcRenderer.sendSync('chats:save-sync', data),
+  loadChatsSync: () => ipcRenderer.sendSync('chats:load-sync'),
+  onAppSaveState: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('app-save-state', listener);
+    return () => ipcRenderer.removeListener('app-save-state', listener);
+  },
 });
 
 contextBridge.exposeInMainWorld('backendAPI', {

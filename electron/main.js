@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require('electron');
 const path = require('path');
 const { registerBackendHandlers, shutdownBackend, ensureStarted } = require('./backend-bridge');
+const { registerChatPersistenceHandlers } = require('./chat-persistence');
 
 let mainWindow;
 let tray = null;
@@ -138,6 +139,7 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
   createWindow();
   createTray();
+  registerChatPersistenceHandlers(ipcMain);
 
   registerBackendHandlers({
     getMainWindow: () => mainWindow,
@@ -161,6 +163,13 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    try {
+      mainWindow.webContents.executeJavaScript('window.saveChatState?.()', true);
+    } catch {
+      /* ignore */
+    }
+  }
   shutdownBackend();
 });
 

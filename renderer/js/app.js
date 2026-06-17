@@ -11,72 +11,102 @@ const LEGACY_PROJECT_IDS = new Set([
   'default', 'assistant', 'snycmod', 'llexa', 'translator', 'kvaesitso', 'eaglensserver', 'archive',
 ]);
 
-function loadPersistedChatState() {
-  try {
-    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.projects?.length) return null;
+function normalizePersistedChatState(parsed) {
+  if (!parsed?.projects?.length) return null;
 
-    parsed.projects = parsed.projects.filter(
-      (p) => p.folderPath && !LEGACY_PROJECT_IDS.has(p.id),
-    );
-    if (!parsed.projects.length) {
-      localStorage.removeItem(CHAT_STORAGE_KEY);
-      return null;
-    }
+  parsed.projects = parsed.projects.filter(
+    (p) => p.folderPath && !LEGACY_PROJECT_IDS.has(p.id),
+  );
+  if (!parsed.projects.length) return null;
 
-    for (const project of parsed.projects) {
-      for (const chat of project.chats || []) {
-        if (chat.running) chat.unfinished = true;
-        delete chat.running;
-      }
+  for (const project of parsed.projects) {
+    for (const chat of project.chats || []) {
+      if (chat.running) chat.unfinished = true;
+      delete chat.running;
     }
+  }
 
-    const validChatIds = new Set();
-    for (const project of parsed.projects) {
-      for (const chat of project.chats || []) {
-        validChatIds.add(chat.id);
-        if (!parsed.chatMessages) parsed.chatMessages = {};
-        if (!parsed.chatMessages[chat.id]) parsed.chatMessages[chat.id] = [];
-      }
+  const validChatIds = new Set();
+  for (const project of parsed.projects) {
+    for (const chat of project.chats || []) {
+      validChatIds.add(chat.id);
+      if (!parsed.chatMessages) parsed.chatMessages = {};
+      if (!parsed.chatMessages[chat.id]) parsed.chatMessages[chat.id] = [];
     }
+  }
 
-    for (const chatId of Object.keys(parsed.chatMessages || {})) {
-      if (!validChatIds.has(chatId)) delete parsed.chatMessages[chatId];
-    }
+  for (const chatId of Object.keys(parsed.chatMessages || {})) {
+    if (!validChatIds.has(chatId)) delete parsed.chatMessages[chatId];
+  }
 
-    for (const chatId of Object.keys(parsed.chatMessages || {})) {
-      const preserve = shouldPreserveIncompleteMessages(chatId, parsed.projects);
-      parsed.chatMessages[chatId] = preserve
-        ? parsed.chatMessages[chatId]
-        : pruneEmptyAssistantMessages(parsed.chatMessages[chatId]);
-    }
+  for (const chatId of Object.keys(parsed.chatMessages || {})) {
+    const preserve = shouldPreserveIncompleteMessages(chatId, parsed.projects);
+    parsed.chatMessages[chatId] = preserve
+      ? parsed.chatMessages[chatId]
+      : pruneEmptyAssistantMessages(parsed.chatMessages[chatId]);
+  }
 
     for (const project of parsed.projects) {
       for (const chat of project.chats || []) {
         const msgs = parsed.chatMessages[chat.id] || [];
-        if (chatNeedsRecoveryFromMessages(msgs)) {
-          chat.unfinished = true;
-        } else if (!chat.unfinished) {
-          chat.unfinished = false;
+        for (const msg of msgs) {
+          markContinuePromptUserMessage(msg);
         }
+        if (chat.unfinished) {
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const msg = msgs[i];
+            if (isContinuePromptUserMessage(msg) || isEmptyAssistantMessage(msg)) continue;
+            if (msg.role === 'assistant' && msg.finished !== true) msg.finished = false;
+            break;
+          }
+        }
+        chat.unfinished = chatNeedsRecoveryFromMessages(msgs);
       }
     }
 
-    const validIds = new Set(parsed.projects.map((p) => p.id));
-    if (!validIds.has(parsed.selectedProjectId)) {
-      parsed.selectedProjectId = parsed.projects[0]?.id || null;
-    }
+  const validIds = new Set(parsed.projects.map((p) => p.id));
+  if (!validIds.has(parsed.selectedProjectId)) {
+    parsed.selectedProjectId = parsed.projects[0]?.id || null;
+  }
 
-    if (parsed.selectedChatId && !validChatIds.has(parsed.selectedChatId)) {
-      parsed.selectedChatId = null;
-    }
+  if (parsed.selectedChatId && !validChatIds.has(parsed.selectedChatId)) {
+    parsed.selectedChatId = null;
+  }
 
-    return parsed;
-  } catch {
+  return parsed;
+}
+
+function loadPersistedChatState() {
+  let parsed = null;
+  let loadedFromLocalStorage = false;
+
+  try {
+    if (window.electronAPI?.loadChatsSync) {
+      parsed = window.electronAPI.loadChatsSync();
+    }
+  } catch (err) {
+    console.error('Failed to load chat state file:', err);
+  }
+
+  if (!parsed) {
+    try {
+      const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+      if (!raw) return null;
+      parsed = JSON.parse(raw);
+      loadedFromLocalStorage = true;
+    } catch {
+      return null;
+    }
+  }
+
+  const normalized = normalizePersistedChatState(parsed);
+  if (!normalized) {
+    if (loadedFromLocalStorage) localStorage.removeItem(CHAT_STORAGE_KEY);
     return null;
   }
+
+  if (loadedFromLocalStorage) normalized._migrateToFile = true;
+  return normalized;
 }
 
 function isEmptyAssistantMessage(msg) {
@@ -84,25 +114,78 @@ function isEmptyAssistantMessage(msg) {
   const hasContent = Boolean(msg.content?.trim());
   const hasTools = Boolean(msg.toolCalls?.length)
     || Boolean(msg.segments?.some((seg) => seg.type === 'tools' && seg.toolCalls?.length));
-  return !hasContent && !hasTools;
+  const hasSegmentText = Boolean(msg.segments?.some(
+    (seg) => seg.type === 'content' && seg.text?.trim(),
+  ));
+  return !hasContent && !hasTools && !hasSegmentText;
+}
+
+function isEmptyUserMessage(msg) {
+  return msg.role === 'user' && !msg.content?.trim();
+}
+
+function isContinuePromptUserMessage(msg) {
+  return msg.role === 'user'
+    && (msg.hidden || /^continue$/i.test(msg.content?.trim() || ''));
+}
+
+function markContinuePromptUserMessage(msg) {
+  if (isContinuePromptUserMessage(msg)) msg.hidden = true;
+}
+
+function isHiddenMessage(msg) {
+  return isContinuePromptUserMessage(msg);
+}
+
+function shouldSkipMessageRender(msg) {
+  return isEmptyMessage(msg) || isHiddenMessage(msg);
+}
+
+function isEmptyMessage(msg) {
+  if (msg.role === 'user') return isEmptyUserMessage(msg);
+  if (msg.role === 'assistant') return isEmptyAssistantMessage(msg);
+  return false;
+}
+
+function removeMessageElement(msgId) {
+  document.getElementById(`msg-${msgId}`)?.remove();
 }
 
 function pruneEmptyAssistantMessages(messages = []) {
   return messages.filter((msg) => !isEmptyAssistantMessage(msg));
 }
 
+function pruneTrailingEmptyAssistants(chatId) {
+  const msgs = state.chatMessages[chatId];
+  if (!msgs?.length) return;
+  while (msgs.length > 0) {
+    const last = msgs[msgs.length - 1];
+    if (last.role !== 'assistant' || !isEmptyAssistantMessage(last)) break;
+    msgs.pop();
+  }
+}
+
+function isAssistantResponseComplete(msg) {
+  if (!msg || msg.role !== 'assistant') return false;
+  if (msg.finished === true) return true;
+  if (msg.finished === false) return false;
+  return !isEmptyAssistantMessage(msg);
+}
+
 function chatNeedsRecoveryFromMessages(msgs = []) {
   if (!msgs.length) return true;
-  if (msgs.some(isEmptyAssistantMessage)) return true;
 
-  for (let i = 0; i < msgs.length; i++) {
-    if (msgs[i].role !== 'user') continue;
-    const next = msgs[i + 1];
-    if (!next || next.role !== 'assistant' || isEmptyAssistantMessage(next)) {
-      return true;
-    }
+  const last = msgs[msgs.length - 1];
+  if (last.role === 'assistant' && isEmptyAssistantMessage(last)) return true;
+
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const msg = msgs[i];
+    if (isContinuePromptUserMessage(msg)) continue;
+    if (isEmptyAssistantMessage(msg)) continue;
+    if (msg.role === 'assistant') return !isAssistantResponseComplete(msg);
+    if (msg.role === 'user') return true;
   }
-  return false;
+  return true;
 }
 
 function chatNeedsRecovery(chatId) {
@@ -110,10 +193,11 @@ function chatNeedsRecovery(chatId) {
 }
 
 function isChatUnfinished(chatId) {
+  if (isChatGenerating(chatId)) return false;
+  const needsRecovery = chatNeedsRecovery(chatId);
   const chat = findChatById(chatId);
-  if (!chat) return false;
-  if (chat.unfinished) return true;
-  return chatNeedsRecovery(chatId);
+  if (chat) chat.unfinished = needsRecovery;
+  return needsRecovery;
 }
 
 function shouldPreserveIncompleteMessages(chatId, projects = state.projects) {
@@ -147,27 +231,37 @@ function scheduleSaveChatState() {
   saveChatStateTimer = setTimeout(saveChatState, 400);
 }
 
+function buildChatStatePayload() {
+  for (const project of state.projects) {
+    for (const chat of project.chats || []) {
+      if (!state.chatMessages[chat.id]) state.chatMessages[chat.id] = [];
+    }
+  }
+
+  return {
+    projects: state.projects,
+    chatMessages: sanitizeChatMessagesForPersistence(state.chatMessages),
+    nextMsgId: state.nextMsgId,
+    selectedProjectId: state.selectedProjectId,
+    selectedChatId: state.selectedChatId,
+    expandedChatLists: Array.from(state.expandedChatLists),
+  };
+}
+
 function saveChatState() {
   clearTimeout(saveChatStateTimer);
   saveChatStateTimer = null;
   try {
-    for (const project of state.projects) {
-      for (const chat of project.chats || []) {
-        if (!state.chatMessages[chat.id]) state.chatMessages[chat.id] = [];
-      }
+    const payload = buildChatStatePayload();
+    const json = JSON.stringify(payload);
+
+    if (window.electronAPI?.saveChatsSync) {
+      const saved = window.electronAPI.saveChatsSync(payload);
+      if (!saved) console.error('Failed to save chats to disk');
     }
 
-    const payload = {
-      projects: state.projects,
-      chatMessages: sanitizeChatMessagesForPersistence(state.chatMessages),
-      nextMsgId: state.nextMsgId,
-      selectedProjectId: state.selectedProjectId,
-      selectedChatId: state.selectedChatId,
-      expandedChatLists: Array.from(state.expandedChatLists),
-    };
-
     try {
-      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(CHAT_STORAGE_KEY, json);
     } catch (err) {
       if (err?.name === 'QuotaExceededError') {
         const slimPayload = {
@@ -187,7 +281,11 @@ function saveChatState() {
             ),
           ),
         };
-        localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(slimPayload));
+        const slimJson = JSON.stringify(slimPayload);
+        if (window.electronAPI?.saveChatsSync) {
+          window.electronAPI.saveChatsSync(slimPayload);
+        }
+        localStorage.setItem(CHAT_STORAGE_KEY, slimJson);
       } else {
         throw err;
       }
@@ -195,6 +293,10 @@ function saveChatState() {
   } catch (err) {
     console.error('Failed to save chats:', err);
   }
+}
+
+if (typeof window !== 'undefined') {
+  window.saveChatState = saveChatState;
 }
 
 function loadSelectedModelId(savedChatState = null) {
@@ -221,6 +323,8 @@ function createInitialState() {
   const saved = loadPersistedChatState();
   if (saved) {
     const expanded = saved.selectedProjectId ? [saved.selectedProjectId] : [];
+    const migrateToFile = Boolean(saved._migrateToFile);
+    delete saved._migrateToFile;
     return {
       projects: saved.projects,
       selectedProjectId: saved.selectedProjectId,
@@ -232,6 +336,7 @@ function createInitialState() {
       isGenerating: false,
       userHasScrolledUp: false,
       selectedModelId: loadSelectedModelId(saved),
+      migrateChatStateToFile: migrateToFile,
     };
   }
 
@@ -434,6 +539,11 @@ async function finishStartup() {
 async function init() {
   signalShellReady();
 
+  if (state.migrateChatStateToFile) {
+    delete state.migrateChatStateToFile;
+    saveChatState();
+  }
+
   const loaderText = document.getElementById('startupLoaderText');
   if (loaderText) startThinkingTypewriter(loaderText);
 
@@ -464,6 +574,7 @@ async function init() {
   animateWelcomeInputPlaceholders();
   window.addEventListener('beforeunload', saveChatState);
   window.addEventListener('pagehide', saveChatState);
+  window.electronAPI?.onAppSaveState?.(() => saveChatState());
 
   await finishStartup();
 }
@@ -1193,19 +1304,19 @@ function setChatRunning(chatId, running) {
   if (running) {
     chat.unfinished = true;
     saveChatState();
+    hideContinueSuggestion(true);
   }
   syncChatItem(chatId);
 
   // Notify when a task finishes
   if (wasRunning && !running) {
-    chat.unfinished = false;
     playTaskCompleteSound();
     if (chatId !== state.selectedChatId) {
       showToast(`Task finished: ${chat.title}`);
     }
     saveChatState();
+    syncContinueSuggestion();
   }
-  syncContinueSuggestion();
 }
 
 function createChatItem(chat, projectId) {
@@ -1366,7 +1477,9 @@ function updateNavActive() {
 function renderMessages(chatId) {
   dom.messagesList.innerHTML = '';
   const messages = state.chatMessages[chatId] || [];
-  messages.forEach((msg) => renderMessage(msg, false));
+  messages.forEach((msg) => {
+    if (!shouldSkipMessageRender(msg)) renderMessage(msg, false, chatId);
+  });
   restoreActiveRunUI(chatId);
 
   for (const [msgId, req] of questionRequests.entries()) {
@@ -1424,7 +1537,9 @@ function restoreActiveRunUI(chatId) {
   showInlineThinking(run);
 }
 
-function renderMessage(msg, animate = true) {
+function renderMessage(msg, animate = true, chatId = state.selectedChatId) {
+  if (shouldSkipMessageRender(msg)) return null;
+
   const el = document.createElement('div');
   el.className = `message ${msg.role}`;
   el.id = `msg-${msg.id}`;
@@ -1446,7 +1561,8 @@ function renderMessage(msg, animate = true) {
 
 function buildDefaultSegments(msg) {
   const hasTools = msg.toolCalls?.length > 0;
-  const hasContent = !!msg.content;
+  const contentText = msg.content?.trim() || '';
+  const hasContent = Boolean(contentText);
 
   if (!hasTools && !hasContent) return [];
 
@@ -1461,6 +1577,9 @@ function buildDefaultSegments(msg) {
       segs.push({ type: 'content', text: msg.content });
       segs.push({ type: 'tools', toolCalls: msg.toolCalls });
     }
+  } else if (hasTools && hasContent) {
+    segs.push({ type: 'tools', toolCalls: msg.toolCalls });
+    segs.push({ type: 'content', text: msg.content });
   } else if (hasTools) {
     segs.push({ type: 'tools', toolCalls: msg.toolCalls });
   } else {
@@ -1500,6 +1619,12 @@ function buildAssistantHTML(msg) {
 
   const lastSeg = segments[segments.length - 1];
   const hasActions = lastSeg?.type === 'content';
+  const hasContentSeg = segments.some((seg) => seg.type === 'content');
+  const hasToolsSeg = segments.some((seg) => seg.type === 'tools');
+
+  if (hasToolsSeg && !hasContentSeg) {
+    parts.push(`<div class="md-content" id="content-${msg.id}"></div>`);
+  }
 
   return `
     <div class="message-wrapper">
@@ -1817,9 +1942,13 @@ function renderToolActivityLineHTML(tc, running = false) {
 
 function renderToolCallsHTML(toolCalls, msgId) {
   if (!toolCalls?.length) return '';
-  const allComplete = toolCalls.every((tc) => (tc.status || 'complete') === 'complete');
-  if (!allComplete) return '<div class="tool-activity"></div>';
-  return `<div class="tool-activity">${toolCalls.map((tc) => renderToolActivityLineHTML(tc, false)).join('')}</div>`;
+  const lines = toolCalls.map((tc) => {
+    const normalized = (tc.status || 'complete') === 'complete'
+      ? tc
+      : { ...tc, status: 'complete' };
+    return renderToolActivityLineHTML(normalized, false);
+  });
+  return `<div class="tool-activity">${lines.join('')}</div>`;
 }
 
 function getActiveToolMeta(body) {
@@ -2054,13 +2183,16 @@ function renderMessageActionsHTML() {
    SEND MESSAGE + AI SIMULATION
    ============================================================ */
 
-function sendMessage(text) {
+function sendMessage(text, options = {}) {
   if (!text.trim()) return;
   if (state.selectedChatId && isChatGenerating(state.selectedChatId)) return;
 
+  const fromContinue = Boolean(options.fromContinue);
+
   let newChatFromWelcome = false;
+  let project = getSelectedProject();
+
   if (!state.selectedChatId) {
-    const project = getSelectedProject();
     if (!project) {
       showToast('Open a folder first');
       openProjectFolder();
@@ -2073,18 +2205,15 @@ function sendMessage(text) {
       id: newChatId,
       title: text.length > 40 ? text.slice(0, 40) + '...' : text,
       time: 'now',
+      unfinished: true,
     };
     project.chats.unshift(newChat);
     state.chatMessages[newChatId] = [];
     state.selectedChatId = newChatId;
-
-    // Re-render sidebar to show new chat
+    state.selectedProjectId = project.id;
     if (!state.expandedProjects.has(project.id)) {
       state.expandedProjects.add(project.id);
     }
-    renderSidebar();
-    showChatScreen(newChatId, newChat.title, project.id);
-    saveChatState();
   }
 
   const chatId = state.selectedChatId;
@@ -2097,20 +2226,28 @@ function sendMessage(text) {
     id: `msg-${state.nextMsgId++}`,
     role: 'user',
     content: text.trim(),
+    ...(fromContinue ? { hidden: true } : {}),
   };
+  if (fromContinue) markContinuePromptUserMessage(userMsg);
   state.chatMessages[chatId].push(userMsg);
-  renderMessage(userMsg, !newChatFromWelcome);
   saveChatState();
+
+  if (newChatFromWelcome) {
+    renderSidebar();
+    showChatScreen(chatId, findChatById(chatId)?.title || text.trim(), project.id);
+  } else if (!userMsg.hidden) {
+    renderMessage(userMsg, true);
+  }
 
   // Animate send button
   Physics.pulse(newChatFromWelcome ? dom.welcomeSendBtn : dom.chatSendBtn);
 
   scrollToEnd(false);
   syncSendButtonState();
-  syncContinueSuggestion();
   setChatRunning(chatId, true);
 
   runAIResponse(chatId, text.trim());
+  syncContinueSuggestion();
 }
 
 function removeIncompleteAssistantTail(chatId) {
@@ -2131,6 +2268,7 @@ async function runAIResponse(chatId, userMessage) {
     content: '',
     segments: [],
     eventLog: [],
+    finished: false,
   };
   state.chatMessages[chatId].push(assistantMsg);
   saveChatState();
@@ -2152,6 +2290,7 @@ async function runAIResponse(chatId, userMessage) {
     started: false,
     sessionId: null,
   });
+  syncContinueSuggestion();
 
   const modelId = state.selectedModelId;
   if (!modelId.startsWith('opencode/')) {
@@ -2207,17 +2346,36 @@ async function runAIResponse(chatId, userMessage) {
   }
 }
 
+function ensureAssistantMessageRendered(run) {
+  const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
+  if (!msg || isEmptyAssistantMessage(msg) || !isCurrentChatVisible(run.chatId)) return;
+
+  if (!document.getElementById(`msg-${run.assistantMsgId}`)) {
+    run.msgEl = renderMessage(msg, false, run.chatId);
+  }
+}
+
 function ensureAssistantVisible(run) {
   if (run.started) return;
   run.started = true;
   if (run.thinkingEl?.isConnected) stopThinkingIndicator(run.thinkingEl);
 
-  if (!isCurrentChatVisible(run.chatId)) return;
+  ensureAssistantMessageRendered(run);
+}
 
-  const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
-  if (!msg) return;
+function getOrCreateAssistantContentEl(msgId) {
+  let contentEl = document.getElementById(`content-${msgId}`);
+  if (contentEl) return contentEl;
 
-  run.msgEl = renderMessage(msg, false);
+  const msgEl = document.getElementById(`msg-${msgId}`);
+  const body = msgEl?.querySelector('.assistant-body');
+  if (!body) return null;
+
+  contentEl = document.createElement('div');
+  contentEl.className = 'md-content';
+  contentEl.id = `content-${msgId}`;
+  body.appendChild(contentEl);
+  return contentEl;
 }
 
 function appendStreamFull(run, text) {
@@ -2232,7 +2390,9 @@ function appendStreamFull(run, text) {
     scheduleSaveChatState();
   }
 
-  const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
+  ensureAssistantMessageRendered(run);
+
+  const contentEl = getOrCreateAssistantContentEl(run.assistantMsgId);
   if (!contentEl) return;
 
   contentEl.classList.add('is-streaming');
@@ -2257,7 +2417,9 @@ function appendStreamDelta(run, delta) {
     scheduleSaveChatState();
   }
 
-  const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
+  ensureAssistantMessageRendered(run);
+
+  const contentEl = getOrCreateAssistantContentEl(run.assistantMsgId);
   if (!contentEl) return;
 
   contentEl.classList.add('is-streaming');
@@ -2278,6 +2440,8 @@ function upsertToolCall(run, toolCall) {
 
   run.toolCalls.set(toolCall.id, toolCall);
   msg.toolCalls = Array.from(run.toolCalls.values());
+
+  ensureAssistantMessageRendered(run);
 
   if ((toolCall.status === 'pending' || toolCall.status === 'running') && msg.eventLog) {
     msg.eventLog.push({ type: 'tool', seq: msg.eventLog.length });
@@ -2324,6 +2488,12 @@ function applyLateToolUpdate(chatId, toolCall, sessionId = null) {
   const idx = msg.toolCalls.findIndex((t) => t.id === toolCall.id);
   if (idx >= 0) msg.toolCalls[idx] = toolCall;
   else msg.toolCalls.push(toolCall);
+
+  if (!isEmptyAssistantMessage(msg) && isCurrentChatVisible(chatId)) {
+    if (!document.getElementById(`msg-${msg.id}`)) {
+      renderMessage(msg, false, chatId);
+    }
+  }
 
   if (toolCall.status === 'pending' || toolCall.status === 'running') {
     if (toolCall.name === 'question') {
@@ -2374,9 +2544,17 @@ function buildSegmentsFromDOM(msgId, chatId) {
 
 function finalizeAssistantMessage(run) {
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
-  const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
   hideInlineThinking(run.assistantMsgId);
-  if (!contentEl || !msg) return;
+  if (!msg) return;
+
+  if (isEmptyAssistantMessage(msg)) {
+    removeMessageElement(run.assistantMsgId);
+    return;
+  }
+
+  let contentEl = document.getElementById(`content-${run.assistantMsgId}`);
+  if (!contentEl) contentEl = getOrCreateAssistantContentEl(run.assistantMsgId);
+  if (!contentEl) return;
 
   finalizeToolCallsUI(run.assistantMsgId, msg.toolCalls);
 
@@ -2389,11 +2567,27 @@ function finalizeAssistantMessage(run) {
       actionsWrapper.innerHTML = renderMessageActionsHTML();
       body.appendChild(actionsWrapper.firstElementChild);
     }
-  } else if (!msg.toolCalls?.length) {
-    contentEl.innerHTML = '<p><em>No response received.</em></p>';
   }
 
   buildSegmentsFromDOM(run.assistantMsgId, run.chatId);
+}
+
+function markChatFinished(chatId) {
+  pruneTrailingEmptyAssistants(chatId);
+  const msgs = state.chatMessages[chatId];
+  if (msgs?.length) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i];
+      if (isContinuePromptUserMessage(msg) || isEmptyAssistantMessage(msg)) continue;
+      if (msg.role === 'assistant') {
+        msg.finished = true;
+        break;
+      }
+      break;
+    }
+  }
+  const chat = findChatById(chatId);
+  if (chat) chat.unfinished = false;
 }
 
 function finishAIRun(chatId) {
@@ -2403,9 +2597,11 @@ function finishAIRun(chatId) {
   finalizeAssistantMessage(run);
   if (run.thinkingEl?.isConnected) stopThinkingIndicator(run.thinkingEl);
   aiRuns.delete(chatId);
+  markChatFinished(chatId);
   syncSendButtonState();
   setChatRunning(chatId, false);
   saveChatState();
+  hideContinueSuggestion(true);
   if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
 }
 
@@ -2418,7 +2614,7 @@ function finishAIWithError(chatId, message) {
       const msg = state.chatMessages[chatId]?.find((m) => m.id === run.assistantMsgId);
       if (msg) {
         msg.content = `**Error:** ${message}`;
-        if (isCurrentChatVisible(chatId)) renderMessage(msg, false);
+        if (isCurrentChatVisible(chatId)) renderMessage(msg, false, chatId);
       }
     } else {
       run.content += `\n\n**Error:** ${message}`;
@@ -2432,6 +2628,7 @@ function finishAIWithError(chatId, message) {
   syncSendButtonState();
   setChatRunning(chatId, false);
   saveChatState();
+  syncContinueSuggestion();
   showToast(message);
   if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
 }
@@ -2500,6 +2697,7 @@ function simulateAIResponse(chatId, userMessage) {
     content: '',
     segments: [],
     eventLog: [],
+    finished: false,
   };
   state.chatMessages[chatId].push(assistantMsg);
 
@@ -2514,7 +2712,7 @@ function simulateAIResponse(chatId, userMessage) {
     stopThinkingIndicator(thinkingEl);
 
     if (isCurrentChatVisible(chatId)) {
-      const msgEl = renderMessage(assistantMsg, false);
+      const msgEl = renderMessage(assistantMsg, false, chatId);
       runResponsePhases(phases, assistantMsgId, chatId, msgEl, () => {
         syncSendButtonState();
         setChatRunning(chatId, false);
@@ -3117,12 +3315,66 @@ function syncSendButtonState() {
   syncContinueSuggestion();
 }
 
+function showContinueSuggestion() {
+  const el = dom.continueSuggestion;
+  if (!el || el.dataset.continueVisible === 'true') return;
+
+  Physics.cancel(el);
+  const inner = el.querySelector('.continue-suggestion-inner');
+  if (inner) Physics.cancel(inner);
+
+  el.hidden = false;
+  el.dataset.continueVisible = 'true';
+
+  Physics.animate(el, { opacity: 1, y: 0, scale: 1 }, {
+    from: { opacity: 0, y: 16, scale: 0.96 },
+    preset: 'gentle',
+  });
+
+  if (inner) {
+    Physics.stagger(inner, '.continue-suggestion-text, .continue-suggestion-btn', {
+      opacity: 0,
+      y: 10,
+    }, { preset: 'gentle', delay: 55 });
+  }
+}
+
+function hideContinueSuggestion(immediate = false) {
+  const el = dom.continueSuggestion;
+  if (!el || el.hidden) return;
+
+  delete el.dataset.continueVisible;
+  const inner = el.querySelector('.continue-suggestion-inner');
+
+  if (immediate) {
+    Physics.cancel(el);
+    if (inner) Physics.resetMotion(inner);
+    Physics.resetMotion(el);
+    el.hidden = true;
+    return;
+  }
+
+  Physics.animate(el, { opacity: 0, y: 10, scale: 0.97 }, {
+    preset: 'stiff',
+    onComplete: () => {
+      el.hidden = true;
+      Physics.resetMotion(el);
+      if (inner) Physics.resetMotion(inner);
+    },
+  });
+}
+
 function syncContinueSuggestion() {
   const el = dom.continueSuggestion;
   if (!el) return;
   const chatId = state.selectedChatId;
-  const show = Boolean(chatId && isChatUnfinished(chatId) && !isChatGenerating(chatId));
-  el.hidden = !show;
+  const shouldShow = Boolean(chatId && isChatUnfinished(chatId) && !isChatGenerating(chatId));
+
+  if (shouldShow) {
+    showContinueSuggestion();
+  } else {
+    hideContinueSuggestion(isChatGenerating(chatId));
+  }
 }
 
 /* ============================================================
@@ -3551,7 +3803,19 @@ function bindEvents() {
 
   dom.continueSuggestionBtn?.addEventListener('click', () => {
     if (!state.selectedChatId || isChatGenerating(state.selectedChatId)) return;
-    sendMessage('Continue');
+    Physics.pulse(dom.continueSuggestionBtn, { down: 0.94 });
+    hideContinueSuggestion(true);
+    sendMessage('Continue', { fromContinue: true });
+  });
+
+  dom.continueSuggestionBtn?.addEventListener('mousedown', () => {
+    Physics.press(dom.continueSuggestionBtn, 0.94);
+  });
+  dom.continueSuggestionBtn?.addEventListener('mouseup', () => {
+    Physics.release(dom.continueSuggestionBtn);
+  });
+  dom.continueSuggestionBtn?.addEventListener('mouseleave', () => {
+    Physics.release(dom.continueSuggestionBtn);
   });
 
   // Messages scroll
