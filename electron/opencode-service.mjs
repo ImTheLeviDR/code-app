@@ -73,7 +73,28 @@ function getLatestAssistantEntry(messages = []) {
   return assistants[assistants.length - 1] || null;
 }
 
-async function pollSessionResponse(chatId, sessionId, workspace) {
+async function getAssistantMessageIds(sessionId, workspace) {
+  if (!client || !sessionId) return new Set();
+  try {
+    const result = await client.session.messages({
+      path: { id: sessionId },
+      ...directoryOptions(workspace),
+    });
+    return new Set(
+      (result.data || [])
+        .filter((entry) => entry.info?.role === 'assistant' && entry.info?.id)
+        .map((entry) => entry.info.id),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function isKnownAssistantMessage(messageId, knownAssistantIds) {
+  return Boolean(messageId && knownAssistantIds?.has(messageId));
+}
+
+async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantIds = new Set()) {
   if (activePolls.has(sessionId)) return;
   activePolls.add(sessionId);
 
@@ -100,8 +121,10 @@ async function pollSessionResponse(chatId, sessionId, workspace) {
       const sessionStatus = statusRes.data?.[sessionId];
       const isBusy = sessionStatus?.type === 'busy' || sessionStatus?.type === 'retry';
       const latest = getLatestAssistantEntry(msgRes.data || []);
+      const latestAssistantId = latest?.info?.id || null;
+      const isStaleAssistant = isKnownAssistantMessage(latestAssistantId, knownAssistantIds);
 
-      if (latest?.info?.error && emitEvent) {
+      if (latest?.info?.error && !isStaleAssistant && emitEvent) {
         emitEvent({
           type: 'assistant-message',
           chatId,
@@ -121,7 +144,7 @@ async function pollSessionResponse(chatId, sessionId, workspace) {
         }
       }
 
-      if (latest?.parts?.length && emitEvent) {
+      if (latest?.parts?.length && !isStaleAssistant && emitEvent) {
         for (const part of latest.parts) {
           if (part.type === 'text' && part.text && part.text !== lastText) {
             lastText = part.text;
@@ -166,7 +189,7 @@ async function pollSessionResponse(chatId, sessionId, workspace) {
       }
 
       const completed = Boolean(latest?.info?.time?.completed);
-      if (completed && lastText) {
+      if (completed && lastText && !isStaleAssistant) {
         await emitDone(chatId, sessionId);
         activeRuns.delete(chatId);
         return;
@@ -180,7 +203,7 @@ async function pollSessionResponse(chatId, sessionId, workspace) {
       }
 
       // Not busy and no recent activity - check exit conditions
-      if (!lastText && attempt >= 8) {
+      if (!lastText && attempt >= 8 && !isStaleAssistant) {
         if (emitEvent) {
           emitEvent({
             type: 'error',
@@ -192,8 +215,25 @@ async function pollSessionResponse(chatId, sessionId, workspace) {
         return;
       }
 
+      if (isStaleAssistant) {
+        idlePolls = 0;
+        if (attempt >= 120) {
+          if (emitEvent) {
+            emitEvent({
+              type: 'error',
+              chatId,
+              message: 'No response from the model. Pick a free OpenCode model or add an API key in Settings → Providers.',
+            });
+          }
+          activeRuns.delete(chatId);
+          return;
+        }
+        await sleep(500);
+        continue;
+      }
+
       idlePolls++;
-      if (idlePolls >= IDLE_POLL_LIMIT) {
+      if (idlePolls >= IDLE_POLL_LIMIT && !isStaleAssistant) {
         if (emitEvent) {
           emitEvent({
             type: 'error',
@@ -686,6 +726,8 @@ function handleBusEvent(event) {
       if (!chatId) break;
 
       if (info.role === 'assistant' && info.error) {
+        const run = activeRuns.get(chatId);
+        if (isKnownAssistantMessage(info.id, run?.knownAssistantIds)) break;
         emitEvent({
           type: 'assistant-message',
           chatId,
@@ -1032,6 +1074,18 @@ async function serverLacksLocalHistory(sessionId, workspace, history = []) {
   return false;
 }
 
+async function sessionNeedsHistoryResync(sessionId, workspace, history = []) {
+  if (!history.length) return false;
+  const transcript = await fetchSessionMessages(sessionId, workspace);
+  if (!transcript.length) return true;
+
+  const lastServer = transcript[transcript.length - 1];
+  // After abort the session often ends on a user turn with no assistant reply.
+  if (lastServer?.role === 'user') return true;
+
+  return false;
+}
+
 function formatHistoryContext(history = []) {
   const lines = history
     .filter((entry) => entry?.content?.trim())
@@ -1102,14 +1156,18 @@ export async function sendChatMessage({ chatId, text, modelId, title, sessionId,
   const lacksLocalHistory = history?.length
     ? await serverLacksLocalHistory(resolvedSessionId, workspace, history)
     : false;
+  const needsHistoryResync = history?.length
+    ? await sessionNeedsHistoryResync(resolvedSessionId, workspace, history)
+    : false;
   const needsHistory = history?.length && (
-    forceHistory || createdNewSession || serverMessageCount === 0 || lacksLocalHistory
+    forceHistory || createdNewSession || serverMessageCount === 0 || lacksLocalHistory || needsHistoryResync
   );
   if (needsHistory) {
     messageText = formatHistoryContext(history) + messageText;
   }
 
-  activeRuns.set(chatId, { sessionId: resolvedSessionId, modelId });
+  const knownAssistantIds = await getAssistantMessageIds(resolvedSessionId, workspace);
+  activeRuns.set(chatId, { sessionId: resolvedSessionId, modelId, knownAssistantIds });
 
   await client.session.promptAsync({
     path: { id: resolvedSessionId },
@@ -1120,7 +1178,7 @@ export async function sendChatMessage({ chatId, text, modelId, title, sessionId,
     ...directoryOptions(workspace),
   });
 
-  pollSessionResponse(chatId, resolvedSessionId, workspace).catch((err) => {
+  pollSessionResponse(chatId, resolvedSessionId, workspace, knownAssistantIds).catch((err) => {
     if (emitEvent) {
       emitEvent({
         type: 'error',
@@ -1140,6 +1198,9 @@ export async function abortChat(chatId) {
 
   const result = await client.session.abort({ path: { id: sessionId } });
   activeRuns.delete(chatId);
+  if (!result.error) {
+    await emitDone(chatId, sessionId);
+  }
   return !result.error;
 }
 

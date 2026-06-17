@@ -1483,8 +1483,26 @@ textarea {
   border-radius: var(--radius-md);
   background: var(--accent);
   color: white;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
   flex-shrink: 0;
+}
+
+.send-btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.send-btn .stop-icon {
+  display: none;
+}
+
+.send-btn.is-stop .send-icon {
+  display: none;
+}
+
+.send-btn.is-stop .stop-icon {
+  display: flex;
 }
 
 .send-btn:disabled {
@@ -1500,6 +1518,14 @@ textarea {
 
 .send-btn:not(:disabled):active {
   transform: scale(0.95);
+}
+
+.send-btn.is-stop:not(:disabled) {
+  box-shadow: 0 0 0 2px var(--accent-glow2);
+}
+
+.send-btn.is-stop:not(:disabled):hover {
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .send-btn.sending {

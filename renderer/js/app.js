@@ -701,6 +701,7 @@ let modelDropdownClickBound = false;
 let modelsLoading = typeof Backend !== 'undefined' && Backend.isAvailable();
 let backendReadyPromise = null;
 const chatsNeedingContextSync = new Set();
+const abortedChatIds = new Set();
 const aiRuns = new Map();
 const questionRequests = new Map();
 
@@ -1565,7 +1566,7 @@ function syncChatItem(chatId) {
   el.innerHTML = renderChatItemContent(chat);
 }
 
-function setChatRunning(chatId, running) {
+function setChatRunning(chatId, running, options = {}) {
   const chat = findChatById(chatId);
   if (!chat) return;
 
@@ -1580,13 +1581,17 @@ function setChatRunning(chatId, running) {
 
   // Notify when a task finishes
   if (wasRunning && !running) {
-    playTaskCompleteSound();
-    if (chatId !== state.selectedChatId) {
-      showToast(`Task finished: ${chat.title}`);
+    if (!options.silent) {
+      playTaskCompleteSound();
+      if (chatId !== state.selectedChatId) {
+        showToast(`Task finished: ${chat.title}`);
+      }
     }
     saveChatState();
     syncContinueSuggestion();
   }
+
+  if (chatId === state.selectedChatId) syncSendButtonState();
 }
 
 function createChatItem(chat, projectId) {
@@ -2687,10 +2692,10 @@ function sendMessage(text, options = {}) {
   Physics.pulse(newChatFromWelcome ? dom.welcomeSendBtn : dom.chatSendBtn);
 
   scrollToEnd(false);
-  syncSendButtonState();
   setChatRunning(chatId, true);
 
   runAIResponse(chatId, userMsg);
+  syncSendButtonState();
   syncContinueSuggestion();
 }
 
@@ -2704,6 +2709,8 @@ function removeIncompleteAssistantTail(chatId) {
 }
 
 async function runAIResponse(chatId, userMsg) {
+  abortedChatIds.delete(chatId);
+
   const assistantMsgId = `msg-${state.nextMsgId++}`;
   const assistantMsg = {
     id: assistantMsgId,
@@ -2802,9 +2809,11 @@ async function runAIResponse(chatId, userMsg) {
       workspace: getChatWorkspace(chatId),
       forceHistory: chatsNeedingContextSync.has(chatId),
     });
+    if (abortedChatIds.has(chatId)) return;
     if (result?.sessionId) setChatSessionId(chatId, result.sessionId);
     chatsNeedingContextSync.delete(chatId);
   } catch (err) {
+    if (abortedChatIds.has(chatId)) return;
     finishAIWithError(chatId, err.message || 'Failed to send message');
   }
 }
@@ -3012,6 +3021,9 @@ function finalizeAssistantMessage(run) {
 
   if (isEmptyAssistantMessage(msg)) {
     removeMessageElement(run.assistantMsgId);
+    const msgs = state.chatMessages[run.chatId];
+    const idx = msgs?.findIndex((m) => m.id === run.assistantMsgId);
+    if (idx !== -1) msgs.splice(idx, 1);
     return;
   }
 
@@ -3061,11 +3073,43 @@ function finishAIRun(chatId) {
   if (run.thinkingEl?.isConnected) stopThinkingIndicator(run.thinkingEl);
   aiRuns.delete(chatId);
   markChatFinished(chatId);
-  syncSendButtonState();
   setChatRunning(chatId, false);
   saveChatState();
   hideContinueSuggestion(true);
   if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
+}
+
+function finishAIAborted(chatId) {
+  const run = aiRuns.get(chatId);
+  if (!run) return;
+
+  finalizeAssistantMessage(run);
+  if (run.thinkingEl?.isConnected) stopThinkingIndicator(run.thinkingEl);
+  aiRuns.delete(chatId);
+  pruneTrailingEmptyAssistants(chatId);
+  const chat = findChatById(chatId);
+  if (chat) chat.unfinished = true;
+  chatsNeedingContextSync.add(chatId);
+  setChatRunning(chatId, false, { silent: true });
+  saveChatState();
+  syncContinueSuggestion();
+  if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
+}
+
+async function abortAgentRun(chatId) {
+  if (!isChatGenerating(chatId)) return;
+
+  abortedChatIds.add(chatId);
+  Physics.pulse(dom.chatSendBtn);
+  finishAIAborted(chatId);
+
+  try {
+    if (typeof Backend !== 'undefined' && Backend.isAvailable()) {
+      await Backend.abort(chatId);
+    }
+  } catch (_) {
+    /* local UI already cleaned up */
+  }
 }
 
 function finishAIWithError(chatId, message) {
@@ -3096,6 +3140,24 @@ function finishAIWithError(chatId, message) {
   if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
 }
 
+function isStaleAssistantError(error) {
+  const name = error?.name || '';
+  const message = error?.data?.message || error?.message || '';
+  return name === 'Aborted' || message === 'Aborted';
+}
+
+function shouldIgnoreBackendRunEvent(run, chatId, event) {
+  if (!run) return true;
+  const msg = state.chatMessages[chatId]?.find((m) => m.id === run.assistantMsgId);
+  if (event.type === 'assistant-message' && event.error && isStaleAssistantError(event.error) && !run.started) {
+    return true;
+  }
+  if (event.type === 'done' && !run.started && isEmptyAssistantMessage(msg)) {
+    return true;
+  }
+  return false;
+}
+
 function handleBackendEvent(event) {
   if (!event?.chatId) return;
 
@@ -3119,6 +3181,7 @@ function handleBackendEvent(event) {
 
   const run = aiRuns.get(event.chatId);
   if (!run) return;
+  if (shouldIgnoreBackendRunEvent(run, event.chatId, event)) return;
 
   switch (event.type) {
     case 'text-delta':
@@ -3820,12 +3883,21 @@ function focusInput(input) {
   setTimeout(() => input.focus(), 0);
 }
 
+function applySendButtonState(btn, { stopping }) {
+  if (!btn) return;
+  btn.classList.toggle('is-stop', stopping);
+  btn.title = stopping ? 'Stop' : 'Send message';
+  btn.setAttribute('aria-label', btn.title);
+}
+
 function syncSendButtonState() {
   const chatGenerating = isChatGenerating(state.selectedChatId);
   const welcomeReady = Boolean(dom.welcomeInput.value.trim()) || getPendingImages('welcome').length > 0;
   const chatReady = Boolean(dom.chatInput.value.trim()) || getPendingImages('chat').length > 0;
+  applySendButtonState(dom.welcomeSendBtn, { stopping: false });
   dom.welcomeSendBtn.disabled = !welcomeReady;
-  dom.chatSendBtn.disabled = chatGenerating || !chatReady;
+  applySendButtonState(dom.chatSendBtn, { stopping: chatGenerating });
+  dom.chatSendBtn.disabled = chatGenerating ? false : !chatReady;
   syncContinueSuggestion();
 }
 
@@ -4162,9 +4234,9 @@ function regenerateResponse(btn) {
   msgEl.remove();
   msgs.splice(msgIdx, 1);
 
-  syncSendButtonState();
   setChatRunning(state.selectedChatId, true);
   runAIResponse(state.selectedChatId, userMsg);
+  syncSendButtonState();
 }
 
 /* ============================================================
@@ -4319,9 +4391,13 @@ function bindEvents() {
   // Chat input
   setupInput(dom.chatInput);
   dom.chatSendBtn.addEventListener('click', () => {
+    if (isChatGenerating(state.selectedChatId)) {
+      void abortAgentRun(state.selectedChatId);
+      return;
+    }
     const text = dom.chatInput.value;
     const images = getPendingImages('chat');
-    if ((!text.trim() && !images.length) || isChatGenerating(state.selectedChatId)) return;
+    if (!text.trim() && !images.length) return;
     dom.chatInput.value = '';
     dom.chatInput.style.height = 'auto';
     syncSendButtonState();
