@@ -10,12 +10,8 @@
 <body class="startup-loading">
   <div id="startupLoader" class="startup-loader" aria-live="polite" aria-busy="true">
     <div class="startup-loader-inner">
-      <div class="startup-loader-dots" aria-hidden="true">
-        <span class="startup-loader-dot"></span>
-        <span class="startup-loader-dot"></span>
-        <span class="startup-loader-dot"></span>
-      </div>
       <div class="startup-loader-text" id="startupLoaderText">
+        <span class="thinking-indicator-spinner" aria-hidden="true"></span>
         <span class="thinking-typewriter-text"></span>
       </div>
     </div>
@@ -94,7 +90,22 @@
 
         <!-- Projects list -->
         <div class="projects-container" id="projectsContainer">
-          <div class="projects-label">Projects</div>
+          <div class="projects-label">
+            <span>Projects</span>
+            <button
+              class="projects-open-folder"
+              type="button"
+              title="Open folder"
+              aria-label="Open folder"
+              data-action="open-folder"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 10v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9 13h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
           <div class="projects-list" id="projectsList"></div>
         </div>
 
@@ -194,6 +205,11 @@
 
           <!-- Chat input -->
           <div class="chat-input-area" id="chatInputArea">
+            <div class="continue-suggestion" id="continueSuggestion" hidden>
+              <button type="button" class="continue-suggestion-btn" id="continueSuggestionBtn">
+                Continue
+              </button>
+            </div>
             <div class="input-box chat-input-box">
               <textarea
                 class="message-input"

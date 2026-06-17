@@ -49,8 +49,23 @@ const SettingsStore = (() => {
       taskCompleteSoundId: TaskSounds.isValid(next.notifications?.taskCompleteSoundId)
         ? next.notifications.taskCompleteSoundId
         : 'chime',
+      volume: normalizeNotificationVolume(next.notifications?.volume),
     };
     return next;
+  }
+
+  function normalizeNotificationVolume(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 75;
+    return Math.min(100, Math.max(0, Math.round(n)));
+  }
+
+  function getNotificationVolume() {
+    return normalizeNotificationVolume(settings.notifications?.volume);
+  }
+
+  function playNotificationSound(soundId = settings.notifications.taskCompleteSoundId) {
+    TaskSounds.play(soundId, getNotificationVolume());
   }
 
   function persistSettings() {
@@ -506,7 +521,7 @@ const SettingsStore = (() => {
   }
 
   function renderNotificationsContent() {
-    const { taskCompleteEnabled, taskCompleteSoundId } = settings.notifications;
+    const { taskCompleteEnabled, taskCompleteSoundId, volume } = settings.notifications;
     const sounds = TaskSounds.list();
 
     return `
@@ -530,6 +545,29 @@ const SettingsStore = (() => {
             />
             <span class="settings-toggle-track"></span>
           </label>
+        </div>
+
+        <div class="settings-notif-volume-row${taskCompleteEnabled ? '' : ' is-disabled'}">
+          <div class="settings-notif-volume-copy">
+            <div class="settings-label">Volume</div>
+            <div class="settings-label-note">How loud notification sounds play</div>
+          </div>
+          <div class="settings-volume-control">
+            <input
+              type="range"
+              class="settings-volume-slider"
+              data-notif-field="volume"
+              min="0"
+              max="100"
+              step="1"
+              value="${volume}"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="${volume}"
+              aria-label="Notification volume"
+            />
+            <span class="settings-volume-value" data-notif-volume-label>${volume}%</span>
+          </div>
         </div>
 
         <div class="settings-sound-list${taskCompleteEnabled ? '' : ' is-disabled'}">
@@ -845,19 +883,39 @@ const SettingsStore = (() => {
     const soundList = container.querySelector('.settings-sound-list');
     if (!soundList) return;
 
+    const volumeRow = container.querySelector('.settings-notif-volume-row');
+    const volumeSlider = container.querySelector('[data-notif-field="volume"]');
+    const volumeLabel = container.querySelector('[data-notif-volume-label]');
+
     const toggle = container.querySelector('[data-notif-field="taskCompleteEnabled"]');
     toggle?.addEventListener('change', () => {
       settings.notifications.taskCompleteEnabled = toggle.checked;
       soundList.classList.toggle('is-disabled', !toggle.checked);
+      volumeRow?.classList.toggle('is-disabled', !toggle.checked);
       persistSettings();
-      if (toggle.checked) TaskSounds.play(settings.notifications.taskCompleteSoundId);
+      if (toggle.checked) playNotificationSound();
+    });
+
+    volumeSlider?.addEventListener('input', () => {
+      const nextVolume = normalizeNotificationVolume(volumeSlider.value);
+      settings.notifications.volume = nextVolume;
+      volumeSlider.setAttribute('aria-valuenow', String(nextVolume));
+      if (volumeLabel) volumeLabel.textContent = `${nextVolume}%`;
+    });
+
+    volumeSlider?.addEventListener('change', () => {
+      settings.notifications.volume = normalizeNotificationVolume(volumeSlider.value);
+      persistSettings();
+      if (settings.notifications.taskCompleteEnabled && settings.notifications.volume > 0) {
+        playNotificationSound();
+      }
     });
 
     container.querySelectorAll('.settings-sound-option').forEach((row) => {
       const selectSound = () => {
         const id = row.dataset.soundId;
         if (!id || id === settings.notifications.taskCompleteSoundId) {
-          if (settings.notifications.taskCompleteEnabled) TaskSounds.play(id);
+          if (settings.notifications.taskCompleteEnabled) playNotificationSound(id);
           return;
         }
         settings.notifications.taskCompleteSoundId = id;
@@ -865,7 +923,7 @@ const SettingsStore = (() => {
         container.querySelectorAll('.settings-sound-option').forEach((el) => {
           el.classList.toggle('active', el.dataset.soundId === id);
         });
-        if (settings.notifications.taskCompleteEnabled) TaskSounds.play(id);
+        if (settings.notifications.taskCompleteEnabled) playNotificationSound(id);
       };
 
       row.addEventListener('click', (e) => {
@@ -883,7 +941,7 @@ const SettingsStore = (() => {
     container.querySelectorAll('[data-action="preview-sound"]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        TaskSounds.play(btn.dataset.soundId);
+        TaskSounds.play(btn.dataset.soundId, getNotificationVolume());
       });
     });
   }
@@ -951,6 +1009,7 @@ const SettingsStore = (() => {
     return {
       taskCompleteEnabled: settings.notifications?.taskCompleteEnabled !== false,
       taskCompleteSoundId: settings.notifications?.taskCompleteSoundId || 'chime',
+      volume: getNotificationVolume(),
     };
   }
 

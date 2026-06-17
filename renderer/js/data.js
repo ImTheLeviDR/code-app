@@ -132,6 +132,7 @@ const DEFAULT_SETTINGS = {
   notifications: {
     taskCompleteEnabled: true,
     taskCompleteSoundId: 'chime',
+    volume: 75,
   },
 };
 

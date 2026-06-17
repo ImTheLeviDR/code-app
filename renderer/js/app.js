@@ -28,6 +28,7 @@ function loadPersistedChatState() {
 
     for (const project of parsed.projects) {
       for (const chat of project.chats || []) {
+        if (chat.running) chat.unfinished = true;
         delete chat.running;
       }
     }
@@ -46,7 +47,21 @@ function loadPersistedChatState() {
     }
 
     for (const chatId of Object.keys(parsed.chatMessages || {})) {
-      parsed.chatMessages[chatId] = pruneEmptyAssistantMessages(parsed.chatMessages[chatId]);
+      const preserve = shouldPreserveIncompleteMessages(chatId, parsed.projects);
+      parsed.chatMessages[chatId] = preserve
+        ? parsed.chatMessages[chatId]
+        : pruneEmptyAssistantMessages(parsed.chatMessages[chatId]);
+    }
+
+    for (const project of parsed.projects) {
+      for (const chat of project.chats || []) {
+        const msgs = parsed.chatMessages[chat.id] || [];
+        if (chatNeedsRecoveryFromMessages(msgs)) {
+          chat.unfinished = true;
+        } else if (!chat.unfinished) {
+          chat.unfinished = false;
+        }
+      }
     }
 
     const validIds = new Set(parsed.projects.map((p) => p.id));
@@ -76,10 +91,52 @@ function pruneEmptyAssistantMessages(messages = []) {
   return messages.filter((msg) => !isEmptyAssistantMessage(msg));
 }
 
+function chatNeedsRecoveryFromMessages(msgs = []) {
+  if (!msgs.length) return true;
+  if (msgs.some(isEmptyAssistantMessage)) return true;
+
+  for (let i = 0; i < msgs.length; i++) {
+    if (msgs[i].role !== 'user') continue;
+    const next = msgs[i + 1];
+    if (!next || next.role !== 'assistant' || isEmptyAssistantMessage(next)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function chatNeedsRecovery(chatId) {
+  return chatNeedsRecoveryFromMessages(state.chatMessages[chatId] || []);
+}
+
+function isChatUnfinished(chatId) {
+  const chat = findChatById(chatId);
+  if (!chat) return false;
+  if (chat.unfinished) return true;
+  return chatNeedsRecovery(chatId);
+}
+
+function shouldPreserveIncompleteMessages(chatId, projects = state.projects) {
+  for (const project of projects) {
+    const chat = project.chats?.find((c) => c.id === chatId);
+    if (chat && (chat.unfinished || chat.running)) return true;
+  }
+  return false;
+}
+
+function serializeMessagesForPersistence(chatId, messages = []) {
+  const preserveIncomplete = shouldPreserveIncompleteMessages(chatId);
+  const msgs = preserveIncomplete ? messages : pruneEmptyAssistantMessages(messages);
+  return msgs.map((msg) => {
+    const { eventLog, ...rest } = msg;
+    return rest;
+  });
+}
+
 function sanitizeChatMessagesForPersistence(chatMessages) {
   const sanitized = {};
   for (const [chatId, msgs] of Object.entries(chatMessages)) {
-    sanitized[chatId] = pruneEmptyAssistantMessages(msgs);
+    sanitized[chatId] = serializeMessagesForPersistence(chatId, msgs);
   }
   return sanitized;
 }
@@ -91,15 +148,50 @@ function scheduleSaveChatState() {
 }
 
 function saveChatState() {
+  clearTimeout(saveChatStateTimer);
+  saveChatStateTimer = null;
   try {
-    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({
+    for (const project of state.projects) {
+      for (const chat of project.chats || []) {
+        if (!state.chatMessages[chat.id]) state.chatMessages[chat.id] = [];
+      }
+    }
+
+    const payload = {
       projects: state.projects,
       chatMessages: sanitizeChatMessagesForPersistence(state.chatMessages),
       nextMsgId: state.nextMsgId,
       selectedProjectId: state.selectedProjectId,
       selectedChatId: state.selectedChatId,
       expandedChatLists: Array.from(state.expandedChatLists),
-    }));
+    };
+
+    try {
+      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(payload));
+    } catch (err) {
+      if (err?.name === 'QuotaExceededError') {
+        const slimPayload = {
+          ...payload,
+          chatMessages: sanitizeChatMessagesForPersistence(
+            Object.fromEntries(
+              Object.entries(state.chatMessages).map(([chatId, msgs]) => [
+                chatId,
+                msgs.map((msg) => ({
+                  id: msg.id,
+                  role: msg.role,
+                  content: msg.content || '',
+                  toolCalls: msg.toolCalls || [],
+                  segments: msg.segments || [],
+                })),
+              ]),
+            ),
+          ),
+        };
+        localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(slimPayload));
+      } else {
+        throw err;
+      }
+    }
   } catch (err) {
     console.error('Failed to save chats:', err);
   }
@@ -271,6 +363,8 @@ const dom = {
   welcomeSubtitle:  $('welcomeSubtitle'),
   chatInput:        $('chatInput'),
   chatSendBtn:      $('chatSendBtn'),
+  continueSuggestion: $('continueSuggestion'),
+  continueSuggestionBtn: $('continueSuggestionBtn'),
   chatTitle:        $('chatTitle'),
   messagesList:     $('messagesList'),
   scrollToBottom:   $('scrollToBottom'),
@@ -941,21 +1035,6 @@ function collectChatSessionMappings() {
   return mappings;
 }
 
-function chatNeedsRecovery(chatId) {
-  const msgs = state.chatMessages[chatId] || [];
-  if (!msgs.length) return true;
-  if (msgs.some(isEmptyAssistantMessage)) return true;
-
-  for (let i = 0; i < msgs.length; i++) {
-    if (msgs[i].role !== 'user') continue;
-    const next = msgs[i + 1];
-    if (!next || next.role !== 'assistant' || isEmptyAssistantMessage(next)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function mergeTranscriptIntoChat(chatId, transcript) {
   if (!transcript?.length) return false;
 
@@ -994,7 +1073,10 @@ async function recoverChatsFromBackend() {
       if (!chat.sessionId || !project.folderPath || !chatNeedsRecovery(chat.id)) continue;
       try {
         const transcript = await Backend.fetchSessionMessages(chat.sessionId, project.folderPath);
-        if (mergeTranscriptIntoChat(chat.id, transcript)) changed = true;
+        if (mergeTranscriptIntoChat(chat.id, transcript)) {
+          chat.unfinished = chatNeedsRecovery(chat.id);
+          changed = true;
+        }
       } catch (err) {
         console.error(`Failed to recover chat ${chat.id}:`, err);
       }
@@ -1004,7 +1086,10 @@ async function recoverChatsFromBackend() {
   if (changed) {
     attachDiffsToMessages();
     saveChatState();
-    if (state.selectedChatId) renderMessages(state.selectedChatId);
+    if (state.selectedChatId) {
+      renderMessages(state.selectedChatId);
+      syncContinueSuggestion();
+    }
   }
 }
 
@@ -1105,16 +1190,22 @@ function setChatRunning(chatId, running) {
 
   const wasRunning = chat.running;
   chat.running = running;
+  if (running) {
+    chat.unfinished = true;
+    saveChatState();
+  }
   syncChatItem(chatId);
 
   // Notify when a task finishes
   if (wasRunning && !running) {
+    chat.unfinished = false;
     playTaskCompleteSound();
     if (chatId !== state.selectedChatId) {
       showToast(`Task finished: ${chat.title}`);
     }
     saveChatState();
   }
+  syncContinueSuggestion();
 }
 
 function createChatItem(chat, projectId) {
@@ -1228,6 +1319,7 @@ function showChatScreen(chatId, chatTitle, projectId, options = {}) {
 
   renderMessages(chatId);
   syncSendButtonState();
+  syncContinueSuggestion();
   scrollToEnd(true);
   if (!options.silent) {
     setTimeout(() => focusInput(dom.chatInput), 50);
@@ -1799,7 +1891,7 @@ function getInlineThinkingContainer(msgId) {
 
   thinking = document.createElement('div');
   thinking.className = 'thinking-indicator tool-thinking-indicator';
-  thinking.innerHTML = '<span class="thinking-typewriter-text"></span>';
+  thinking.innerHTML = '<span class="thinking-indicator-spinner" aria-hidden="true"></span><span class="thinking-typewriter-text"></span>';
 
   const toolActivity = meta.querySelector('.tool-activity');
   if (toolActivity) meta.insertBefore(thinking, toolActivity.nextSibling);
@@ -1967,8 +2059,6 @@ function sendMessage(text) {
   if (state.selectedChatId && isChatGenerating(state.selectedChatId)) return;
 
   let newChatFromWelcome = false;
-
-  // If on welcome screen, create a new chat
   if (!state.selectedChatId) {
     const project = getSelectedProject();
     if (!project) {
@@ -2000,6 +2090,8 @@ function sendMessage(text) {
   const chatId = state.selectedChatId;
   if (!state.chatMessages[chatId]) state.chatMessages[chatId] = [];
 
+  removeIncompleteAssistantTail(chatId);
+
   // Add user message
   const userMsg = {
     id: `msg-${state.nextMsgId++}`,
@@ -2015,9 +2107,19 @@ function sendMessage(text) {
 
   scrollToEnd(false);
   syncSendButtonState();
+  syncContinueSuggestion();
   setChatRunning(chatId, true);
 
   runAIResponse(chatId, text.trim());
+}
+
+function removeIncompleteAssistantTail(chatId) {
+  const msgs = state.chatMessages[chatId];
+  if (!msgs?.length) return;
+  const last = msgs[msgs.length - 1];
+  if (last.role === 'assistant' && isEmptyAssistantMessage(last)) {
+    msgs.pop();
+  }
 }
 
 async function runAIResponse(chatId, userMessage) {
@@ -2031,6 +2133,7 @@ async function runAIResponse(chatId, userMessage) {
     eventLog: [],
   };
   state.chatMessages[chatId].push(assistantMsg);
+  saveChatState();
 
   let thinkingEl = null;
   if (isCurrentChatVisible(chatId)) {
@@ -2198,6 +2301,7 @@ function upsertToolCall(run, toolCall) {
     completeToolActivityLine(toolCall.id, run.assistantMsgId);
     showInlineThinking(run);
   }
+  scheduleSaveChatState();
 }
 
 function finalizeToolCallsUI(msgId, toolCalls) {
@@ -2935,6 +3039,7 @@ function createThinkingIndicator(id = 'thinking-indicator') {
       ${assistantAvatarHTML()}
       <div class="assistant-body">
         <div class="thinking-indicator">
+          <span class="thinking-indicator-spinner" aria-hidden="true"></span>
           <span class="thinking-typewriter-text"></span>
         </div>
       </div>
@@ -3009,6 +3114,15 @@ function syncSendButtonState() {
   const chatGenerating = isChatGenerating(state.selectedChatId);
   dom.welcomeSendBtn.disabled = !dom.welcomeInput.value.trim();
   dom.chatSendBtn.disabled = chatGenerating || !dom.chatInput.value.trim();
+  syncContinueSuggestion();
+}
+
+function syncContinueSuggestion() {
+  const el = dom.continueSuggestion;
+  if (!el) return;
+  const chatId = state.selectedChatId;
+  const show = Boolean(chatId && isChatUnfinished(chatId) && !isChatGenerating(chatId));
+  el.hidden = !show;
 }
 
 /* ============================================================
@@ -3435,6 +3549,11 @@ function bindEvents() {
     sendMessage(text);
   });
 
+  dom.continueSuggestionBtn?.addEventListener('click', () => {
+    if (!state.selectedChatId || isChatGenerating(state.selectedChatId)) return;
+    sendMessage('Continue');
+  });
+
   // Messages scroll
   dom.messagesList.addEventListener('scroll', onMessagesScroll);
 
@@ -3504,6 +3623,11 @@ function bindEvents() {
   });
 
   dom.sidebar.querySelector('[data-action="settings"]')?.addEventListener('click', openSettings);
+
+  dom.sidebar.querySelector('.projects-open-folder')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openProjectFolder();
+  });
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
@@ -3865,9 +3989,9 @@ function removeInlineQuestion(msgId) {
 function playTaskCompleteSound() {
   const prefs = typeof SettingsStore !== 'undefined'
     ? SettingsStore.getNotificationSettings()
-    : { taskCompleteEnabled: true, taskCompleteSoundId: 'chime' };
+    : { taskCompleteEnabled: true, taskCompleteSoundId: 'chime', volume: 75 };
   if (!prefs.taskCompleteEnabled) return;
-  if (typeof TaskSounds !== 'undefined') TaskSounds.play(prefs.taskCompleteSoundId);
+  if (typeof TaskSounds !== 'undefined') TaskSounds.play(prefs.taskCompleteSoundId, prefs.volume);
 }
 
 /* ============================================================
