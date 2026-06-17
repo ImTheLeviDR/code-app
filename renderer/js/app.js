@@ -248,6 +248,14 @@ const chatsNeedingContextSync = new Set();
 const aiRuns = new Map();
 const questionRequests = new Map();
 
+function isChatGenerating(chatId) {
+  return Boolean(chatId && aiRuns.has(chatId));
+}
+
+function isCurrentChatVisible(chatId) {
+  return chatId === state.selectedChatId;
+}
+
 /* ---- DOM refs ---- */
 const $ = (id) => document.getElementById(id);
 const dom = {
@@ -277,25 +285,93 @@ const dom = {
    INIT
    ============================================================ */
 
+let appStartupComplete = false;
+const pendingStartupToasts = [];
+
+function signalShellReady() {
+  window.electronAPI?.signalShellReady?.();
+}
+
+function hideStartupLoader() {
+  return new Promise((resolve) => {
+    const loader = document.getElementById('startupLoader');
+    if (!loader) {
+      document.body.classList.remove('startup-loading');
+      resolve();
+      return;
+    }
+    document.getElementById('startupLoaderText')?._stopThinkingTypewriter?.();
+    loader.setAttribute('aria-busy', 'false');
+    Physics.animate(loader, { opacity: 0 }, {
+      preset: 'soft',
+      onComplete: () => {
+        loader.remove();
+        document.body.classList.remove('startup-loading');
+        resolve();
+      },
+    });
+  });
+}
+
+async function finishStartup() {
+  await hideStartupLoader();
+  appStartupComplete = true;
+  window.electronAPI?.signalAppReady?.();
+
+  for (const message of pendingStartupToasts.splice(0)) {
+    showToast(message);
+  }
+
+  if (!state.selectedChatId) {
+    const content = dom.welcomeScreen.querySelector('.welcome-content');
+    if (content) {
+      Physics.stagger(content, '.welcome-icon, .welcome-title, .welcome-subtitle', {
+        opacity: 0,
+        y: 14,
+        scale: 0.98,
+      }, { preset: 'gentle', delay: 50 });
+    }
+    focusInput(dom.welcomeInput);
+  } else {
+    focusInput(dom.chatInput);
+  }
+}
+
 async function init() {
+  signalShellReady();
+
+  const loaderText = document.getElementById('startupLoaderText');
+  if (loaderText) startThinkingTypewriter(loaderText);
+
   Physics.init();
   attachDiffsToMessages();
   initializeContextSyncQueue();
+
   renderSidebar();
   initModelDropdowns();
+  restoreActiveScreen({ silent: true });
+
   await initBackend();
+
+  if (state.selectedChatId) {
+    renderMessages(state.selectedChatId);
+  }
+  renderSidebar();
   updateProjectSelection();
+
   window.addEventListener('settings-changed', refreshModelDropdowns);
   window.addEventListener('models-loading', (e) => {
     modelsLoading = Boolean(e.detail?.loading);
     syncModelDropdownLabels();
   });
-  restoreActiveScreen();
+
   bindEvents();
   setupWindowControls();
   animateWelcomeInputPlaceholders();
   window.addEventListener('beforeunload', saveChatState);
   window.addEventListener('pagehide', saveChatState);
+
+  await finishStartup();
 }
 
 function initBackend() {
@@ -985,7 +1061,8 @@ async function syncChatSessionsToBackend() {
   if (sessionsChanged) saveChatState();
 }
 
-function restoreActiveScreen() {
+function restoreActiveScreen(options = {}) {
+  const silent = options.silent;
   if (state.selectedChatId) {
     const chat = findChatById(state.selectedChatId);
     const project = findChatProject(state.selectedChatId);
@@ -994,12 +1071,12 @@ function restoreActiveScreen() {
       state.expandedProjects.add(project.id);
       updateProjectSelection();
       updateActiveChat();
-      showChatScreen(state.selectedChatId, chat.title, project.id);
+      showChatScreen(state.selectedChatId, chat.title, project.id, { silent });
       return;
     }
     state.selectedChatId = null;
   }
-  showWelcomeScreen({ animateWelcome: true });
+  showWelcomeScreen({ animateWelcome: !silent, silent });
 }
 
 function renderChatItemContent(chat) {
@@ -1030,9 +1107,12 @@ function setChatRunning(chatId, running) {
   chat.running = running;
   syncChatItem(chatId);
 
-  // Show notification when task finishes
+  // Notify when a task finishes
   if (wasRunning && !running) {
-    showToast(`Task finished: ${chat.title}`);
+    playTaskCompleteSound();
+    if (chatId !== state.selectedChatId) {
+      showToast(`Task finished: ${chat.title}`);
+    }
     saveChatState();
   }
 }
@@ -1114,18 +1194,20 @@ function hideSettingsScreen() {
 }
 
 function showWelcomeScreen(options = {}) {
-  state.selectedChatId = null;
+  if (!options.silent) {
+    state.selectedChatId = null;
+    saveChatState();
+  }
   updateActiveChat();
   updateNavActive();
   updateProjectSelection();
   setRandomWelcomeSubtitle();
-  saveChatState();
 
   dom.settingsScreen.style.display = 'none';
   dom.appBody.classList.remove('settings-open');
   Physics.switchScreens(dom.welcomeScreen, dom.chatScreen);
 
-  if (options.animateWelcome) {
+  if (options.animateWelcome && !options.silent) {
     const content = dom.welcomeScreen.querySelector('.welcome-content');
     Physics.stagger(content, '.welcome-icon, .welcome-title, .welcome-subtitle', {
       opacity: 0,
@@ -1134,10 +1216,10 @@ function showWelcomeScreen(options = {}) {
     }, { preset: 'gentle', delay: 50 });
   }
 
-  focusInput(dom.welcomeInput);
+  if (!options.silent) focusInput(dom.welcomeInput);
 }
 
-function showChatScreen(chatId, chatTitle, projectId) {
+function showChatScreen(chatId, chatTitle, projectId, options = {}) {
   dom.chatTitle.textContent = chatTitle;
   updateNavActive();
   dom.settingsScreen.style.display = 'none';
@@ -1145,8 +1227,11 @@ function showChatScreen(chatId, chatTitle, projectId) {
   Physics.switchScreens(dom.chatScreen, dom.welcomeScreen);
 
   renderMessages(chatId);
+  syncSendButtonState();
   scrollToEnd(true);
-  setTimeout(() => focusInput(dom.chatInput), 50);
+  if (!options.silent) {
+    setTimeout(() => focusInput(dom.chatInput), 50);
+  }
 }
 
 function openChat(chatId, chatTitle, projectId) {
@@ -1190,7 +1275,61 @@ function renderMessages(chatId) {
   dom.messagesList.innerHTML = '';
   const messages = state.chatMessages[chatId] || [];
   messages.forEach((msg) => renderMessage(msg, false));
+  restoreActiveRunUI(chatId);
+
+  for (const [msgId, req] of questionRequests.entries()) {
+    if (req.chatId === chatId && document.getElementById(`msg-${msgId}`)) {
+      mountInlineQuestionUI(msgId);
+    }
+  }
+
   scrollToEnd(true);
+}
+
+function restoreActiveRunUI(chatId) {
+  const run = aiRuns.get(chatId);
+  if (!run || !isCurrentChatVisible(chatId)) return;
+
+  if (!run.started) {
+    if (!run.thinkingEl?.isConnected) {
+      run.thinkingEl = createThinkingIndicator(`thinking-${run.assistantMsgId}`);
+      dom.messagesList.appendChild(run.thinkingEl);
+    }
+    return;
+  }
+
+  if (run.thinkingEl?.isConnected) stopThinkingIndicator(run.thinkingEl);
+  run.msgEl = document.getElementById(`msg-${run.assistantMsgId}`);
+
+  const contentEl = document.getElementById(`content-${run.assistantMsgId}`);
+  if (contentEl && run.content) {
+    contentEl.classList.add('is-streaming');
+    contentEl.innerHTML = `
+      <span class="md-stream-wrap">
+        <span class="md-stream-body">${parseMarkdown(closeOpenFences(run.content))}</span>
+      </span>
+    `;
+  }
+
+  for (const tc of run.toolCalls.values()) {
+    if (tc.status === 'pending' || tc.status === 'running') {
+      if (tc.name === 'question') {
+        syncInlineQuestion(run.assistantMsgId, {
+          chatId: run.chatId,
+          sessionId: run.sessionId,
+          toolCallId: tc.id,
+          questions: tc.args?.questions,
+          requestId: null,
+        });
+      } else {
+        showToolActivityLineInline(tc, run.assistantMsgId, run.chatId);
+      }
+    } else if (tc.status === 'complete') {
+      completeToolActivityLine(tc.id, run.assistantMsgId);
+    }
+  }
+
+  showInlineThinking(run);
 }
 
 function renderMessage(msg, animate = true) {
@@ -1679,7 +1818,7 @@ function showInlineThinking(run) {
   if (!run || run.content || hasRunningToolCalls(run)) return;
 
   const thinking = getInlineThinkingContainer(run.assistantMsgId);
-  if (thinking && !state.userHasScrolledUp) scrollToEnd(false);
+  if (thinking && !state.userHasScrolledUp && isCurrentChatVisible(run.chatId)) scrollToEnd(false);
 }
 
 function hideInlineThinking(msgId) {
@@ -1824,7 +1963,8 @@ function renderMessageActionsHTML() {
    ============================================================ */
 
 function sendMessage(text) {
-  if (!text.trim() || state.isGenerating) return;
+  if (!text.trim()) return;
+  if (state.selectedChatId && isChatGenerating(state.selectedChatId)) return;
 
   let newChatFromWelcome = false;
 
@@ -1874,7 +2014,6 @@ function sendMessage(text) {
   Physics.pulse(newChatFromWelcome ? dom.welcomeSendBtn : dom.chatSendBtn);
 
   scrollToEnd(false);
-  state.isGenerating = true;
   syncSendButtonState();
   setChatRunning(chatId, true);
 
@@ -1893,9 +2032,12 @@ async function runAIResponse(chatId, userMessage) {
   };
   state.chatMessages[chatId].push(assistantMsg);
 
-  const thinkingEl = createThinkingIndicator();
-  dom.messagesList.appendChild(thinkingEl);
-  scrollToEnd(false);
+  let thinkingEl = null;
+  if (isCurrentChatVisible(chatId)) {
+    thinkingEl = createThinkingIndicator(`thinking-${assistantMsgId}`);
+    dom.messagesList.appendChild(thinkingEl);
+    scrollToEnd(false);
+  }
 
   aiRuns.set(chatId, {
     chatId,
@@ -1965,7 +2107,9 @@ async function runAIResponse(chatId, userMessage) {
 function ensureAssistantVisible(run) {
   if (run.started) return;
   run.started = true;
-  stopThinkingIndicator(run.thinkingEl);
+  if (run.thinkingEl?.isConnected) stopThinkingIndicator(run.thinkingEl);
+
+  if (!isCurrentChatVisible(run.chatId)) return;
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
   if (!msg) return;
@@ -1995,7 +2139,7 @@ function appendStreamFull(run, text) {
     </span>
   `;
 
-  if (!state.userHasScrolledUp) scrollToEnd(false);
+  if (!state.userHasScrolledUp && isCurrentChatVisible(run.chatId)) scrollToEnd(false);
 }
 
 function appendStreamDelta(run, delta) {
@@ -2020,7 +2164,7 @@ function appendStreamDelta(run, delta) {
     </span>
   `;
 
-  if (!state.userHasScrolledUp) scrollToEnd(false);
+  if (!state.userHasScrolledUp && isCurrentChatVisible(run.chatId)) scrollToEnd(false);
 }
 
 function upsertToolCall(run, toolCall) {
@@ -2153,39 +2297,39 @@ function finishAIRun(chatId) {
   if (!run) return;
 
   finalizeAssistantMessage(run);
-  stopThinkingIndicator(run.thinkingEl);
+  if (run.thinkingEl?.isConnected) stopThinkingIndicator(run.thinkingEl);
   aiRuns.delete(chatId);
-  state.isGenerating = false;
   syncSendButtonState();
   setChatRunning(chatId, false);
   saveChatState();
-  focusInput(dom.chatInput);
+  if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
 }
 
 function finishAIWithError(chatId, message) {
   const run = aiRuns.get(chatId);
   if (run) {
     hideInlineThinking(run.assistantMsgId);
-    stopThinkingIndicator(run.thinkingEl);
+    if (run.thinkingEl?.isConnected) stopThinkingIndicator(run.thinkingEl);
     if (!run.started) {
       const msg = state.chatMessages[chatId]?.find((m) => m.id === run.assistantMsgId);
       if (msg) {
         msg.content = `**Error:** ${message}`;
-        renderMessage(msg, false);
+        if (isCurrentChatVisible(chatId)) renderMessage(msg, false);
       }
     } else {
       run.content += `\n\n**Error:** ${message}`;
+      const msg = state.chatMessages[chatId]?.find((m) => m.id === run.assistantMsgId);
+      if (msg) msg.content = run.content;
       finalizeAssistantMessage(run);
     }
     aiRuns.delete(chatId);
   }
 
-  state.isGenerating = false;
   syncSendButtonState();
   setChatRunning(chatId, false);
   saveChatState();
   showToast(message);
-  focusInput(dom.chatInput);
+  if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
 }
 
 function handleBackendEvent(event) {
@@ -2256,20 +2400,25 @@ function simulateAIResponse(chatId, userMessage) {
   state.chatMessages[chatId].push(assistantMsg);
 
   // Show thinking indicator first
-  const thinkingEl = createThinkingIndicator();
-  dom.messagesList.appendChild(thinkingEl);
-  scrollToEnd(false);
+  const thinkingEl = createThinkingIndicator(`thinking-${assistantMsgId}`);
+  if (isCurrentChatVisible(chatId)) {
+    dom.messagesList.appendChild(thinkingEl);
+    scrollToEnd(false);
+  }
 
   setTimeout(() => {
     stopThinkingIndicator(thinkingEl);
 
-    const msgEl = renderMessage(assistantMsg, false);
-    runResponsePhases(phases, assistantMsgId, chatId, msgEl, () => {
-      state.isGenerating = false;
-      syncSendButtonState();
+    if (isCurrentChatVisible(chatId)) {
+      const msgEl = renderMessage(assistantMsg, false);
+      runResponsePhases(phases, assistantMsgId, chatId, msgEl, () => {
+        syncSendButtonState();
+        setChatRunning(chatId, false);
+        focusInput(dom.chatInput);
+      });
+    } else {
       setChatRunning(chatId, false);
-      focusInput(dom.chatInput);
-    });
+    }
   }, 600);
 }
 
@@ -2777,10 +2926,10 @@ function startThinkingTypewriter(el) {
   tick();
 }
 
-function createThinkingIndicator() {
+function createThinkingIndicator(id = 'thinking-indicator') {
   const el = document.createElement('div');
   el.className = 'message assistant';
-  el.id = 'thinking-indicator';
+  el.id = id;
   el.innerHTML = `
     <div class="message-wrapper">
       ${assistantAvatarHTML()}
@@ -2817,7 +2966,7 @@ function onMessagesScroll() {
   const list = dom.messagesList;
   const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
   state.userHasScrolledUp = distanceFromBottom > 80;
-  const shouldShow = state.userHasScrolledUp && state.isGenerating;
+  const shouldShow = state.userHasScrolledUp && isChatGenerating(state.selectedChatId);
   if (shouldShow && dom.scrollToBottom.style.display === 'none') {
     Physics.show(dom.scrollToBottom);
   } else if (!shouldShow && dom.scrollToBottom.style.display !== 'none') {
@@ -2840,7 +2989,9 @@ function setupInput(textarea) {
   textarea.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!textarea.value.trim() || state.isGenerating) return;
+      const isChatInput = textarea === dom.chatInput;
+      if (!textarea.value.trim()) return;
+      if (isChatInput && isChatGenerating(state.selectedChatId)) return;
       const text = textarea.value;
       textarea.value = '';
       textarea.style.height = 'auto';
@@ -2855,8 +3006,9 @@ function focusInput(input) {
 }
 
 function syncSendButtonState() {
-  dom.welcomeSendBtn.disabled = state.isGenerating || !dom.welcomeInput.value.trim();
-  dom.chatSendBtn.disabled = state.isGenerating || !dom.chatInput.value.trim();
+  const chatGenerating = isChatGenerating(state.selectedChatId);
+  dom.welcomeSendBtn.disabled = !dom.welcomeInput.value.trim();
+  dom.chatSendBtn.disabled = chatGenerating || !dom.chatInput.value.trim();
 }
 
 /* ============================================================
@@ -3109,7 +3261,7 @@ function copyMessageContent(btn) {
 }
 
 function regenerateResponse(btn) {
-  if (state.isGenerating) return;
+  if (isChatGenerating(state.selectedChatId)) return;
   const msgEl = btn.closest('.message');
   if (!msgEl) return;
 
@@ -3127,7 +3279,6 @@ function regenerateResponse(btn) {
   const msgIdx = msgs.findIndex((m) => m.id === msgEl.id.replace('msg-', ''));
   if (msgIdx !== -1) msgs.splice(msgIdx, 1);
 
-  state.isGenerating = true;
   syncSendButtonState();
   setChatRunning(state.selectedChatId, true);
   runAIResponse(state.selectedChatId, userText);
@@ -3266,7 +3417,7 @@ function bindEvents() {
   setupInput(dom.welcomeInput);
   dom.welcomeSendBtn.addEventListener('click', () => {
     const text = dom.welcomeInput.value;
-    if (!text.trim() || state.isGenerating) return;
+    if (!text.trim()) return;
     dom.welcomeInput.value = '';
     dom.welcomeInput.style.height = 'auto';
     syncSendButtonState();
@@ -3277,7 +3428,7 @@ function bindEvents() {
   setupInput(dom.chatInput);
   dom.chatSendBtn.addEventListener('click', () => {
     const text = dom.chatInput.value;
-    if (!text.trim() || state.isGenerating) return;
+    if (!text.trim() || isChatGenerating(state.selectedChatId)) return;
     dom.chatInput.value = '';
     dom.chatInput.style.height = 'auto';
     syncSendButtonState();
@@ -3336,8 +3487,8 @@ function bindEvents() {
   // Scroll to bottom button
   dom.scrollToBottom.addEventListener('click', () => scrollToEnd(false));
 
-  // Sidebar nav
-  document.querySelector('[data-action="new-chat"]').addEventListener('click', () => {
+  // Sidebar nav (scope to #sidebar — titlebar menu uses the same data-action values)
+  dom.sidebar.querySelector('[data-action="new-chat"]')?.addEventListener('click', () => {
     if (!getSelectedProject()) {
       openProjectFolder();
       return;
@@ -3346,12 +3497,13 @@ function bindEvents() {
     focusInput(dom.welcomeInput);
   });
 
-  document.querySelector('[data-action="search"]').addEventListener('click', openSearch);
+  dom.sidebar.querySelector('[data-action="search"]')?.addEventListener('click', openSearch);
 
-  document.querySelector('[data-action="plugins"]').addEventListener('click', () => {
+  dom.sidebar.querySelector('[data-action="plugins"]')?.addEventListener('click', () => {
     showToast('Plugins panel coming soon');
   });
-  document.querySelector('[data-action="settings"]').addEventListener('click', openSettings);
+
+  dom.sidebar.querySelector('[data-action="settings"]')?.addEventListener('click', openSettings);
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
@@ -3484,7 +3636,7 @@ function syncInlineQuestion(msgId, event) {
     void attachInlineQuestionRequestId(msgId, req.sessionId);
   }
 
-  if (!state.userHasScrolledUp) scrollToEnd(false);
+  if (!state.userHasScrolledUp && isCurrentChatVisible(event.chatId)) scrollToEnd(false);
 }
 
 function getInlineQuestionHost(msgId) {
@@ -3707,115 +3859,372 @@ function removeInlineQuestion(msgId) {
 }
 
 /* ============================================================
+   TASK COMPLETE SOUND
+   ============================================================ */
+
+function playTaskCompleteSound() {
+  const prefs = typeof SettingsStore !== 'undefined'
+    ? SettingsStore.getNotificationSettings()
+    : { taskCompleteEnabled: true, taskCompleteSoundId: 'chime' };
+  if (!prefs.taskCompleteEnabled) return;
+  if (typeof TaskSounds !== 'undefined') TaskSounds.play(prefs.taskCompleteSoundId);
+}
+
+/* ============================================================
    TOAST NOTIFICATIONS
    ============================================================ */
+
+const TOAST_AUTO_DISMISS_MS = 2500;
+const TOAST_OUTSIDE_MARGIN = 16;
+const TOAST_FLING_SPEED = 620;
+const TOAST_HOME_TOP = 52;
+const TOAST_HOME_RIGHT = 16;
 
 let toastDismissTimer = null;
 let toastInteractionCleanup = null;
 
-function clearToastTimers() {
+function clearToastDismissTimer() {
   if (toastDismissTimer) {
     clearTimeout(toastDismissTimer);
     toastDismissTimer = null;
   }
+}
+
+function clearToastTimers() {
+  clearToastDismissTimer();
   if (toastInteractionCleanup) {
     toastInteractionCleanup();
     toastInteractionCleanup = null;
   }
 }
 
+function scheduleToastDismiss(toast, delay = TOAST_AUTO_DISMISS_MS) {
+  clearToastDismissTimer();
+  toastDismissTimer = setTimeout(() => dismissToast(toast), delay);
+}
+
+function getToastHomePosition(toast) {
+  const width = toast.offsetWidth || toast.getBoundingClientRect().width || 180;
+  return {
+    left: window.innerWidth - TOAST_HOME_RIGHT - width,
+    top: TOAST_HOME_TOP,
+  };
+}
+
+function anchorToastAtHome(toast) {
+  const home = getToastHomePosition(toast);
+  toast.style.right = 'auto';
+  toast.style.bottom = 'auto';
+  toast.style.left = `${home.left}px`;
+  toast.style.top = `${home.top}px`;
+  toast.dataset.homeLeft = String(home.left);
+  toast.dataset.homeTop = String(home.top);
+  return home;
+}
+
+function readToastHome(toast) {
+  return {
+    left: parseFloat(toast.dataset.homeLeft) || getToastHomePosition(toast).left,
+    top: parseFloat(toast.dataset.homeTop) || TOAST_HOME_TOP,
+  };
+}
+
+function isToastOutsideViewport(rect, margin = TOAST_OUTSIDE_MARGIN) {
+  return (
+    rect.right < -margin ||
+    rect.left > window.innerWidth + margin ||
+    rect.bottom < -margin ||
+    rect.top > window.innerHeight + margin
+  );
+}
+
+function getPointerVelocity(samples) {
+  if (samples.length < 2) return { vx: 0, vy: 0 };
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  const dt = Math.max((last.t - first.t) / 1000, 0.016);
+  return {
+    vx: (last.x - first.x) / dt,
+    vy: (last.y - first.y) / dt,
+  };
+}
+
+function getToastEdgeFade(rect) {
+  const distOutside = Math.max(
+    -rect.right,
+    rect.left - window.innerWidth,
+    -rect.bottom,
+    rect.top - window.innerHeight,
+    0,
+  );
+  if (distOutside <= 0) return 1;
+  return Math.max(0.3, 1 - distOutside / 72);
+}
+
+function getToastDragTilt(vx) {
+  return Math.max(-10, Math.min(10, vx * 0.018));
+}
+
+function getToastFlingTarget(toast, vx, vy) {
+  const rect = toast.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const speed = Math.hypot(vx, vy);
+
+  let dirX = vx;
+  let dirY = vy;
+  if (speed < 120) {
+    const distances = [
+      { edge: 'left', dist: cx, dx: -1, dy: 0 },
+      { edge: 'right', dist: window.innerWidth - cx, dx: 1, dy: 0 },
+      { edge: 'top', dist: cy, dx: 0, dy: -1 },
+      { edge: 'bottom', dist: window.innerHeight - cy, dx: 0, dy: 1 },
+    ];
+    const nearest = distances.sort((a, b) => a.dist - b.dist)[0];
+    dirX = nearest.dx;
+    dirY = nearest.dy;
+  } else {
+    dirX /= speed;
+    dirY /= speed;
+  }
+
+  const throwDist = Math.max(window.innerWidth, window.innerHeight) * 0.65;
+  return {
+    left: rect.left + dirX * throwDist,
+    top: rect.top + dirY * throwDist,
+    rotate: dirX * 14 + dirY * 4,
+  };
+}
+
+function shouldFlingDismissToast(toast, vx, vy) {
+  if (isToastOutsideViewport(toast.getBoundingClientRect())) return true;
+
+  const rect = toast.getBoundingClientRect();
+  const speed = Math.hypot(vx, vy);
+  if (speed < TOAST_FLING_SPEED) return false;
+
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const nx = vx / speed;
+  const ny = vy / speed;
+  const towardEdge =
+    (nx < -0.45 && cx < window.innerWidth * 0.55) ||
+    (nx > 0.45 && cx > window.innerWidth * 0.45) ||
+    (ny < -0.45 && cy < window.innerHeight * 0.5) ||
+    (ny > 0.45 && cy > window.innerHeight * 0.5);
+  return towardEdge;
+}
+
+function applyToastDragVisuals(toast, vx, opacity = 1) {
+  const tilt = getToastDragTilt(vx);
+  toast.style.transform = `rotate(${tilt}deg) scale(0.96)`;
+  toast.style.opacity = String(opacity);
+}
+
+function resetToastVisuals(toast) {
+  toast.style.transform = '';
+  toast.style.opacity = '';
+}
+
+function flingToastOff(toast, vx, vy, onComplete) {
+  const target = getToastFlingTarget(toast, vx, vy);
+  const speed = Math.hypot(vx, vy);
+  const startRotate = getToastDragTilt(vx);
+  const startOpacity = parseFloat(toast.style.opacity) || 1;
+
+  Physics.cancel(toast);
+  toast.style.transform = '';
+
+  Physics.animate(toast, {
+    left: target.left,
+    top: target.top,
+    opacity: 0,
+    scale: 0.78,
+    rotate: target.rotate,
+  }, {
+    from: { scale: 0.96, rotate: startRotate, opacity: startOpacity },
+    velocity: {
+      left: vx,
+      top: vy,
+      opacity: speed > 200 ? -2.4 : -1.6,
+      scale: -0.8,
+      rotate: vx * 0.01,
+    },
+    preset: { stiffness: 210, damping: 24, mass: 0.82 },
+    onComplete: () => {
+      Physics.resetMotion(toast);
+      toast.remove();
+      onComplete?.();
+    },
+  });
+}
+
+function snapToastHome(toast, vx = 0, vy = 0, onComplete) {
+  const home = readToastHome(toast);
+  const currentLeft = parseFloat(toast.style.left) || toast.getBoundingClientRect().left;
+  const currentTop = parseFloat(toast.style.top) || toast.getBoundingClientRect().top;
+  const startRotate = getToastDragTilt(vx);
+  const startOpacity = parseFloat(toast.style.opacity) || 1;
+
+  Physics.cancel(toast);
+  toast.style.left = `${currentLeft}px`;
+  toast.style.top = `${currentTop}px`;
+  toast.style.transform = '';
+  toast.style.opacity = '';
+
+  Physics.animate(toast, {
+    left: home.left,
+    top: home.top,
+    opacity: 1,
+    scale: 1,
+    rotate: 0,
+    y: 0,
+  }, {
+    from: { scale: 0.96, rotate: startRotate, opacity: startOpacity, y: 0 },
+    velocity: {
+      left: vx * 0.22,
+      top: vy * 0.22,
+      rotate: startRotate * 0.35,
+    },
+    preset: 'bouncy',
+    onComplete: () => {
+      resetToastVisuals(toast);
+      onComplete?.();
+    },
+  });
+}
+
 function dismissToast(toast, animate = true) {
   if (!toast?.isConnected) return;
   clearToastTimers();
 
-  if (animate) {
-    Physics.animate(toast, { opacity: 0, y: -8 }, {
-      preset: 'stiff',
-      onComplete: () => toast.remove(),
-    });
+  if (!animate) {
+    Physics.cancel(toast);
+    toast.remove();
     return;
   }
 
-  toast.remove();
+  const rect = toast.getBoundingClientRect();
+  Physics.cancel(toast);
+  toast.style.left = `${rect.left}px`;
+  toast.style.top = `${rect.top}px`;
+  toast.style.right = 'auto';
+  toast.style.bottom = 'auto';
+
+  Physics.animate(toast, { opacity: 0, y: -14, scale: 0.9, rotate: -2 }, {
+    preset: 'soft',
+    onComplete: () => {
+      Physics.resetMotion(toast);
+      toast.remove();
+    },
+  });
 }
 
 function setupToastInteractions(toast) {
   let dragging = false;
+  let flinging = false;
   let activePointerId = null;
   let startX = 0;
   let startY = 0;
   let originX = 0;
   let originY = 0;
+  const moveSamples = [];
 
-  function endDrag() {
-    dragging = false;
+  function releaseCapture() {
+    if (activePointerId === null) return;
+    try {
+      toast.releasePointerCapture(activePointerId);
+    } catch {
+      /* pointer may already be released */
+    }
     activePointerId = null;
+  }
+
+  function stopDragging() {
+    dragging = false;
+    moveSamples.length = 0;
+    releaseCapture();
     if (!toast.isConnected) return;
-    toast.classList.remove("toast-dragging");
-    toastDismissTimer = setTimeout(() => dismissToast(toast), 800);
+    toast.classList.remove('toast-dragging');
+  }
+
+  function beginFling(vx, vy) {
+    if (flinging || !toast.isConnected) return;
+    flinging = true;
+    stopDragging();
+    flingToastOff(toast, vx, vy);
   }
 
   function onPointerDown(e) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || flinging) return;
 
     dragging = true;
+    flinging = false;
     activePointerId = e.pointerId;
-    toast.classList.add("toast-dragging");
-    clearToastTimers();
+    moveSamples.length = 0;
+    clearToastDismissTimer();
+    Physics.cancel(toast);
+    toast.classList.add('toast-dragging');
 
     const rect = toast.getBoundingClientRect();
-    toast.style.right = "auto";
-    toast.style.top = `${rect.top}px`;
+    toast.style.right = 'auto';
+    toast.style.bottom = 'auto';
     toast.style.left = `${rect.left}px`;
-    toast.style.transform = "none";
+    toast.style.top = `${rect.top}px`;
 
     startX = e.clientX;
     startY = e.clientY;
     originX = rect.left;
     originY = rect.top;
+
+    moveSamples.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+    applyToastDragVisuals(toast, 0);
+
     toast.setPointerCapture(activePointerId);
     e.preventDefault();
   }
 
   function onPointerMove(e) {
-    if (!dragging || e.pointerId !== activePointerId) return;
+    if (!dragging || flinging || e.pointerId !== activePointerId) return;
 
     const x = originX + (e.clientX - startX);
     const y = originY + (e.clientY - startY);
     toast.style.left = `${x}px`;
     toast.style.top = `${y}px`;
 
-    const rect = toast.getBoundingClientRect();
-    const margin = 24;
-    const isOutside =
-      rect.right < -margin ||
-      rect.left > window.innerWidth + margin ||
-      rect.bottom < -margin ||
-      rect.top > window.innerHeight + margin;
+    const now = performance.now();
+    moveSamples.push({ x: e.clientX, y: e.clientY, t: now });
+    if (moveSamples.length > 6) moveSamples.shift();
 
-    if (isOutside) {
-      if (activePointerId !== null) {
-        toast.releasePointerCapture(activePointerId);
-      }
-      dismissToast(toast, false);
+    const { vx } = getPointerVelocity(moveSamples);
+    const fade = getToastEdgeFade(toast.getBoundingClientRect());
+    applyToastDragVisuals(toast, vx, fade);
+
+    if (isToastOutsideViewport(toast.getBoundingClientRect())) {
+      const { vx: flingVx, vy: flingVy } = getPointerVelocity(moveSamples);
+      beginFling(flingVx, flingVy);
     }
   }
 
   function onPointerUp(e) {
-    if (!dragging || e.pointerId !== activePointerId) return;
-    if (activePointerId !== null) {
-      toast.releasePointerCapture(activePointerId);
+    if (!dragging || flinging || e.pointerId !== activePointerId) return;
+
+    const { vx, vy } = getPointerVelocity(moveSamples);
+    stopDragging();
+
+    if (shouldFlingDismissToast(toast, vx, vy)) {
+      beginFling(vx, vy);
+      return;
     }
-    endDrag();
+
+    snapToastHome(toast, vx, vy, () => scheduleToastDismiss(toast));
   }
 
   function onPointerCancel(e) {
-    if (!dragging || e.pointerId !== activePointerId) return;
-    activePointerId = null;
-    dragging = false;
-    toast.classList.remove("toast-dragging");
+    if (!dragging || flinging || e.pointerId !== activePointerId) return;
+    stopDragging();
     if (!toast.isConnected) return;
-    toastDismissTimer = setTimeout(() => dismissToast(toast), 800);
+    snapToastHome(toast, 0, 0, () => scheduleToastDismiss(toast));
   }
 
   function onAuxClick(e) {
@@ -3824,41 +4233,48 @@ function setupToastInteractions(toast) {
     dismissToast(toast);
   }
 
-  toast.addEventListener("pointerdown", onPointerDown);
-  window.addEventListener("pointermove", onPointerMove);
-  window.addEventListener("pointerup", onPointerUp);
-  toast.addEventListener("pointercancel", onPointerCancel);
+  toast.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+  toast.addEventListener('pointercancel', onPointerCancel);
   toast.addEventListener('auxclick', onAuxClick);
 
   return () => {
-    toast.removeEventListener("pointerdown", onPointerDown);
-    window.removeEventListener("pointermove", onPointerMove);
-    window.removeEventListener("pointerup", onPointerUp);
-    toast.removeEventListener("pointercancel", onPointerCancel);
+    toast.removeEventListener('pointerdown', onPointerDown);
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    toast.removeEventListener('pointercancel', onPointerCancel);
     toast.removeEventListener('auxclick', onAuxClick);
   };
 }
 
 function showToast(message) {
+  if (!appStartupComplete) {
+    pendingStartupToasts.push(message);
+    return;
+  }
+
   const existing = document.getElementById('toast');
   if (existing) dismissToast(existing, false);
 
   const toast = document.createElement('div');
   toast.id = 'toast';
   toast.className = 'toast';
+  toast.title = 'Drag out of the window to dismiss';
   toast.textContent = message;
   document.body.appendChild(toast);
 
-  Physics.animate(toast, { opacity: 1, y: 0 }, {
-    from: { opacity: 0, y: -12 },
+  const home = anchorToastAtHome(toast);
+  toast.style.left = `${home.left}px`;
+  toast.style.top = `${home.top}px`;
+
+  Physics.animate(toast, { opacity: 1, y: 0, scale: 1 }, {
+    from: { opacity: 0, y: -18, scale: 0.9 },
     preset: 'bouncy',
   });
 
   toastInteractionCleanup = setupToastInteractions(toast);
-
-  toastDismissTimer = setTimeout(() => {
-    dismissToast(toast);
-  }, 2500);
+  scheduleToastDismiss(toast);
 }
 
 /* ============================================================

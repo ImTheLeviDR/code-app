@@ -105,9 +105,15 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
+  let windowReadyToShow = false;
+
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+    windowReadyToShow = true;
+    if (mainWindow._shellReady) mainWindow.show();
   });
+
+  mainWindow._shellReady = false;
+  mainWindow._windowReadyToShow = () => windowReadyToShow;
 
   mainWindow.on('close', (event) => {
     if (isQuitting) return;
@@ -163,6 +169,15 @@ app.on('activate', () => {
 });
 
 ipcMain.on('window-minimize', () => mainWindow?.minimize());
+ipcMain.on('app-shell-ready', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow._shellReady = true;
+  if (mainWindow._windowReadyToShow?.()) mainWindow.show();
+});
+ipcMain.on('app-ready', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow.isVisible()) mainWindow.show();
+});
 ipcMain.on('window-maximize', () => {
   if (mainWindow?.isMaximized()) {
     mainWindow.unmaximize();

@@ -7,7 +7,20 @@
   <link rel="stylesheet" href="css/main.css" />
   <link rel="stylesheet" href="css/providers.css" />
 </head>
-<body>
+<body class="startup-loading">
+  <div id="startupLoader" class="startup-loader" aria-live="polite" aria-busy="true">
+    <div class="startup-loader-inner">
+      <div class="startup-loader-dots" aria-hidden="true">
+        <span class="startup-loader-dot"></span>
+        <span class="startup-loader-dot"></span>
+        <span class="startup-loader-dot"></span>
+      </div>
+      <div class="startup-loader-text" id="startupLoaderText">
+        <span class="thinking-typewriter-text"></span>
+      </div>
+    </div>
+  </div>
+
   <div class="app">
 
     <!-- Custom title bar -->
@@ -101,7 +114,7 @@
       <main class="main" id="main">
 
         <!-- Welcome screen -->
-        <div class="welcome-screen" id="welcomeScreen">
+        <div class="welcome-screen" id="welcomeScreen" style="display:none">
           <div class="welcome-content">
             <div class="welcome-icon">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
@@ -216,6 +229,7 @@
   <script src="js/physics.js"></script>
   <script src="js/data.js"></script>
   <script src="js/backend.js"></script>
+  <script src="js/sounds.js"></script>
   <script src="js/app.js"></script>
   <script src="js/settings.js"></script>
   <script src="js/titlebar-menu.js"></script>

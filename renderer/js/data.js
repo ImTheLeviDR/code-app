@@ -129,6 +129,10 @@ const DEFAULT_SETTINGS = {
       enabled: false,
     },
   ],
+  notifications: {
+    taskCompleteEnabled: true,
+    taskCompleteSoundId: 'chime',
+  },
 };
 
 /* AI response templates, keyed by detected intent */
