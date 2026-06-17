@@ -241,9 +241,28 @@ function runEditCommand(command) {
   showToast('Select a text field first');
 }
 
+let sidebarToggling = false;
+
 function toggleSidebar() {
-  const hidden = dom.appBody.classList.toggle('sidebar-hidden');
-  showToast(hidden ? 'Sidebar hidden' : 'Sidebar shown');
+  if (sidebarToggling || !dom.appBody || !dom.sidebar) return;
+
+  const isHidden = dom.appBody.classList.contains('sidebar-hidden');
+  sidebarToggling = true;
+
+  if (isHidden) {
+    dom.sidebar.style.width = '0px';
+    dom.sidebar.style.opacity = '0';
+    dom.appBody.classList.remove('sidebar-hidden');
+    Physics.sidebarToggle(dom.sidebar, true, () => {
+      sidebarToggling = false;
+    });
+    return;
+  }
+
+  Physics.sidebarToggle(dom.sidebar, false, () => {
+    dom.appBody.classList.add('sidebar-hidden');
+    sidebarToggling = false;
+  });
 }
 
 function quitApp() {

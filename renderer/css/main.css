@@ -78,7 +78,8 @@ body.physics-motion .toast {
 }
 
 body.physics-motion .model-dropdown-menu,
-body.physics-motion .project-picker-menu {
+body.physics-motion .project-picker-menu,
+body.physics-motion .sidebar {
   transition: none !important;
 }
 
@@ -408,7 +409,12 @@ textarea {
 }
 
 .app-body.sidebar-hidden .sidebar {
-  display: none;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  border-right-color: transparent;
+  pointer-events: none;
 }
 
 /* Top nav */

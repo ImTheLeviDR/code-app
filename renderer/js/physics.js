@@ -52,6 +52,8 @@ const Physics = (() => {
         return parseFloat(getComputedStyle(el).opacity) || 0;
       case 'height':
         return el.offsetHeight;
+      case 'width':
+        return el.offsetWidth;
       case 'scale':
       case 'scaleX':
       case 'scaleY':
@@ -95,6 +97,7 @@ const Physics = (() => {
     if (states.top) el.style.top = `${states.top.value}px`;
     if (states.opacity) el.style.opacity = String(states.opacity.value);
     if (states.height) el.style.height = `${Math.max(0, states.height.value)}px`;
+    if (states.width) el.style.width = `${Math.max(0, states.width.value)}px`;
     writeState(el, states);
   }
 
@@ -244,6 +247,45 @@ const Physics = (() => {
         onComplete?.();
       },
     });
+  }
+
+  function sidebarWidth() {
+    const w = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width').trim();
+    return parseFloat(w) || 240;
+  }
+
+  function sidebarToggle(el, open, onComplete) {
+    if (!el) return;
+    el.style.overflow = 'hidden';
+
+    if (open) {
+      const target = sidebarWidth();
+      cancel(el);
+      el.style.width = '0px';
+      el.style.opacity = '0';
+      animate(el, { width: target, opacity: 1 }, {
+        from: { width: 0, opacity: 0 },
+        preset: 'snappy',
+        onComplete: () => {
+          el.style.width = '';
+          el.style.opacity = '';
+          el.style.overflow = '';
+          resetMotion(el);
+          onComplete?.();
+        },
+      });
+    } else {
+      const start = el.offsetWidth || sidebarWidth();
+      el.style.width = `${start}px`;
+      animate(el, { width: 0, opacity: 0 }, {
+        preset: 'stiff',
+        onComplete: () => {
+          el.style.overflow = '';
+          resetMotion(el);
+          onComplete?.();
+        },
+      });
+    }
   }
 
   function expandVertical(el, open, onComplete) {
@@ -462,6 +504,7 @@ const Physics = (() => {
     lineIn,
     lineOut,
     expandVertical,
+    sidebarToggle,
     crossfade,
     pulse,
     press,
