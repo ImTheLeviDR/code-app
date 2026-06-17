@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   quit: () => ipcRenderer.send('window-quit'),
   onWindowState: (cb) => ipcRenderer.on('window-state', (_, state) => cb(state)),
   openFolderDialog: () => ipcRenderer.invoke('dialog:open-folder'),
+  openImageDialog: () => ipcRenderer.invoke('dialog:open-images'),
+  describeImages: (payload) => ipcRenderer.invoke('openrouter:describe-images', payload),
   signalShellReady: () => ipcRenderer.send('app-shell-ready'),
   signalAppReady: () => ipcRenderer.send('app-ready'),
   saveChatsSync: (data) => ipcRenderer.sendSync('chats:save-sync', data),

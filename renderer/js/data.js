@@ -66,6 +66,8 @@ const MODELS = [
 
 const FREE_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
+const IMAGE_DESCRIPTION_MODEL = 'google/gemini-3.1-flash-lite-preview';
+
 const PROVIDER_PRESETS = {
   openrouter: {
     name: 'OpenRouter',
@@ -133,6 +135,9 @@ const DEFAULT_SETTINGS = {
     taskCompleteEnabled: true,
     taskCompleteSoundId: 'chime',
     volume: 75,
+  },
+  imageProcessing: {
+    enabled: true,
   },
 };
 

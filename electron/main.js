@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const { registerBackendHandlers, shutdownBackend, ensureStarted } = require('./backend-bridge');
 const { registerChatPersistenceHandlers } = require('./chat-persistence');
@@ -208,4 +209,81 @@ ipcMain.handle('dialog:open-folder', async () => {
   });
   if (result.canceled || !result.filePaths.length) return null;
   return result.filePaths[0];
+});
+
+const IMAGE_MIME_TYPES = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+};
+
+const IMAGE_DESCRIPTION_MODEL = 'google/gemini-3.1-flash-lite-preview';
+
+function filePathToDataUrl(filePath) {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const mime = IMAGE_MIME_TYPES[ext] || 'application/octet-stream';
+  const data = fs.readFileSync(filePath);
+  return {
+    name: path.basename(filePath),
+    dataUrl: `data:${mime};base64,${data.toString('base64')}`,
+  };
+}
+
+ipcMain.handle('dialog:open-images', async () => {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openFile', 'multiSelections'],
+    title: 'Attach images',
+    filters: [{ name: 'Images', extensions: Object.keys(IMAGE_MIME_TYPES) }],
+  });
+  if (result.canceled || !result.filePaths.length) return [];
+  return result.filePaths.map(filePathToDataUrl);
+});
+
+ipcMain.handle('openrouter:describe-images', async (_evt, { apiKey, images }) => {
+  if (!apiKey?.trim()) throw new Error('OpenRouter API key is required');
+  if (!Array.isArray(images) || !images.length) return [];
+
+  const results = [];
+  for (const image of images) {
+    if (!image?.dataUrl) continue;
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey.trim()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: IMAGE_DESCRIPTION_MODEL,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Describe this image in detail for a coding assistant. Include any visible text, code, UI elements, diagrams, error messages, and overall context.',
+            },
+            {
+              type: 'image_url',
+              image_url: { url: image.dataUrl },
+            },
+          ],
+        }],
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`OpenRouter request failed (${response.status}): ${errText.slice(0, 200)}`);
+    }
+
+    const data = await response.json();
+    const description = data?.choices?.[0]?.message?.content?.trim() || 'Unable to describe image.';
+    results.push({ id: image.id, description });
+  }
+
+  return results;
 });

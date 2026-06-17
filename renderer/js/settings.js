@@ -51,6 +51,9 @@ const SettingsStore = (() => {
         : 'chime',
       volume: normalizeNotificationVolume(next.notifications?.volume),
     };
+    next.imageProcessing = {
+      enabled: next.imageProcessing?.enabled !== false,
+    };
     return next;
   }
 
@@ -480,6 +483,54 @@ const SettingsStore = (() => {
     `;
   }
 
+  function getOpenRouterProvider() {
+    return settings.providers.find((p) => p.type === 'openrouter');
+  }
+
+  function isOpenRouterConnected() {
+    const provider = getOpenRouterProvider();
+    if (!provider?.enabled || !provider.apiKey?.trim()) return false;
+    return Boolean(providerSyncState[provider.id]?.ok);
+  }
+
+  function isImageProcessingEnabled() {
+    return settings.imageProcessing?.enabled !== false;
+  }
+
+  function canProcessImages() {
+    return isOpenRouterConnected() && isImageProcessingEnabled();
+  }
+
+  function getOpenRouterApiKey() {
+    const provider = getOpenRouterProvider();
+    if (!provider?.enabled || !provider.apiKey?.trim()) return null;
+    return provider.apiKey.trim();
+  }
+
+  function renderImageProcessingSection() {
+    if (!isOpenRouterConnected()) return '';
+    const enabled = isImageProcessingEnabled();
+    return `
+      <div class="settings-image-processing">
+        <div class="settings-notif-toggle-row">
+          <div class="settings-notif-toggle-copy">
+            <div class="settings-label">Image processing</div>
+            <div class="settings-label-note">Describe attached images with ${escapeHtml(IMAGE_DESCRIPTION_MODEL)} so models without vision can see them as text</div>
+          </div>
+          <label class="settings-toggle" title="${enabled ? 'Disable' : 'Enable'} image processing">
+            <input
+              type="checkbox"
+              class="settings-toggle-input"
+              data-image-processing-field="enabled"
+              ${enabled ? 'checked' : ''}
+            />
+            <span class="settings-toggle-track"></span>
+          </label>
+        </div>
+      </div>
+    `;
+  }
+
   function renderProvidersContent() {
     const connectedCount = Object.values(providerSyncState).filter((s) => s.ok).length;
     return `
@@ -492,6 +543,8 @@ const SettingsStore = (() => {
             <span class="prov-sync-meta">${connectedCount} connected · Free OpenCode models work without a key</span>
           </div>
         </div>
+
+        ${renderImageProcessingSection()}
 
         <div class="prov-group">
           <div class="prov-group-label">Configured</div>
@@ -876,6 +929,11 @@ const SettingsStore = (() => {
       syncProvidersToBackend({ showFeedback: true });
     });
 
+    container.querySelector('[data-image-processing-field="enabled"]')?.addEventListener('change', (e) => {
+      settings.imageProcessing.enabled = e.target.checked;
+      persistSettings();
+    });
+
     bindNotificationsEvents(container);
   }
 
@@ -1022,6 +1080,10 @@ const SettingsStore = (() => {
     getProviders,
     refreshModelsFromBackend,
     syncProvidersToBackend,
+    isOpenRouterConnected,
+    isImageProcessingEnabled,
+    canProcessImages,
+    getOpenRouterApiKey,
   };
 })();
 

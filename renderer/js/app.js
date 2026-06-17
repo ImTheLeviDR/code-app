@@ -121,7 +121,7 @@ function isEmptyAssistantMessage(msg) {
 }
 
 function isEmptyUserMessage(msg) {
-  return msg.role === 'user' && !msg.content?.trim();
+  return msg.role === 'user' && !msg.content?.trim() && !msg.images?.length;
 }
 
 function isContinuePromptUserMessage(msg) {
@@ -356,6 +356,211 @@ function createInitialState() {
 
 /* ---- State ---- */
 const state = createInitialState();
+const pendingImages = { welcome: [], chat: [] };
+let nextImageId = 1;
+
+function getInputContext(textarea) {
+  return textarea === dom.welcomeInput ? 'welcome' : 'chat';
+}
+
+function createPendingImage({ name, dataUrl }) {
+  return {
+    id: `img-${nextImageId++}`,
+    name: name || 'Image',
+    dataUrl,
+  };
+}
+
+function getPendingImages(context) {
+  return pendingImages[context] || [];
+}
+
+function clearPendingImages(context) {
+  pendingImages[context] = [];
+  renderPendingImages(context);
+}
+
+function addPendingImages(context, images) {
+  if (!images?.length) return;
+  pendingImages[context].push(...images.map(createPendingImage));
+  renderPendingImages(context);
+  syncSendButtonState();
+}
+
+function removePendingImage(context, imageId) {
+  pendingImages[context] = pendingImages[context].filter((img) => img.id !== imageId);
+  renderPendingImages(context);
+  syncSendButtonState();
+}
+
+function renderPendingImages(context) {
+  const container = context === 'welcome' ? dom.welcomeAttachments : dom.chatAttachments;
+  if (!container) return;
+
+  const images = getPendingImages(context);
+  if (!images.length) {
+    container.innerHTML = '';
+    container.hidden = true;
+    return;
+  }
+
+  container.hidden = false;
+  container.innerHTML = images.map((img) => `
+    <div class="input-attachment" data-image-id="${escapeHtml(img.id)}">
+      <img src="${img.dataUrl}" alt="${escapeHtml(img.name)}" />
+      <button class="input-attachment-remove" type="button" data-action="remove-pending-image" data-image-id="${escapeHtml(img.id)}" title="Remove">×</button>
+    </div>
+  `).join('');
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function pickImagesForContext(context) {
+  if (!SettingsStore.canProcessImages()) {
+    showToast('Connect OpenRouter and enable image processing in Settings');
+    return;
+  }
+
+  if (window.electronAPI?.openImageDialog) {
+    const picked = await window.electronAPI.openImageDialog();
+    addPendingImages(context, picked);
+    return;
+  }
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.multiple = true;
+  input.onchange = async () => {
+    const files = [...(input.files || [])];
+    const images = await Promise.all(files.map(async (file) => ({
+      name: file.name,
+      dataUrl: await readFileAsDataUrl(file),
+    })));
+    addPendingImages(context, images);
+  };
+  input.click();
+}
+
+async function addPastedImages(context, items) {
+  const images = [];
+  for (const item of items) {
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    images.push({
+      name: file.name || 'Pasted image',
+      dataUrl: await readFileAsDataUrl(file),
+    });
+  }
+  if (images.length) addPendingImages(context, images);
+}
+
+function formatMessageWithImageDescriptions(text, images) {
+  const parts = (images || [])
+    .filter((img) => img.description?.trim())
+    .map((img, index) => {
+      const label = img.name || `Image ${index + 1}`;
+      return `[${label}]\n${img.description.trim()}`;
+    });
+
+  const body = text?.trim() || '';
+  if (!parts.length) return body;
+  if (!body) return parts.join('\n\n');
+  return `${parts.join('\n\n')}\n\n${body}`;
+}
+
+function getUserMessageModelContent(msg) {
+  if (msg.modelContent?.trim()) return msg.modelContent.trim();
+  if (msg.images?.length) return formatMessageWithImageDescriptions(msg.content || '', msg.images);
+  return msg.content?.trim() || '';
+}
+
+async function describeImagesForMessage(images) {
+  const apiKey = SettingsStore.getOpenRouterApiKey();
+  if (!apiKey) throw new Error('OpenRouter API key is required for image processing');
+
+  const toDescribe = images.filter((img) => !img.description?.trim());
+  if (!toDescribe.length) return images;
+
+  if (!window.electronAPI?.describeImages) {
+    throw new Error('Image processing is unavailable in this environment');
+  }
+
+  const described = await window.electronAPI.describeImages({
+    apiKey,
+    images: toDescribe.map(({ id, dataUrl }) => ({ id, dataUrl })),
+  });
+
+  for (const result of described) {
+    const image = images.find((img) => img.id === result.id);
+    if (image) image.description = result.description;
+  }
+
+  return images;
+}
+
+async function prepareUserMessageForModel(userMsg) {
+  const text = userMsg.content?.trim() || '';
+  const images = userMsg.images?.length ? userMsg.images.map((img) => ({ ...img })) : [];
+
+  if (!images.length) {
+    userMsg.modelContent = text;
+    return text;
+  }
+
+  if (!SettingsStore.canProcessImages()) {
+    throw new Error('Connect OpenRouter and enable image processing to send images');
+  }
+
+  await describeImagesForMessage(images);
+  userMsg.images = images;
+  const modelContent = formatMessageWithImageDescriptions(text, images);
+  userMsg.modelContent = modelContent;
+  return modelContent;
+}
+
+function renderUserMessageImagesHTML(images) {
+  if (!images?.length) return '';
+  return `
+    <div class="user-message-attachments">
+      ${images.map((img) => `
+        <figure class="user-message-attachment">
+          <img
+            src="${img.dataUrl}"
+            alt="${escapeHtml(img.name || 'Attached image')}"
+            title="${escapeHtml(img.name || 'Attached image')}"
+            loading="lazy"
+          />
+        </figure>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderUserMessageHTML(msg) {
+  const text = msg.content?.trim() || '';
+  const imagesHtml = renderUserMessageImagesHTML(msg.images);
+  const textHtml = text
+    ? `<div class="user-bubble">${escapeHtml(text)}</div>`
+    : '';
+
+  return `
+    <div class="message-wrapper">
+      <div class="user-message-stack">
+        ${imagesHtml}
+        ${textHtml}
+      </div>
+    </div>
+  `;
+}
 
 function getSelectedProject() {
   if (!state.selectedProjectId) return null;
@@ -464,10 +669,14 @@ const dom = {
   settingsScreen:   $('settingsScreen'),
   welcomeInput:     $('welcomeInput'),
   welcomeSendBtn:   $('welcomeSendBtn'),
+  welcomeAttachBtn: $('welcomeAttachBtn'),
+  welcomeAttachments: $('welcomeAttachments'),
   welcomeTitle:     $('welcomeTitle'),
   welcomeSubtitle:  $('welcomeSubtitle'),
   chatInput:        $('chatInput'),
   chatSendBtn:      $('chatSendBtn'),
+  chatAttachBtn:    $('chatAttachBtn'),
+  chatAttachments:  $('chatAttachments'),
   continueSuggestion: $('continueSuggestion'),
   continueSuggestionBtn: $('continueSuggestionBtn'),
   chatTitle:        $('chatTitle'),
@@ -1122,11 +1331,15 @@ function buildHistoryForBackend(chatId, excludeMsgId = null) {
   const filtered = msgs
     .filter((m) => {
       if (m.id === excludeMsgId) return false;
-      if (m.role === 'user') return Boolean(m.content?.trim());
+      if (m.role === 'user') return Boolean(m.content?.trim()) || Boolean(m.images?.length);
       if (m.role === 'assistant') return Boolean(m.content?.trim());
       return false;
     })
-    .map((m) => ({ role: m.role, content: m.content.trim() }));
+    .map((m) => ({
+      role: m.role,
+      content: m.role === 'user' ? getUserMessageModelContent(m) : m.content.trim(),
+    }))
+    .filter((m) => Boolean(m.content?.trim()));
   return filtered;
 }
 
@@ -1545,11 +1758,7 @@ function renderMessage(msg, animate = true, chatId = state.selectedChatId) {
   el.id = `msg-${msg.id}`;
 
   if (msg.role === 'user') {
-    el.innerHTML = `
-      <div class="message-wrapper">
-        <div class="user-bubble">${escapeHtml(msg.content)}</div>
-      </div>
-    `;
+    el.innerHTML = renderUserMessageHTML(msg);
   } else {
     el.innerHTML = buildAssistantHTML(msg);
   }
@@ -2184,8 +2393,19 @@ function renderMessageActionsHTML() {
    ============================================================ */
 
 function sendMessage(text, options = {}) {
-  if (!text.trim()) return;
+  const trimmedText = text.trim();
+  const context = options.context || (state.selectedChatId ? 'chat' : 'welcome');
+  const images = options.images?.length
+    ? options.images.map((img) => ({ ...img }))
+    : getPendingImages(context).map((img) => ({ ...img }));
+
+  if (!trimmedText && !images.length) return;
   if (state.selectedChatId && isChatGenerating(state.selectedChatId)) return;
+
+  if (images.length && !SettingsStore.canProcessImages()) {
+    showToast('Connect OpenRouter and enable image processing in Settings');
+    return;
+  }
 
   const fromContinue = Boolean(options.fromContinue);
 
@@ -2203,7 +2423,7 @@ function sendMessage(text, options = {}) {
     const newChatId = `new-${Date.now()}`;
     const newChat = {
       id: newChatId,
-      title: text.length > 40 ? text.slice(0, 40) + '...' : text,
+      title: trimmedText.length > 40 ? trimmedText.slice(0, 40) + '...' : (trimmedText || 'Image message'),
       time: 'now',
       unfinished: true,
     };
@@ -2225,16 +2445,18 @@ function sendMessage(text, options = {}) {
   const userMsg = {
     id: `msg-${state.nextMsgId++}`,
     role: 'user',
-    content: text.trim(),
+    content: trimmedText,
+    ...(images.length ? { images } : {}),
     ...(fromContinue ? { hidden: true } : {}),
   };
   if (fromContinue) markContinuePromptUserMessage(userMsg);
   state.chatMessages[chatId].push(userMsg);
   saveChatState();
+  clearPendingImages(context);
 
   if (newChatFromWelcome) {
     renderSidebar();
-    showChatScreen(chatId, findChatById(chatId)?.title || text.trim(), project.id);
+    showChatScreen(chatId, findChatById(chatId)?.title || trimmedText || 'Image message', project.id);
   } else if (!userMsg.hidden) {
     renderMessage(userMsg, true);
   }
@@ -2246,7 +2468,7 @@ function sendMessage(text, options = {}) {
   syncSendButtonState();
   setChatRunning(chatId, true);
 
-  runAIResponse(chatId, text.trim());
+  runAIResponse(chatId, userMsg);
   syncContinueSuggestion();
 }
 
@@ -2259,7 +2481,7 @@ function removeIncompleteAssistantTail(chatId) {
   }
 }
 
-async function runAIResponse(chatId, userMessage) {
+async function runAIResponse(chatId, userMsg) {
   const assistantMsgId = `msg-${state.nextMsgId++}`;
   const assistantMsg = {
     id: assistantMsgId,
@@ -2326,16 +2548,40 @@ async function runAIResponse(chatId, userMessage) {
 
   try {
     await waitForBackendReady();
-    const priorUserMsg = [...(state.chatMessages[chatId] || [])]
-      .reverse()
-      .find((m) => m.role === 'user' && m.content?.trim());
+
+    let modelText;
+    try {
+      if (userMsg.images?.length && thinkingEl) {
+        thinkingEl._stopThinkingTypewriter?.();
+        const textEl = thinkingEl.querySelector('.thinking-typewriter-text');
+        if (textEl) textEl.textContent = 'Describing images…';
+      }
+      modelText = await prepareUserMessageForModel(userMsg);
+      saveChatState();
+    } catch (err) {
+      stopThinkingIndicator(thinkingEl);
+      const msgs = state.chatMessages[chatId];
+      const userIdx = msgs.findIndex((m) => m.id === userMsg.id);
+      if (userIdx !== -1) msgs.splice(userIdx, 1);
+      const idx = msgs.findIndex((m) => m.id === assistantMsgId);
+      if (idx !== -1) msgs.splice(idx, 1);
+      aiRuns.delete(chatId);
+      setChatRunning(chatId, false);
+      saveChatState();
+      if (isCurrentChatVisible(chatId)) {
+        document.getElementById(`msg-${userMsg.id}`)?.remove();
+      }
+      finishAIWithError(chatId, err.message || 'Failed to process images');
+      return;
+    }
+
     const result = await Backend.sendMessage({
       chatId,
-      text: userMessage,
+      text: modelText,
       modelId: state.selectedModelId,
       title: findChatById(chatId)?.title,
       sessionId: getChatSessionId(chatId),
-      history: buildHistoryForBackend(chatId, priorUserMsg?.id),
+      history: buildHistoryForBackend(chatId, userMsg.id),
       workspace: getChatWorkspace(chatId),
       forceHistory: chatsNeedingContextSync.has(chatId),
     });
@@ -3282,6 +3528,8 @@ function onMessagesScroll() {
    ============================================================ */
 
 function setupInput(textarea) {
+  const context = getInputContext(textarea);
+
   textarea.addEventListener('input', () => {
     // Auto-resize
     textarea.style.height = 'auto';
@@ -3289,17 +3537,26 @@ function setupInput(textarea) {
     syncSendButtonState();
   });
 
+  textarea.addEventListener('paste', (e) => {
+    if (!SettingsStore.canProcessImages()) return;
+    const items = [...(e.clipboardData?.items || [])];
+    if (!items.some((item) => item.kind === 'file' && item.type.startsWith('image/'))) return;
+    e.preventDefault();
+    void addPastedImages(context, items);
+  });
+
   textarea.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const isChatInput = textarea === dom.chatInput;
-      if (!textarea.value.trim()) return;
+      const images = getPendingImages(context);
+      if (!textarea.value.trim() && !images.length) return;
       if (isChatInput && isChatGenerating(state.selectedChatId)) return;
       const text = textarea.value;
       textarea.value = '';
       textarea.style.height = 'auto';
       syncSendButtonState();
-      sendMessage(text);
+      sendMessage(text, { context, images });
     }
   });
 }
@@ -3310,8 +3567,10 @@ function focusInput(input) {
 
 function syncSendButtonState() {
   const chatGenerating = isChatGenerating(state.selectedChatId);
-  dom.welcomeSendBtn.disabled = !dom.welcomeInput.value.trim();
-  dom.chatSendBtn.disabled = chatGenerating || !dom.chatInput.value.trim();
+  const welcomeReady = Boolean(dom.welcomeInput.value.trim()) || getPendingImages('welcome').length > 0;
+  const chatReady = Boolean(dom.chatInput.value.trim()) || getPendingImages('chat').length > 0;
+  dom.welcomeSendBtn.disabled = !welcomeReady;
+  dom.chatSendBtn.disabled = chatGenerating || !chatReady;
   syncContinueSuggestion();
 }
 
@@ -3629,25 +3888,28 @@ function copyMessageContent(btn) {
 function regenerateResponse(btn) {
   if (isChatGenerating(state.selectedChatId)) return;
   const msgEl = btn.closest('.message');
-  if (!msgEl) return;
+  if (!msgEl || !state.selectedChatId) return;
 
-  // Find the user message before this one
-  const allMessages = Array.from(dom.messagesList.children);
-  const idx = allMessages.indexOf(msgEl);
-  const prevMsg = idx > 0 ? allMessages[idx - 1] : null;
-  const userText = prevMsg?.querySelector('.user-bubble')?.textContent;
-
-  if (!userText || !state.selectedChatId) return;
-
-  // Remove current assistant message from DOM + state
-  msgEl.remove();
+  const assistantMsgId = msgEl.id.replace('msg-', '');
   const msgs = state.chatMessages[state.selectedChatId];
-  const msgIdx = msgs.findIndex((m) => m.id === msgEl.id.replace('msg-', ''));
-  if (msgIdx !== -1) msgs.splice(msgIdx, 1);
+  const msgIdx = msgs.findIndex((m) => m.id === assistantMsgId);
+  if (msgIdx === -1) return;
+
+  let userMsg = null;
+  for (let i = msgIdx - 1; i >= 0; i -= 1) {
+    if (msgs[i].role === 'user' && !isHiddenMessage(msgs[i])) {
+      userMsg = msgs[i];
+      break;
+    }
+  }
+  if (!userMsg) return;
+
+  msgEl.remove();
+  msgs.splice(msgIdx, 1);
 
   syncSendButtonState();
   setChatRunning(state.selectedChatId, true);
-  runAIResponse(state.selectedChatId, userText);
+  runAIResponse(state.selectedChatId, userMsg);
 }
 
 /* ============================================================
@@ -3783,22 +4045,40 @@ function bindEvents() {
   setupInput(dom.welcomeInput);
   dom.welcomeSendBtn.addEventListener('click', () => {
     const text = dom.welcomeInput.value;
-    if (!text.trim()) return;
+    const images = getPendingImages('welcome');
+    if (!text.trim() && !images.length) return;
     dom.welcomeInput.value = '';
     dom.welcomeInput.style.height = 'auto';
     syncSendButtonState();
-    sendMessage(text);
+    sendMessage(text, { context: 'welcome', images });
+  });
+  dom.welcomeAttachBtn?.addEventListener('click', () => {
+    void pickImagesForContext('welcome');
+  });
+  dom.welcomeAttachments?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action="remove-pending-image"]');
+    if (!btn) return;
+    removePendingImage('welcome', btn.dataset.imageId);
   });
 
   // Chat input
   setupInput(dom.chatInput);
   dom.chatSendBtn.addEventListener('click', () => {
     const text = dom.chatInput.value;
-    if (!text.trim() || isChatGenerating(state.selectedChatId)) return;
+    const images = getPendingImages('chat');
+    if ((!text.trim() && !images.length) || isChatGenerating(state.selectedChatId)) return;
     dom.chatInput.value = '';
     dom.chatInput.style.height = 'auto';
     syncSendButtonState();
-    sendMessage(text);
+    sendMessage(text, { context: 'chat', images });
+  });
+  dom.chatAttachBtn?.addEventListener('click', () => {
+    void pickImagesForContext('chat');
+  });
+  dom.chatAttachments?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action="remove-pending-image"]');
+    if (!btn) return;
+    removePendingImage('chat', btn.dataset.imageId);
   });
 
   dom.continueSuggestionBtn?.addEventListener('click', () => {
