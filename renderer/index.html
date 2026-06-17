@@ -127,12 +127,10 @@
         <!-- Welcome screen -->
         <div class="welcome-screen" id="welcomeScreen" style="display:none">
           <div class="welcome-content">
-            <div class="welcome-icon">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#8b5cf6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </div>
-            <h1 class="welcome-title" id="welcomeTitle">What should we work on?</h1>
+            <h1 class="welcome-title" id="welcomeTitle">
+              <span class="welcome-title-prompt">What should we work on in<span class="project-dropdown project-dropdown--title" id="welcomeProjectDropdown"></span></span>
+              <span class="welcome-title-empty" hidden>Open a folder to get started</span>
+            </h1>
             <p class="welcome-subtitle" id="welcomeSubtitle"></p>
           </div>
           <div class="welcome-input-area">

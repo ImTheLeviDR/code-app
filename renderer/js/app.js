@@ -422,6 +422,35 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function isImageFile(file) {
+  if (file.type.startsWith('image/')) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif|heic|heif)$/i.test(file.name || '');
+}
+
+async function addImageFilesToContext(context, files) {
+  if (!files?.length) return;
+  if (context === 'chat' && isChatGenerating(state.selectedChatId)) {
+    showToast('Wait for the current response to finish');
+    return;
+  }
+  if (!SettingsStore.canProcessImages()) {
+    showToast('Connect OpenRouter and enable image processing in Settings');
+    return;
+  }
+
+  const imageFiles = files.filter(isImageFile);
+  if (!imageFiles.length) {
+    showToast('Only image files can be attached');
+    return;
+  }
+
+  const images = await Promise.all(imageFiles.map(async (file) => ({
+    name: file.name || 'Image',
+    dataUrl: await readFileAsDataUrl(file),
+  })));
+  addPendingImages(context, images);
+}
+
 async function pickImagesForContext(context) {
   if (!SettingsStore.canProcessImages()) {
     showToast('Connect OpenRouter and enable image processing in Settings');
@@ -439,28 +468,40 @@ async function pickImagesForContext(context) {
   input.accept = 'image/*';
   input.multiple = true;
   input.onchange = async () => {
-    const files = [...(input.files || [])];
-    const images = await Promise.all(files.map(async (file) => ({
-      name: file.name,
-      dataUrl: await readFileAsDataUrl(file),
-    })));
-    addPendingImages(context, images);
+    await addImageFilesToContext(context, [...(input.files || [])]);
   };
   input.click();
 }
 
 async function addPastedImages(context, items) {
-  const images = [];
+  const files = [];
   for (const item of items) {
     if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
     const file = item.getAsFile();
-    if (!file) continue;
-    images.push({
-      name: file.name || 'Pasted image',
-      dataUrl: await readFileAsDataUrl(file),
-    });
+    if (file) files.push(file);
   }
-  if (images.length) addPendingImages(context, images);
+  await addImageFilesToContext(context, files);
+}
+
+function transferHasImageFiles(dataTransfer) {
+  if (!dataTransfer) return false;
+  if ([...(dataTransfer.types || [])].includes('Files')) return true;
+  return [...(dataTransfer.items || [])].some(
+    (item) => item.kind === 'file' && item.type.startsWith('image/'),
+  );
+}
+
+function collectImageFilesFromTransfer(dataTransfer) {
+  const files = [];
+  const seen = new Set();
+  for (const file of dataTransfer?.files || []) {
+    if (!isImageFile(file)) continue;
+    const key = `${file.name}:${file.size}:${file.lastModified}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    files.push(file);
+  }
+  return files;
 }
 
 function formatMessageWithImageDescriptions(text, images) {
@@ -603,6 +644,19 @@ async function setActiveProjectWorkspace(projectId) {
   }
 }
 
+async function selectProject(projectId) {
+  if (projectId === state.selectedProjectId) return;
+  const project = state.projects.find((p) => p.id === projectId);
+  if (!project) return;
+
+  state.selectedProjectId = projectId;
+  state.expandedProjects.add(projectId);
+  await setActiveProjectWorkspace(projectId);
+  renderSidebar();
+  updateProjectSelection();
+  saveChatState();
+}
+
 async function openProjectFolder() {
   if (!window.electronAPI?.openFolderDialog) {
     showToast('Open folder is available in the desktop app');
@@ -673,6 +727,7 @@ const dom = {
   welcomeAttachments: $('welcomeAttachments'),
   welcomeTitle:     $('welcomeTitle'),
   welcomeSubtitle:  $('welcomeSubtitle'),
+  welcomeProjectDropdown: $('welcomeProjectDropdown'),
   chatInput:        $('chatInput'),
   chatSendBtn:      $('chatSendBtn'),
   chatAttachBtn:    $('chatAttachBtn'),
@@ -733,7 +788,7 @@ async function finishStartup() {
   if (!state.selectedChatId) {
     const content = dom.welcomeScreen.querySelector('.welcome-content');
     if (content) {
-      Physics.stagger(content, '.welcome-icon, .welcome-title, .welcome-subtitle', {
+      Physics.stagger(content, '.welcome-title, .welcome-subtitle', {
         opacity: 0,
         y: 14,
         scale: 0.98,
@@ -762,6 +817,7 @@ async function init() {
 
   renderSidebar();
   initModelDropdowns();
+  initWelcomeProjectDropdown();
   restoreActiveScreen({ silent: true });
 
   await initBackend();
@@ -1113,6 +1169,7 @@ function createModelDropdown(container) {
   function open() {
     if (typeof TitlebarMenu !== 'undefined') TitlebarMenu.closeAllMenus();
     closeAllModelDropdowns(true);
+    closeWelcomeProjectDropdown(true);
     container.classList.add('open');
     trigger.setAttribute('aria-expanded', 'true');
     openModelDropdown = api;
@@ -1572,15 +1629,179 @@ function toggleProject(projectId) {
   setActiveProjectWorkspace(projectId);
 }
 
+let welcomeProjectDropdownBound = false;
+
+function closeWelcomeProjectDropdown(instant = false) {
+  if (!dom.welcomeProjectDropdown) return;
+  if (!dom.welcomeProjectDropdown.classList.contains('open')) return;
+
+  const menu = dom.welcomeProjectDropdown.querySelector('.project-picker-menu');
+  const trigger = dom.welcomeProjectDropdown.querySelector('.project-picker-trigger');
+
+  const finish = () => {
+    dom.welcomeProjectDropdown.classList.remove('open');
+    trigger?.setAttribute('aria-expanded', 'false');
+    if (menu) {
+      menu.style.visibility = 'hidden';
+      menu.style.opacity = '';
+      menu.style.transform = '';
+      menu.classList.remove('spring-driven');
+      delete menu._springState;
+    }
+  };
+
+  if (instant || !menu) {
+    finish();
+    return;
+  }
+
+  Physics.animate(menu, { opacity: 0, y: 6, scale: 0.97 }, {
+    preset: 'stiff',
+    onComplete: finish,
+  });
+}
+
+function openWelcomeProjectDropdown() {
+  if (!dom.welcomeProjectDropdown) return;
+
+  const menu = dom.welcomeProjectDropdown.querySelector('.project-picker-menu');
+  const trigger = dom.welcomeProjectDropdown.querySelector('.project-picker-trigger');
+  if (!menu || !trigger) return;
+
+  closeAllModelDropdowns(true);
+  dom.welcomeProjectDropdown.classList.add('open');
+  trigger.setAttribute('aria-expanded', 'true');
+  menu.style.visibility = 'visible';
+  Physics.animate(menu, { opacity: 1, y: 0, scale: 1 }, {
+    from: { opacity: 0, y: 6, scale: 0.97 },
+    preset: 'snappy',
+  });
+
+  const selected = menu.querySelector('.project-picker-option.selected');
+  if (selected) {
+    requestAnimationFrame(() => {
+      selected.scrollIntoView({ block: 'nearest' });
+    });
+  }
+}
+
+function syncWelcomeProjectDropdown() {
+  if (!dom.welcomeProjectDropdown) return;
+
+  const valueEl = dom.welcomeProjectDropdown.querySelector('.project-picker-value');
+  const menu = dom.welcomeProjectDropdown.querySelector('.project-picker-menu');
+  if (!valueEl || !menu) return;
+
+  const project = getSelectedProject();
+  if (project) {
+    valueEl.innerHTML = `<span class="project-picker-name">${escapeHtml(project.name)}</span>`;
+  } else {
+    valueEl.innerHTML = '<span class="project-picker-name project-picker-placeholder">Project</span>';
+  }
+
+  const checkSvg = `<svg class="project-picker-option-check" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+
+  const optionsHtml = state.projects.map((p) => `
+    <button
+      class="project-picker-option${p.id === state.selectedProjectId ? ' selected' : ''}"
+      type="button"
+      role="option"
+      data-project-id="${p.id}"
+      aria-selected="${p.id === state.selectedProjectId}"
+    >
+      <span class="project-picker-name">${escapeHtml(p.name)}</span>
+      ${checkSvg}
+    </button>
+  `).join('');
+
+  menu.innerHTML = `
+    <div class="project-picker-list">
+      ${optionsHtml || '<div class="project-picker-empty">No projects yet</div>'}
+    </div>
+    <button class="project-picker-open-folder" type="button" data-action="open-folder">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Open folder…
+    </button>
+  `;
+
+  menu.querySelectorAll('.project-picker-option').forEach((opt) => {
+    opt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      void selectProject(opt.dataset.projectId);
+      closeWelcomeProjectDropdown();
+    });
+  });
+
+  menu.querySelector('[data-action="open-folder"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeWelcomeProjectDropdown();
+    void openProjectFolder();
+  });
+}
+
+function initWelcomeProjectDropdown() {
+  if (!dom.welcomeProjectDropdown) return;
+
+  const chevronSvg = `<svg class="project-picker-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+
+  dom.welcomeProjectDropdown.innerHTML = `
+    <button class="project-picker-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+      <span class="project-picker-value"></span>
+      ${chevronSvg}
+    </button>
+    <div class="project-picker-menu" role="presentation"></div>
+  `;
+
+  const trigger = dom.welcomeProjectDropdown.querySelector('.project-picker-trigger');
+  const menu = dom.welcomeProjectDropdown.querySelector('.project-picker-menu');
+  if (menu) menu.style.visibility = 'hidden';
+
+  if (!welcomeProjectDropdownBound) {
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (dom.welcomeProjectDropdown.classList.contains('open')) {
+        closeWelcomeProjectDropdown();
+      } else {
+        openWelcomeProjectDropdown();
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.project-dropdown')) {
+        closeWelcomeProjectDropdown();
+      }
+    });
+
+    welcomeProjectDropdownBound = true;
+  }
+
+  syncWelcomeProjectDropdown();
+}
+
 function updateProjectSelection() {
   updateNavActive();
 
   const project = getSelectedProject();
+  const promptEl = dom.welcomeTitle?.querySelector('.welcome-title-prompt');
+  const emptyEl = dom.welcomeTitle?.querySelector('.welcome-title-empty');
+
   if (project) {
-    dom.welcomeTitle.textContent = `What should we work on in ${project.name}?`;
+    dom.welcomeTitle?.classList.remove('no-project');
+    promptEl?.removeAttribute('hidden');
+    emptyEl?.setAttribute('hidden', '');
   } else {
-    dom.welcomeTitle.textContent = 'Open a folder to get started';
+    dom.welcomeTitle?.classList.add('no-project');
+    promptEl?.setAttribute('hidden', '');
+    emptyEl?.removeAttribute('hidden');
   }
+
+  syncWelcomeProjectDropdown();
 }
 
 /* ============================================================
@@ -1613,6 +1834,7 @@ function showWelcomeScreen(options = {}) {
     state.selectedChatId = null;
     saveChatState();
   }
+  closeWelcomeProjectDropdown(true);
   updateActiveChat();
   updateNavActive();
   updateProjectSelection();
@@ -1624,7 +1846,7 @@ function showWelcomeScreen(options = {}) {
 
   if (options.animateWelcome && !options.silent) {
     const content = dom.welcomeScreen.querySelector('.welcome-content');
-    Physics.stagger(content, '.welcome-icon, .welcome-title, .welcome-subtitle', {
+    Physics.stagger(content, '.welcome-title, .welcome-subtitle', {
       opacity: 0,
       y: 14,
       scale: 0.98,
@@ -2551,11 +2773,6 @@ async function runAIResponse(chatId, userMsg) {
 
     let modelText;
     try {
-      if (userMsg.images?.length && thinkingEl) {
-        thinkingEl._stopThinkingTypewriter?.();
-        const textEl = thinkingEl.querySelector('.thinking-typewriter-text');
-        if (textEl) textEl.textContent = 'Describing images…';
-      }
       modelText = await prepareUserMessageForModel(userMsg);
       saveChatState();
     } catch (err) {
@@ -3529,6 +3746,7 @@ function onMessagesScroll() {
 
 function setupInput(textarea) {
   const context = getInputContext(textarea);
+  const inputBox = textarea?.closest('.input-box');
 
   textarea.addEventListener('input', () => {
     // Auto-resize
@@ -3538,12 +3756,13 @@ function setupInput(textarea) {
   });
 
   textarea.addEventListener('paste', (e) => {
-    if (!SettingsStore.canProcessImages()) return;
     const items = [...(e.clipboardData?.items || [])];
     if (!items.some((item) => item.kind === 'file' && item.type.startsWith('image/'))) return;
     e.preventDefault();
     void addPastedImages(context, items);
   });
+
+  if (inputBox) setupInputDropZone(inputBox, context);
 
   textarea.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -3558,6 +3777,42 @@ function setupInput(textarea) {
       syncSendButtonState();
       sendMessage(text, { context, images });
     }
+  });
+}
+
+function setupInputDropZone(inputBox, context) {
+  let dragDepth = 0;
+
+  inputBox.addEventListener('dragenter', (e) => {
+    if (!transferHasImageFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    dragDepth += 1;
+    inputBox.classList.add('is-drag-over');
+  });
+
+  inputBox.addEventListener('dragover', (e) => {
+    if (!transferHasImageFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+
+  inputBox.addEventListener('dragleave', (e) => {
+    if (!inputBox.classList.contains('is-drag-over')) return;
+    if (e.relatedTarget && inputBox.contains(e.relatedTarget)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) inputBox.classList.remove('is-drag-over');
+  });
+
+  inputBox.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragDepth = 0;
+    inputBox.classList.remove('is-drag-over');
+    const files = collectImageFilesFromTransfer(e.dataTransfer);
+    if (!files.length) {
+      showToast('Drop image files to attach');
+      return;
+    }
+    void addImageFilesToContext(context, files);
   });
 }
 
