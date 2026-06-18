@@ -1,0 +1,59 @@
+---
+description: Migrate persisted user data when changing schemas — never break old installs
+alwaysApply: true
+---
+
+# Persisted data migrations
+
+When you change a stored shape (fields renamed/removed, new required keys, storage moved), **old user data must still load and auto-convert**. Never assume a fresh install.
+
+## Where data lives in this app
+
+| Data | Location | Load path |
+|------|----------|-----------|
+| Settings | `localStorage` key `code-app-settings` | `renderer/js/settings.js` → `loadSettingsFromStorage()` |
+| Chat state | `%AppData%/…/chat-state.json` (Electron) | `renderer/js/app.js` → `loadPersistedChatState()` |
+| Legacy chats | `localStorage` `code-app-chats` | Migrated to file on first load |
+| Selected model | `localStorage` | `app.js` |
+
+## Required pattern
+
+1. **Migrate on read, not on write only** — every load path runs through a normalizer/migrator before use.
+2. **Never throw on old data** — bad/missing fields → defaults; corrupt JSON → fall back to empty state.
+3. **One function per store** — e.g. `migrateSettings()`, `normalizePersistedChatState()`. Add steps; don’t rewrite history in place elsewhere.
+4. **Preserve user content** — drop stale keys, fill missing keys with defaults, map renamed fields explicitly.
+5. **Re-save after migrate** — if shape changed, persist the migrated result so the next load is cheap (settings already do this via `persistSettings`; chat state saves on startup when `_migrateToFile` or after normalize).
+6. **Bump a schema version** when the on-disk format changes (add `schemaVersion` to the JSON if the store doesn’t have one yet).
+
+## Example (settings)
+
+```javascript
+function migrateSettings(settings) {
+  const next = { ...settings, providers: [...settings.providers] };
+  // Add missing OpenRouter provider for old saves
+  if (!next.providers.some((p) => p.type === 'openrouter')) { /* ... */ }
+  // New section with safe defaults
+  next.notifications = {
+    taskCompleteEnabled: next.notifications?.taskCompleteEnabled !== false,
+    taskCompleteSoundId: TaskSounds.isValid(next.notifications?.taskCompleteSoundId)
+      ? next.notifications.taskCompleteSoundId : 'chime',
+    volume: normalizeNotificationVolume(next.notifications?.volume),
+  };
+  return next;
+}
+```
+
+## Checklist before merging a data-model change
+
+- [ ] Identified every read path for that data (grep storage key / filename).
+- [ ] Added migration/normalization for all older shapes you can infer from git history.
+- [ ] Defaults match `DEFAULT_SETTINGS` / current empty state in `data.js`.
+- [ ] Removed fields are stripped or ignored without crashing.
+- [ ] Migrated data is written back once (or on next natural save).
+- [ ] Manually tested: old JSON file still opens and behaves correctly.
+
+## Do not
+
+- Break load because a new field is required without a default.
+- Migrate only in the UI layer — migration belongs next to load/persist.
+- Delete user data silently unless the field is provably invalid (see `LEGACY_PROJECT_IDS` pattern in `app.js`).
