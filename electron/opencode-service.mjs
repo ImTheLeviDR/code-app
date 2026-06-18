@@ -4,9 +4,10 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { createOpencodeClient } from '@opencode-ai/sdk/client';
 import { createOpencodeServer } from '@opencode-ai/sdk/server';
+import { resolveAppRoot } from './ensure-opencode.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const APP_ROOT = path.join(__dirname, '..');
+const APP_ROOT = resolveAppRoot();
 
 const BUILTIN_PROVIDER_TYPES = {
   openai: 'openai',
@@ -783,6 +784,9 @@ async function startEventSubscription() {
 export async function startOpencodeService(options = {}) {
   if (options.onEvent) emitEvent = options.onEvent;
   if (server && client) return getStatus();
+
+  const { ensureOpencodeInstalled } = await import('./ensure-opencode.mjs');
+  await ensureOpencodeInstalled();
 
   ensureOpencodeOnPath();
   if (!emitEvent) emitEvent = options.onEvent || null;

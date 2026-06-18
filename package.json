@@ -2,6 +2,7 @@
   "name": "code-app",
   "version": "1.0.0",
   "description": "Code app desktop",
+  "author": "ImTheLeviDR",
   "repository": {
     "type": "git",
     "url": "https://github.com/ImTheLeviDR/code-app.git"
@@ -9,13 +10,75 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --inspect"
+    "dev": "electron . --inspect",
+    "postinstall": "node electron/ensure-opencode.mjs",
+    "prebuild": "node electron/ensure-opencode.mjs",
+    "build": "electron-builder --win --x64",
+    "build:dir": "electron-builder --win --x64 --dir",
+    "release": "electron-builder --win --x64 --publish always"
+  },
+  "build": {
+    "appId": "com.imthelevidr.codeapp",
+    "productName": "Code app",
+    "copyright": "Copyright © 2026 ImTheLeviDR",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/opencode-ai/**",
+      "**/node_modules/opencode-*/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Code app",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "ImTheLeviDR",
+      "repo": "code-app"
+    }
   },
   "devDependencies": {
-    "electron": "^31.0.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^25.1.8"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.17.6",
     "opencode-ai": "^1.17.6"
+  },
+  "optionalDependencies": {
+    "opencode-windows-x64": "1.17.6",
+    "opencode-windows-x64-baseline": "1.17.6",
+    "opencode-windows-arm64": "1.17.6",
+    "opencode-darwin-x64": "1.17.6",
+    "opencode-darwin-x64-baseline": "1.17.6",
+    "opencode-darwin-arm64": "1.17.6",
+    "opencode-linux-x64": "1.17.6",
+    "opencode-linux-x64-baseline": "1.17.6",
+    "opencode-linux-arm64": "1.17.6"
   }
 }

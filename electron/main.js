@@ -18,7 +18,7 @@ if (!gotSingleInstanceLock) {
 }
 
 if (process.platform === 'win32') {
-  app.setAppUserModelId(process.execPath);
+  app.setAppUserModelId('com.imthelevidr.codeapp');
 }
 
 // Notification area icon (32x32, shown under "Show hidden icons")

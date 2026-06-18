@@ -141,7 +141,7 @@ function runInstaller(installerPath) {
   }
 
   if (process.platform === 'win32') {
-    spawn(installerPath, [], { detached: true, stdio: 'ignore' }).unref();
+    spawn(installerPath, ['/S'], { detached: true, stdio: 'ignore' }).unref();
     return;
   }
 
@@ -257,7 +257,7 @@ async function downloadAndInstall(getMainWindow, { quitApp = true } = {}) {
     runInstaller(installerPath);
 
     if (quitApp) {
-      app.quit();
+      app.exit(0);
     }
 
     return { ok: true, path: installerPath };
