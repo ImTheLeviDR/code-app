@@ -685,7 +685,8 @@ const SettingsStore = (() => {
     if (status.error) return 'Could not check for updates';
     if (status.downloading) return `Downloading v${status.latestVersion}…`;
     if (status.upToDate) return 'Up to date';
-    return `Update available · v${status.latestVersion}`;
+    const label = `Update available · v${status.latestVersion}`;
+    return status.isPrerelease ? `${label} (pre-release)` : label;
   }
 
   function applyUpdateStatusToAbout(container, status) {

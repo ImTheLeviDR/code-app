@@ -16,6 +16,7 @@ const state = {
   releaseName: null,
   releaseNotes: null,
   releasePageUrl: null,
+  isPrerelease: false,
   asset: null,
   error: null,
   downloading: false,
@@ -77,8 +78,33 @@ function pickReleaseAsset(release) {
   );
 }
 
+function getReleaseVersion(release) {
+  const raw = String(release?.tag_name || release?.name || '').trim().replace(/^v/i, '');
+  const match = raw.match(/^(\d+\.\d+\.\d+)/);
+  return match ? match[1] : null;
+}
+
+function findLatestRelease(releases) {
+  if (!Array.isArray(releases) || !releases.length) return null;
+
+  let bestRelease = null;
+  let bestVersion = null;
+
+  for (const release of releases) {
+    const version = getReleaseVersion(release);
+    if (!version) continue;
+    if (!pickReleaseAsset(release)) continue;
+    if (!bestVersion || isNewerVersion(version, bestVersion)) {
+      bestRelease = release;
+      bestVersion = version;
+    }
+  }
+
+  return bestRelease;
+}
+
 async function fetchLatestRelease() {
-  const url = `https://api.github.com/repos/${UPDATE_CONFIG.owner}/${UPDATE_CONFIG.repo}/releases/latest`;
+  const url = `https://api.github.com/repos/${UPDATE_CONFIG.owner}/${UPDATE_CONFIG.repo}/releases?per_page=20`;
   const response = await fetch(url, {
     headers: {
       Accept: 'application/vnd.github+json',
@@ -91,7 +117,8 @@ async function fetchLatestRelease() {
     throw new Error(`GitHub release check failed (${response.status})`);
   }
 
-  return response.json();
+  const releases = await response.json();
+  return findLatestRelease(releases);
 }
 
 function getPublicStatus() {
@@ -103,6 +130,7 @@ function getPublicStatus() {
     releaseName: state.releaseName,
     releaseNotes: state.releaseNotes,
     releasePageUrl: state.releasePageUrl,
+    isPrerelease: state.isPrerelease,
     error: state.error,
     downloading: state.downloading,
     assetName: state.asset?.name || null,
@@ -194,15 +222,17 @@ async function checkForUpdates(getMainWindow, { notify = true } = {}) {
     if (!release) {
       state.upToDate = true;
       state.latestVersion = state.currentVersion;
+      state.isPrerelease = false;
       state.asset = null;
     } else {
-      const latestVersion = String(release.tag_name || release.name || '').replace(/^v/i, '');
+      const latestVersion = getReleaseVersion(release) || state.currentVersion;
       const asset = pickReleaseAsset(release);
 
-      state.latestVersion = latestVersion || state.currentVersion;
+      state.latestVersion = latestVersion;
       state.releaseName = release.name || latestVersion;
       state.releaseNotes = release.body || '';
       state.releasePageUrl = release.html_url || '';
+      state.isPrerelease = Boolean(release.prerelease);
       state.asset = asset
         ? { name: asset.name, url: asset.url, size: asset.size }
         : null;
