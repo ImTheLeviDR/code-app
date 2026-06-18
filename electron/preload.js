@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('updates:status', listener);
     return () => ipcRenderer.removeListener('updates:status', listener);
   },
+  onBeginInstall: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('updates:begin-install', listener);
+    return () => ipcRenderer.removeListener('updates:begin-install', listener);
+  },
 });
 
 contextBridge.exposeInMainWorld('backendAPI', {

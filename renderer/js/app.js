@@ -754,6 +754,7 @@ const pendingStartupToasts = [];
 let updateNotificationShown = false;
 let activeUpdateToast = null;
 let pendingUpdateStatus = null;
+let updateInstallActive = false;
 
 function signalShellReady() {
   window.electronAPI?.signalShellReady?.();
@@ -5165,6 +5166,7 @@ function setupToastInteractions(toast) {
 
   function onPointerDown(e) {
     if (e.button !== 0 || flinging) return;
+    if (e.target.closest('button, a, input, textarea, select, .toast-action-btn')) return;
 
     dragging = true;
     flinging = false;
@@ -5304,7 +5306,11 @@ function showActionToast({ message, actionLabel, onAction, persistent = true }) 
   actionBtn.type = 'button';
   actionBtn.className = 'toast-action-btn';
   actionBtn.textContent = actionLabel;
+  actionBtn.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+  });
   actionBtn.addEventListener('click', (e) => {
+    e.preventDefault();
     e.stopPropagation();
     onAction?.();
   });
@@ -5322,7 +5328,6 @@ function showActionToast({ message, actionLabel, onAction, persistent = true }) 
     preset: 'bouncy',
   });
 
-  toastInteractionCleanup = setupToastInteractions(toast);
   if (!persistent) scheduleToastDismiss(toast);
 }
 
@@ -5331,35 +5336,152 @@ function setupUpdateListener() {
     handleUpdateStatus(status);
   });
 
+  window.electronAPI?.onBeginInstall?.(() => {
+    showUpdateInstallScreen();
+  });
+
+  document.getElementById('updateInstallerRetry')?.addEventListener('click', () => {
+    void installAppUpdate();
+  });
+
   window.electronAPI?.getUpdateStatus?.()
     .then((status) => handleUpdateStatus(status, { silent: true }))
     .catch(() => {});
 }
 
+function formatUpdateBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function showUpdateInstallScreen() {
+  let screen = document.getElementById('updateInstallerScreen');
+  if (!screen) {
+    screen = document.getElementById('startupLoader');
+  }
+  if (!screen) return;
+
+  updateInstallActive = true;
+  document.body.classList.add('update-installing');
+  screen.hidden = false;
+  screen.removeAttribute('hidden');
+  screen.style.display = '';
+  screen.classList.remove('is-error');
+  screen.setAttribute('aria-busy', 'true');
+
+  const toast = document.getElementById('toast');
+  if (toast) dismissToast(toast, false);
+
+  const versionEl = document.getElementById('updateInstallerVersion');
+  const statusEl = document.getElementById('updateInstallerStatus');
+  const detailEl = document.getElementById('updateInstallerDetail');
+  const barEl = document.getElementById('updateInstallerProgressBar');
+  const retryBtn = document.getElementById('updateInstallerRetry');
+
+  if (versionEl) versionEl.textContent = 'Preparing download…';
+  if (statusEl) statusEl.textContent = 'Starting update…';
+  if (detailEl) detailEl.textContent = '';
+  if (barEl) barEl.style.width = '0%';
+  retryBtn?.setAttribute('hidden', '');
+}
+
+function hideUpdateInstallScreen() {
+  const screen = document.getElementById('updateInstallerScreen');
+  updateInstallActive = false;
+  document.body.classList.remove('update-installing');
+  if (screen) {
+    screen.hidden = true;
+    screen.setAttribute('aria-busy', 'false');
+  }
+}
+
+function renderUpdateInstallProgress(status) {
+  if (!updateInstallActive) return;
+
+  const screen = document.getElementById('updateInstallerScreen');
+  const versionEl = document.getElementById('updateInstallerVersion');
+  const statusEl = document.getElementById('updateInstallerStatus');
+  const detailEl = document.getElementById('updateInstallerDetail');
+  const barEl = document.getElementById('updateInstallerProgressBar');
+  const retryBtn = document.getElementById('updateInstallerRetry');
+  if (!screen || !versionEl || !statusEl || !detailEl || !barEl) return;
+
+  const versionLabel = status.latestVersion ? `v${status.latestVersion}` : 'the latest version';
+
+  if (status.installPhase === 'preparing') {
+    versionEl.textContent = `Preparing ${versionLabel}…`;
+    statusEl.textContent = 'Getting update ready';
+    detailEl.textContent = status.assetName || '';
+    barEl.style.width = '0%';
+    retryBtn?.setAttribute('hidden', '');
+    screen.classList.remove('is-error');
+    return;
+  }
+
+  if (status.installPhase === 'downloading') {
+    versionEl.textContent = `Downloading ${versionLabel}`;
+    statusEl.textContent = `${status.downloadProgress || 0}% complete`;
+    const downloaded = formatUpdateBytes(status.downloadedBytes);
+    const total = status.totalBytes ? formatUpdateBytes(status.totalBytes) : '';
+    detailEl.textContent = total ? `${downloaded} of ${total}` : downloaded;
+    barEl.style.width = `${status.downloadProgress || 0}%`;
+    retryBtn?.setAttribute('hidden', '');
+    screen.classList.remove('is-error');
+    return;
+  }
+
+  if (status.installPhase === 'launching' || status.installPhase === 'done') {
+    versionEl.textContent = `Installing ${versionLabel}`;
+    statusEl.textContent = 'Opening installer…';
+    detailEl.textContent = 'Code app will close automatically';
+    barEl.style.width = '100%';
+    retryBtn?.setAttribute('hidden', '');
+    screen.classList.remove('is-error');
+    return;
+  }
+
+  if (status.installPhase === 'error') {
+    versionEl.textContent = `Could not install ${versionLabel}`;
+    statusEl.textContent = status.error || 'Update failed';
+    detailEl.textContent = 'You can try again or install manually from GitHub';
+    screen.classList.add('is-error');
+    retryBtn?.removeAttribute('hidden');
+    screen.setAttribute('aria-busy', 'false');
+  }
+}
+
 function handleUpdateStatus(status, { silent = false } = {}) {
+  pendingUpdateStatus = status;
   SettingsStore.refreshAboutUpdateStatus?.(status);
+
+  if (status.installPhase) {
+    renderUpdateInstallProgress(status);
+  }
 
   if (!appStartupComplete) {
     if (!silent) pendingUpdateStatus = status;
     return;
   }
 
-  if (status.downloading) {
-    if (activeUpdateToast) {
-      activeUpdateToast.querySelector('.toast-action-message').textContent = `Downloading v${status.latestVersion}…`;
-      activeUpdateToast.querySelector('.toast-action-btn').disabled = true;
-    } else if (appStartupComplete) {
-      showToast(`Downloading v${status.latestVersion}…`);
-    }
+  if (status.downloading || status.installPhase) {
+    if (activeUpdateToast) dismissToast(activeUpdateToast, false);
+    activeUpdateToast = null;
     return;
   }
 
-  if (status.error && !silent && appStartupComplete) {
+  if (status.error && !silent && appStartupComplete && !updateInstallActive) {
     showToast(status.error);
     return;
   }
 
-  if (status.upToDate === false && !updateNotificationShown && !silent) {
+  if (status.upToDate === false && !updateNotificationShown && !silent && !updateInstallActive) {
     updateNotificationShown = true;
     showActionToast({
       message: `Update available: v${status.latestVersion}`,
@@ -5378,12 +5500,28 @@ function handleUpdateStatus(status, { silent = false } = {}) {
 }
 
 async function installAppUpdate() {
+  if (!window.electronAPI?.installUpdate) {
+    showToast('Updates are only available in the desktop app');
+    return;
+  }
+
+  showUpdateInstallScreen();
+
   try {
-    await window.electronAPI?.installUpdate?.();
+    await window.electronAPI.installUpdate();
+    const status = await window.electronAPI.getUpdateStatus?.();
+    if (status) handleUpdateStatus(status);
   } catch (err) {
-    showToast(err.message || 'Update failed');
+    updateInstallActive = true;
+    renderUpdateInstallProgress({
+      installPhase: 'error',
+      latestVersion: pendingUpdateStatus?.latestVersion,
+      error: err.message || 'Update failed',
+    });
   }
 }
+
+window.installAppUpdate = installAppUpdate;
 
 /* ============================================================
    BOOTSTRAP

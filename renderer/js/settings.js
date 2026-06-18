@@ -691,6 +691,7 @@ const SettingsStore = (() => {
 
   function applyUpdateStatusToAbout(container, status) {
     const el = container?.querySelector('[data-about-field="updateStatus"]');
+    const installBtn = container?.querySelector('[data-action="install-update"]');
     if (!el) return;
 
     el.textContent = formatUpdateStatusLabel(status);
@@ -703,6 +704,16 @@ const SettingsStore = (() => {
       el.classList.add('is-current');
     } else {
       el.classList.add('is-available');
+    }
+
+    if (installBtn) {
+      const showInstall = status && status.upToDate === false && !status.downloading && !status.installPhase;
+      installBtn.hidden = !showInstall;
+      if (showInstall) {
+        installBtn.textContent = status.isPrerelease
+          ? `Install v${status.latestVersion} (pre-release)`
+          : `Install v${status.latestVersion}`;
+      }
     }
   }
 
@@ -770,6 +781,7 @@ const SettingsStore = (() => {
         </div>
 
         <div class="settings-about-actions">
+          <button class="settings-about-btn" type="button" data-action="install-update" hidden>Install update</button>
           <button class="settings-about-btn settings-about-btn--secondary" type="button" data-action="copy-diagnostics">Copy system info</button>
         </div>
 
@@ -819,6 +831,14 @@ const SettingsStore = (() => {
   }
 
   function bindAboutEvents(container) {
+    container.querySelector('[data-action="install-update"]')?.addEventListener('click', () => {
+      if (typeof window.installAppUpdate === 'function') {
+        window.installAppUpdate();
+        return;
+      }
+      showToast('Could not start update');
+    });
+
     container.querySelector('[data-action="copy-diagnostics"]')?.addEventListener('click', async () => {
       const info = await loadAppInfo();
       const text = buildDiagnosticsText(info);

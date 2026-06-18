@@ -20,6 +20,10 @@ const state = {
   asset: null,
   error: null,
   downloading: false,
+  installPhase: null,
+  downloadProgress: 0,
+  downloadedBytes: 0,
+  totalBytes: 0,
   downloadPath: null,
   notificationShown: false,
 };
@@ -133,6 +137,10 @@ function getPublicStatus() {
     isPrerelease: state.isPrerelease,
     error: state.error,
     downloading: state.downloading,
+    installPhase: state.installPhase,
+    downloadProgress: state.downloadProgress,
+    downloadedBytes: state.downloadedBytes,
+    totalBytes: state.totalBytes,
     assetName: state.asset?.name || null,
   };
 }
@@ -143,7 +151,19 @@ function notifyRenderer(getMainWindow) {
   win.webContents.send('updates:status', getPublicStatus());
 }
 
-async function downloadReleaseAsset(asset) {
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+async function downloadReleaseAsset(asset, onProgress) {
   const response = await fetch(asset.url, {
     headers: {
       Accept: 'application/octet-stream',
@@ -155,21 +175,42 @@ async function downloadReleaseAsset(asset) {
     throw new Error(`Download failed (${response.status})`);
   }
 
+  const total = Number(response.headers.get('content-length')) || asset.size || 0;
   const tempDir = path.join(app.getPath('temp'), 'code-app-updates');
   fs.mkdirSync(tempDir, { recursive: true });
   const destPath = path.join(tempDir, asset.name);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  fs.writeFileSync(destPath, buffer);
+
+  if (!response.body) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    fs.writeFileSync(destPath, buffer);
+    onProgress?.({ downloaded: buffer.length, total: buffer.length, percent: 100 });
+    return destPath;
+  }
+
+  const reader = response.body.getReader();
+  const handle = fs.openSync(destPath, 'w');
+  let downloaded = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      fs.writeSync(handle, value);
+      downloaded += value.length;
+      const percent = total ? Math.min(100, Math.round((downloaded / total) * 100)) : null;
+      onProgress?.({ downloaded, total, percent });
+    }
+  } finally {
+    fs.closeSync(handle);
+  }
+
+  onProgress?.({ downloaded, total: total || downloaded, percent: 100 });
   return destPath;
 }
 
 function runInstaller(installerPath) {
-  if (!app.isPackaged) {
-    throw new Error('Updates can only be installed in the packaged app');
-  }
-
   if (process.platform === 'win32') {
-    spawn(installerPath, ['/S'], { detached: true, stdio: 'ignore' }).unref();
+    spawn(installerPath, [], { detached: true, stdio: 'ignore', shell: true }).unref();
     return;
   }
 
@@ -186,7 +227,17 @@ function runInstaller(installerPath) {
   spawn(installerPath, [], { detached: true, stdio: 'ignore' }).unref();
 }
 
-function showSystemUpdateNotification(onInstall) {
+function saveRendererState(getMainWindow) {
+  const win = getMainWindow?.();
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  try {
+    win.webContents.executeJavaScript('window.saveChatState?.()', true);
+  } catch {
+    /* ignore */
+  }
+}
+
+function showSystemUpdateNotification(getMainWindow, onInstall) {
   if (!Notification.isSupported() || state.notificationShown) return;
 
   const notification = new Notification({
@@ -196,14 +247,12 @@ function showSystemUpdateNotification(onInstall) {
     closeButtonText: 'Later',
   });
 
-  notification.on('action', () => {
+  const beginInstall = () => {
     onInstall();
-  });
+  };
 
-  notification.on('click', () => {
-    onInstall();
-  });
-
+  notification.on('action', beginInstall);
+  notification.on('click', beginInstall);
   notification.show();
   state.notificationShown = true;
 }
@@ -251,8 +300,8 @@ async function checkForUpdates(getMainWindow, { notify = true } = {}) {
     const win = getMainWindow?.();
     const windowHidden = !win || win.isDestroyed() || !win.isVisible();
     if (windowHidden) {
-      showSystemUpdateNotification(() => {
-        void downloadAndInstall(getMainWindow, { quitApp: true });
+      showSystemUpdateNotification(getMainWindow, () => {
+        beginInstallFlow(getMainWindow);
       });
     }
   }
@@ -260,7 +309,29 @@ async function checkForUpdates(getMainWindow, { notify = true } = {}) {
   return getPublicStatus();
 }
 
-async function downloadAndInstall(getMainWindow, { quitApp = true } = {}) {
+function beginInstallFlow(getMainWindow, helpers = {}) {
+  const win = getMainWindow?.();
+  if (!win || win.isDestroyed()) return;
+
+  state.downloading = false;
+  state.error = null;
+  state.installPhase = 'preparing';
+  state.downloadProgress = 0;
+  state.downloadedBytes = 0;
+
+  helpers.showMainWindow?.();
+  notifyRenderer(getMainWindow);
+  win.webContents.send('updates:begin-install');
+
+  void downloadAndInstall(getMainWindow, helpers).catch((err) => {
+    state.error = err?.message || 'Update install failed';
+    state.installPhase = 'error';
+    state.downloading = false;
+    notifyRenderer(getMainWindow);
+  });
+}
+
+async function downloadAndInstall(getMainWindow, helpers = {}) {
   if (state.downloading) {
     throw new Error('Update already downloading');
   }
@@ -278,35 +349,61 @@ async function downloadAndInstall(getMainWindow, { quitApp = true } = {}) {
   }
 
   state.downloading = true;
+  state.installPhase = 'downloading';
+  state.downloadProgress = 0;
+  state.downloadedBytes = 0;
+  state.totalBytes = state.asset.size || 0;
   state.error = null;
   notifyRenderer(getMainWindow);
 
   try {
-    const installerPath = await downloadReleaseAsset(state.asset);
+    const installerPath = await downloadReleaseAsset(state.asset, (progress) => {
+      state.downloadedBytes = progress.downloaded;
+      state.totalBytes = progress.total || state.asset.size || progress.downloaded;
+      state.downloadProgress = progress.percent ?? state.downloadProgress;
+      notifyRenderer(getMainWindow);
+    });
+
     state.downloadPath = installerPath;
+    state.installPhase = 'launching';
+    state.downloadProgress = 100;
+    notifyRenderer(getMainWindow);
+
+    saveRendererState(getMainWindow);
+    helpers.prepareForQuit?.();
+    helpers.destroyTray?.();
     runInstaller(installerPath);
 
-    if (quitApp) {
+    state.installPhase = 'done';
+    notifyRenderer(getMainWindow);
+
+    setTimeout(() => {
       app.exit(0);
-    }
+    }, 400);
 
     return { ok: true, path: installerPath };
   } catch (err) {
     state.error = err.message || 'Update install failed';
+    state.installPhase = 'error';
     notifyRenderer(getMainWindow);
     throw err;
   } finally {
     state.downloading = false;
-    notifyRenderer(getMainWindow);
   }
 }
 
-function registerUpdateHandlers(ipcMain, { getMainWindow }) {
+function registerUpdateHandlers(ipcMain, helpers) {
+  const { getMainWindow, showMainWindow, prepareForQuit, destroyTray } = helpers;
+  const installHelpers = { showMainWindow, prepareForQuit, destroyTray };
+
   ipcMain.handle('updates:get-status', () => getPublicStatus());
 
   ipcMain.handle('updates:check', () => checkForUpdates(getMainWindow, { notify: false }));
 
-  ipcMain.handle('updates:install', () => downloadAndInstall(getMainWindow, { quitApp: true }));
+  ipcMain.handle('updates:install', async () => {
+    beginInstallFlow(getMainWindow, installHelpers);
+    return getPublicStatus();
+  });
 
   app.whenReady().then(() => {
     setTimeout(() => {
@@ -320,4 +417,5 @@ module.exports = {
   checkForUpdates,
   downloadAndInstall,
   getPublicStatus,
+  formatBytes,
 };

@@ -184,6 +184,15 @@ app.whenReady().then(async () => {
 
   registerUpdateHandlers(ipcMain, {
     getMainWindow: () => mainWindow,
+    showMainWindow,
+    prepareForQuit: () => {
+      isQuitting = true;
+    },
+    destroyTray: () => {
+      if (!tray) return;
+      tray.destroy();
+      tray = null;
+    },
   });
 
   try {

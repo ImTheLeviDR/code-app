@@ -159,6 +159,113 @@ body.startup-loading .app {
   color: var(--text-muted);
 }
 
+/* ============================================================
+   UPDATE INSTALLER SCREEN
+   ============================================================ */
+
+body.update-installing .app {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.update-installer-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-base);
+  padding: 24px;
+}
+
+.update-installer-screen[hidden] {
+  display: none !important;
+}
+
+.update-installer-inner {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+}
+
+.update-installer-logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, rgba(124, 45, 237, 0.22), rgba(124, 45, 237, 0.08));
+  border: 1px solid rgba(124, 45, 237, 0.28);
+  color: var(--accent-text);
+  margin-bottom: 4px;
+}
+
+.update-installer-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.update-installer-version {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.update-installer-progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.update-installer-progress-bar {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(124, 45, 237, 0.85), rgba(167, 139, 250, 0.95));
+  transition: width 0.18s ease;
+}
+
+.update-installer-status {
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.update-installer-detail {
+  min-height: 1.2em;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.update-installer-retry {
+  margin-top: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.update-installer-retry:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.update-installer-screen.is-error .update-installer-progress-bar {
+  background: rgba(248, 113, 113, 0.85);
+}
+
 button {
   font-family: inherit;
   font-size: inherit;
@@ -2467,6 +2574,9 @@ textarea {
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
+  position: relative;
+  z-index: 2;
+  -webkit-app-region: no-drag;
   transition: background var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
 }
 

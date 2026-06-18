@@ -259,6 +259,24 @@
     </div>
   </div>
 
+  <div id="updateInstallerScreen" class="update-installer-screen" hidden aria-live="polite" aria-busy="true">
+    <div class="update-installer-inner">
+      <div class="update-installer-logo" aria-hidden="true">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h1 class="update-installer-title">Updating Code app</h1>
+      <p class="update-installer-version" id="updateInstallerVersion">Preparing download…</p>
+      <div class="update-installer-progress" aria-hidden="true">
+        <div class="update-installer-progress-bar" id="updateInstallerProgressBar"></div>
+      </div>
+      <p class="update-installer-status" id="updateInstallerStatus">Starting update…</p>
+      <p class="update-installer-detail" id="updateInstallerDetail"></p>
+      <button type="button" class="update-installer-retry" id="updateInstallerRetry" hidden>Try again</button>
+    </div>
+  </div>
+
   <script src="js/physics.js"></script>
   <script src="js/data.js"></script>
   <script src="js/backend.js"></script>
