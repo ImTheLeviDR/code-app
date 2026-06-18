@@ -751,6 +751,9 @@ const dom = {
 
 let appStartupComplete = false;
 const pendingStartupToasts = [];
+let updateNotificationShown = false;
+let activeUpdateToast = null;
+let pendingUpdateStatus = null;
 
 function signalShellReady() {
   window.electronAPI?.signalShellReady?.();
@@ -784,6 +787,11 @@ async function finishStartup() {
 
   for (const message of pendingStartupToasts.splice(0)) {
     showToast(message);
+  }
+
+  if (pendingUpdateStatus) {
+    handleUpdateStatus(pendingUpdateStatus);
+    pendingUpdateStatus = null;
   }
 
   if (!state.selectedChatId) {
@@ -837,6 +845,7 @@ async function init() {
 
   bindEvents();
   setupWindowControls();
+  setupUpdateListener();
   animateWelcomeInputPlaceholders();
   window.addEventListener('beforeunload', saveChatState);
   window.addEventListener('pagehide', saveChatState);
@@ -5274,6 +5283,106 @@ function showToast(message) {
 
   toastInteractionCleanup = setupToastInteractions(toast);
   scheduleToastDismiss(toast);
+}
+
+function showActionToast({ message, actionLabel, onAction, persistent = true }) {
+  if (!appStartupComplete) return;
+
+  const existing = document.getElementById('toast');
+  if (existing) dismissToast(existing, false);
+
+  const toast = document.createElement('div');
+  toast.id = 'toast';
+  toast.className = 'toast toast-action';
+  toast.title = 'Drag out of the window to dismiss';
+
+  const messageEl = document.createElement('span');
+  messageEl.className = 'toast-action-message';
+  messageEl.textContent = message;
+
+  const actionBtn = document.createElement('button');
+  actionBtn.type = 'button';
+  actionBtn.className = 'toast-action-btn';
+  actionBtn.textContent = actionLabel;
+  actionBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onAction?.();
+  });
+
+  toast.append(messageEl, actionBtn);
+  document.body.appendChild(toast);
+  activeUpdateToast = toast;
+
+  const home = anchorToastAtHome(toast);
+  toast.style.left = `${home.left}px`;
+  toast.style.top = `${home.top}px`;
+
+  Physics.animate(toast, { opacity: 1, y: 0, scale: 1 }, {
+    from: { opacity: 0, y: -18, scale: 0.9 },
+    preset: 'bouncy',
+  });
+
+  toastInteractionCleanup = setupToastInteractions(toast);
+  if (!persistent) scheduleToastDismiss(toast);
+}
+
+function setupUpdateListener() {
+  window.electronAPI?.onUpdateStatus?.((status) => {
+    handleUpdateStatus(status);
+  });
+
+  window.electronAPI?.getUpdateStatus?.()
+    .then((status) => handleUpdateStatus(status, { silent: true }))
+    .catch(() => {});
+}
+
+function handleUpdateStatus(status, { silent = false } = {}) {
+  SettingsStore.refreshAboutUpdateStatus?.(status);
+
+  if (!appStartupComplete) {
+    if (!silent) pendingUpdateStatus = status;
+    return;
+  }
+
+  if (status.downloading) {
+    if (activeUpdateToast) {
+      activeUpdateToast.querySelector('.toast-action-message').textContent = `Downloading v${status.latestVersion}…`;
+      activeUpdateToast.querySelector('.toast-action-btn').disabled = true;
+    } else if (appStartupComplete) {
+      showToast(`Downloading v${status.latestVersion}…`);
+    }
+    return;
+  }
+
+  if (status.error && !silent && appStartupComplete) {
+    showToast(status.error);
+    return;
+  }
+
+  if (status.upToDate === false && !updateNotificationShown && !silent) {
+    updateNotificationShown = true;
+    showActionToast({
+      message: `Update available: v${status.latestVersion}`,
+      actionLabel: 'Install',
+      onAction: () => {
+        void installAppUpdate();
+      },
+    });
+    return;
+  }
+
+  if (status.upToDate && activeUpdateToast) {
+    dismissToast(activeUpdateToast, false);
+    activeUpdateToast = null;
+  }
+}
+
+async function installAppUpdate() {
+  try {
+    await window.electronAPI?.installUpdate?.();
+  } catch (err) {
+    showToast(err.message || 'Update failed');
+  }
 }
 
 /* ============================================================

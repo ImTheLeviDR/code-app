@@ -511,21 +511,24 @@ const SettingsStore = (() => {
     if (!isOpenRouterConnected()) return '';
     const enabled = isImageProcessingEnabled();
     return `
-      <div class="settings-image-processing">
-        <div class="settings-notif-toggle-row">
-          <div class="settings-notif-toggle-copy">
-            <div class="settings-label">Image processing</div>
-            <div class="settings-label-note">Describe attached images with ${escapeHtml(IMAGE_DESCRIPTION_MODEL)} so models without vision can see them as text</div>
+      <div class="prov-group">
+        <div class="prov-group-label">Options</div>
+        <div class="prov-group-panel">
+          <div class="prov-option-row">
+            <div class="prov-option-copy">
+              <span class="prov-row-name">Image processing</span>
+              <span class="prov-option-note">Describe attached images with ${escapeHtml(IMAGE_DESCRIPTION_MODEL)} for models without vision</span>
+            </div>
+            <label class="settings-toggle prov-row-toggle" title="${enabled ? 'Disable' : 'Enable'} image processing">
+              <input
+                type="checkbox"
+                class="settings-toggle-input"
+                data-image-processing-field="enabled"
+                ${enabled ? 'checked' : ''}
+              />
+              <span class="settings-toggle-track"></span>
+            </label>
           </div>
-          <label class="settings-toggle" title="${enabled ? 'Disable' : 'Enable'} image processing">
-            <input
-              type="checkbox"
-              class="settings-toggle-input"
-              data-image-processing-field="enabled"
-              ${enabled ? 'checked' : ''}
-            />
-            <span class="settings-toggle-track"></span>
-          </label>
         </div>
       </div>
     `;
@@ -668,44 +671,163 @@ const SettingsStore = (() => {
     `;
   }
 
-  function renderAboutContent() {
+  const APP_LOGO_SVG = `
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  `;
+
+  let cachedAppInfo = null;
+  let cachedUpdateStatus = null;
+
+  function formatUpdateStatusLabel(status) {
+    if (!status || status.checking) return 'Checking for updates…';
+    if (status.error) return 'Could not check for updates';
+    if (status.downloading) return `Downloading v${status.latestVersion}…`;
+    if (status.upToDate) return 'Up to date';
+    return `Update available · v${status.latestVersion}`;
+  }
+
+  function applyUpdateStatusToAbout(container, status) {
+    const el = container?.querySelector('[data-about-field="updateStatus"]');
+    if (!el) return;
+
+    el.textContent = formatUpdateStatusLabel(status);
+    el.classList.remove('is-current', 'is-available', 'is-error', 'is-checking');
+    if (!status || status.checking || status.downloading) {
+      el.classList.add('is-checking');
+    } else if (status.error) {
+      el.classList.add('is-error');
+    } else if (status.upToDate) {
+      el.classList.add('is-current');
+    } else {
+      el.classList.add('is-available');
+    }
+  }
+
+  function refreshAboutUpdateStatus(status) {
+    cachedUpdateStatus = status;
+    if (!pageEl || activeCategory !== 'about') return;
+    applyUpdateStatusToAbout(pageEl.querySelector('.settings-page-content'), status);
+  }
+
+  async function loadAppInfo() {
+    if (cachedAppInfo) return cachedAppInfo;
+
+    if (window.electronAPI?.getAppInfo) {
+      try {
+        cachedAppInfo = await window.electronAPI.getAppInfo();
+        return cachedAppInfo;
+      } catch (_) { /* fall through */ }
+    }
+
+    cachedAppInfo = {
+      name: 'Code app',
+      version: '1.0.0',
+      electron: '—',
+      chrome: '—',
+      node: '—',
+      platform: navigator.platform || 'unknown',
+      arch: 'unknown',
+      osLabel: navigator.platform || 'Unknown',
+      opencodeVersion: null,
+    };
+    return cachedAppInfo;
+  }
+
+  function buildDiagnosticsText(info) {
+    return [
+      `${info.name} ${info.version}`,
+      `Electron ${info.electron}`,
+      `Chrome ${info.chrome}`,
+      `Node ${info.node}`,
+      `OpenCode ${info.opencodeVersion || 'unknown'}`,
+      `${info.osLabel || 'Unknown'} (${info.arch})`,
+    ].join('\n');
+  }
+
+  function renderAboutSystemRow(label, field) {
     return `
-      <div class="settings-section">
-        <div class="settings-section-header">
-          <h2>About</h2>
-          <p>Information about this application.</p>
-        </div>
-        <div class="settings-about-card">
-          <div class="settings-about-logo">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#8b5cf6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <div class="settings-about-info">
-            <div class="settings-about-name">Code app</div>
-            <div class="settings-about-version">Version 0.1.0</div>
-          </div>
-        </div>
-        <div class="settings-about-rows">
-          <div class="settings-about-row">
-            <span class="settings-about-row-label">AI Agent</span>
-            <span class="settings-about-row-value">OpenCode - 75+ providers</span>
-          </div>
-          <div class="settings-about-row">
-            <span class="settings-about-row-label">Storage</span>
-            <span class="settings-about-row-value">Local - API keys stored on device</span>
-          </div>
-          <div class="settings-about-row">
-            <span class="settings-about-row-label">Runtime</span>
-            <span class="settings-about-row-value">Electron</span>
-          </div>
-          <div class="settings-about-row">
-            <span class="settings-about-row-label">Renderer</span>
-            <span class="settings-about-row-value">Vanilla JS, no framework</span>
-          </div>
-        </div>
+      <div class="settings-about-system-row">
+        <span class="settings-about-system-label">${escapeHtml(label)}</span>
+        <span class="settings-about-system-value" data-about-field="${field}">…</span>
       </div>
     `;
+  }
+
+  function renderAboutContent() {
+    return `
+      <div class="settings-section settings-about">
+        <div class="settings-about-hero">
+          <div class="settings-about-logo settings-about-logo--hero">
+            ${APP_LOGO_SVG}
+          </div>
+          <h2 class="settings-about-name">Code app</h2>
+          <div class="settings-about-version" data-about-field="versionHeadline">Version …</div>
+          <div class="settings-about-update-status is-checking" data-about-field="updateStatus">Checking for updates…</div>
+          <p class="settings-about-tagline">Local AI coding workspace powered by OpenCode</p>
+        </div>
+
+        <div class="settings-about-actions">
+          <button class="settings-about-btn settings-about-btn--secondary" type="button" data-action="copy-diagnostics">Copy system info</button>
+        </div>
+
+        <div class="prov-group">
+          <div class="prov-group-label">System</div>
+          <div class="prov-group-panel settings-about-system-panel">
+            ${renderAboutSystemRow('Version', 'version')}
+            ${renderAboutSystemRow('OpenCode engine', 'opencodeVersion')}
+            ${renderAboutSystemRow('Electron', 'electron')}
+            ${renderAboutSystemRow('Operating system', 'osLabel')}
+            ${renderAboutSystemRow('Architecture', 'arch')}
+          </div>
+        </div>
+
+        <p class="settings-about-copyright">© ${new Date().getFullYear()} Code app</p>
+      </div>
+    `;
+  }
+
+  async function initAboutSection(container) {
+    const info = await loadAppInfo();
+    const versionLabel = `Version ${info.version}`;
+
+    container.querySelector('[data-about-field="versionHeadline"]').textContent = versionLabel;
+    container.querySelector('[data-about-field="version"]').textContent = info.version;
+    container.querySelector('[data-about-field="opencodeVersion"]').textContent = info.opencodeVersion || 'Unknown';
+    container.querySelector('[data-about-field="electron"]').textContent = info.electron;
+    container.querySelector('[data-about-field="osLabel"]').textContent = info.osLabel || 'Unknown';
+    container.querySelector('[data-about-field="arch"]').textContent = info.arch;
+    container.dataset.aboutVersion = info.version;
+
+    if (cachedUpdateStatus) {
+      applyUpdateStatusToAbout(container, cachedUpdateStatus);
+      return;
+    }
+
+    if (window.electronAPI?.getUpdateStatus) {
+      try {
+        const status = await window.electronAPI.getUpdateStatus();
+        refreshAboutUpdateStatus(status);
+      } catch (_) {
+        applyUpdateStatusToAbout(container, { error: true });
+      }
+    } else {
+      applyUpdateStatusToAbout(container, { upToDate: true });
+    }
+  }
+
+  function bindAboutEvents(container) {
+    container.querySelector('[data-action="copy-diagnostics"]')?.addEventListener('click', async () => {
+      const info = await loadAppInfo();
+      const text = buildDiagnosticsText(info);
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('System info copied');
+      } catch (_) {
+        showToast('Could not copy to clipboard');
+      }
+    });
   }
 
   const CATEGORIES = [
@@ -805,6 +927,12 @@ const SettingsStore = (() => {
       }
       Physics.bindPressTargets(contentEl);
       Physics.bindToggleTargets(contentEl);
+    }
+
+    if (activeCategory === "about") {
+      bindAboutEvents(contentEl);
+      void initAboutSection(contentEl);
+      Physics.bindPressTargets(contentEl);
     }
 
     // Update nav active state
@@ -1084,6 +1212,7 @@ const SettingsStore = (() => {
     isImageProcessingEnabled,
     canProcessImages,
     getOpenRouterApiKey,
+    refreshAboutUpdateStatus,
   };
 })();
 

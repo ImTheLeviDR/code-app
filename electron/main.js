@@ -1,8 +1,11 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, shell } = require('electron');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const pkg = require('../package.json');
 const { registerBackendHandlers, shutdownBackend, ensureStarted } = require('./backend-bridge');
 const { registerChatPersistenceHandlers } = require('./chat-persistence');
+const { registerUpdateHandlers } = require('./updater');
 
 let mainWindow;
 let tray = null;
@@ -89,6 +92,27 @@ function hideMainWindow() {
   }
 }
 
+function getOsLabel() {
+  if (process.platform === 'win32') {
+    const version = process.getSystemVersion?.() || os.release();
+    const [major, , build] = version.split('.').map((part) => parseInt(part, 10) || 0);
+    const isWindows11 = major >= 11 || (major === 10 && build >= 22000);
+    return isWindows11 ? 'Windows 11' : 'Windows 10';
+  }
+
+  if (process.platform === 'darwin') {
+    const version = process.getSystemVersion?.() || os.release();
+    const major = version.split('.')[0];
+    return major ? `macOS ${major}` : 'macOS';
+  }
+
+  if (process.platform === 'linux') {
+    return 'Linux';
+  }
+
+  return os.type();
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -147,6 +171,10 @@ app.whenReady().then(async () => {
     getWorkspace: getWorkspacePath,
   });
 
+  registerUpdateHandlers(ipcMain, {
+    getMainWindow: () => mainWindow,
+  });
+
   try {
     await ensureStarted(() => mainWindow, getWorkspacePath());
   } catch (err) {
@@ -199,6 +227,24 @@ ipcMain.on('window-close', () => hideMainWindow());
 ipcMain.on('window-quit', () => {
   isQuitting = true;
   app.quit();
+});
+
+ipcMain.handle('app:get-info', () => ({
+  name: app.getName(),
+  version: app.getVersion(),
+  electron: process.versions.electron,
+  chrome: process.versions.chrome,
+  node: process.versions.node,
+  platform: process.platform,
+  arch: process.arch,
+  osLabel: getOsLabel(),
+  opencodeVersion: pkg.dependencies?.['opencode-ai']?.replace(/^\^/, '') || null,
+}));
+
+ipcMain.handle('app:open-external', async (_evt, url) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return false;
+  await shell.openExternal(url);
+  return true;
 });
 
 ipcMain.handle('dialog:open-folder', async () => {

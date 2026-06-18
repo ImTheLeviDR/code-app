@@ -18,6 +18,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app-save-state', listener);
     return () => ipcRenderer.removeListener('app-save-state', listener);
   },
+  getAppInfo: () => ipcRenderer.invoke('app:get-info'),
+  openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
+  getUpdateStatus: () => ipcRenderer.invoke('updates:get-status'),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
+  onUpdateStatus: (cb) => {
+    const listener = (_, status) => cb(status);
+    ipcRenderer.on('updates:status', listener);
+    return () => ipcRenderer.removeListener('updates:status', listener);
+  },
 });
 
 contextBridge.exposeInMainWorld('backendAPI', {

@@ -1224,12 +1224,6 @@ textarea {
   max-width: 100%;
 }
 
-.settings-image-processing {
-  margin-bottom: 18px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--border);
-}
-
 .input-footer {
   display: flex;
   align-items: center;
@@ -2448,6 +2442,44 @@ textarea {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
 }
 
+.toast.toast-action {
+  white-space: normal;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 360px;
+  padding: 10px 12px;
+}
+
+.toast-action-message {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.45;
+}
+
+.toast-action-btn {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(124, 45, 237, 0.35);
+  background: var(--accent-glow);
+  color: var(--accent-text);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.toast-action-btn:hover:not(:disabled) {
+  background: rgba(124, 45, 237, 0.16);
+  border-color: rgba(124, 45, 237, 0.5);
+}
+
+.toast-action-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ============================================================
    SETTINGS PAGE
    ============================================================ */
@@ -3119,75 +3151,149 @@ textarea {
    SETTINGS - ABOUT
    ============================================================ */
 
-.settings-about-card {
+.settings-about {
+  max-width: 520px;
+}
+
+.settings-about-hero {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  background: var(--bg-elevated);
-  margin-bottom: 20px;
-  max-width: 400px;
+  text-align: center;
+  padding: 8px 0 24px;
 }
 
 .settings-about-logo {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-lg);
-  background: var(--accent-glow);
-  border: 1px solid rgba(124, 45, 237, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 
-.settings-about-info {}
+.settings-about-logo--hero {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(124, 45, 237, 0.22), rgba(124, 45, 237, 0.08));
+  border: 1px solid rgba(124, 45, 237, 0.28);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+  margin-bottom: 16px;
+}
 
 .settings-about-name {
-  font-size: 15px;
+  font-size: 22px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 3px;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
 }
 
 .settings-about-version {
   font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono);
+  margin-bottom: 6px;
 }
 
-.settings-about-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  max-width: 400px;
+.settings-about-update-status {
+  font-size: 12px;
+  margin-bottom: 10px;
 }
 
-.settings-about-row {
+.settings-about-update-status.is-current {
+  color: var(--success);
+}
+
+.settings-about-update-status.is-available {
+  color: var(--accent-text);
+}
+
+.settings-about-update-status.is-error,
+.settings-about-update-status.is-checking {
+  color: var(--text-muted);
+}
+
+.settings-about-tagline {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-width: 320px;
+}
+
+.settings-about-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  font-size: 12.5px;
-  border-bottom: 1px solid var(--border);
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 28px;
 }
 
-.settings-about-row:last-child {
+.settings-about-btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(124, 45, 237, 0.35);
+  background: var(--accent-glow);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.settings-about-btn:hover {
+  background: rgba(124, 45, 237, 0.16);
+  border-color: rgba(124, 45, 237, 0.5);
+}
+
+.settings-about-btn--secondary {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+
+.settings-about-btn--secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-light);
+  color: var(--text-primary);
+}
+
+.settings-about-system-panel {
+  max-width: 520px;
+}
+
+.settings-about-system-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 38%) 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.settings-about-system-row:last-child {
   border-bottom: none;
 }
 
-.settings-about-row-label {
+.settings-about-system-label {
   color: var(--text-secondary);
   font-weight: 500;
 }
 
-.settings-about-row-value {
+.settings-about-system-value {
   color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  word-break: break-all;
+  text-align: right;
+}
+
+.settings-about-copyright {
+  margin-top: 24px;
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.85;
 }
 
 /* Notifications sound picker */
