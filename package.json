@@ -26,6 +26,7 @@
       "buildResources": "build"
     },
     "files": [
+      "build/icon.png",
       "electron/**/*",
       "renderer/**/*",
       "package.json"

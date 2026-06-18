@@ -21,11 +21,16 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.imthelevidr.codeapp');
 }
 
-// Notification area icon (32x32, shown under "Show hidden icons")
-const TRAY_ICON_PATH = path.join(__dirname, 'tray-icon.png');
+function getAppIconPath() {
+  const candidates = [
+    path.join(__dirname, '..', 'build', 'icon.png'),
+    path.join(__dirname, 'tray-icon.png'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
+}
 
-function createTrayIcon() {
-  const icon = nativeImage.createFromPath(TRAY_ICON_PATH);
+function createAppIcon(size) {
+  const icon = nativeImage.createFromPath(getAppIconPath());
   if (icon.isEmpty()) {
     return nativeImage.createFromDataURL(
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAKklEQVQ4y2NgGAWjYBSMglEwCkbBKEhPT1f7' +
@@ -33,7 +38,12 @@ function createTrayIcon() {
     );
   }
   if (process.platform === 'darwin') icon.setTemplateImage(true);
+  if (size) return icon.resize({ width: size, height: size, quality: 'best' });
   return icon;
+}
+
+function createTrayIcon() {
+  return createAppIcon(process.platform === 'win32' ? 32 : 22);
 }
 
 function showMainWindow() {
@@ -121,6 +131,7 @@ function createWindow() {
     minHeight: 600,
     frame: false,
     backgroundColor: '#0d0d0d',
+    icon: createAppIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
