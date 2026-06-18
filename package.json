@@ -1,7 +1,7 @@
 {
   "name": "code-app",
-  "version": "1.0.0",
-  "description": "Code app desktop",
+  "version": "1.0.1",
+  "description": "An AI powered coding app",
   "author": "ImTheLeviDR",
   "repository": {
     "type": "git",
