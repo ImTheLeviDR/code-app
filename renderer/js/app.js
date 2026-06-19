@@ -1976,11 +1976,14 @@ function restoreActiveRunUI(chatId) {
           questions: tc.args?.questions,
           requestId: null,
         });
+      } else if (isSubAgentTool(tc)) {
+        showSubAgentCardInline(tc, run.assistantMsgId);
       } else {
         showToolActivityLineInline(tc, run.assistantMsgId, run.chatId);
       }
     } else if (tc.status === 'complete') {
-      completeToolActivityLine(tc.id, run.assistantMsgId);
+      if (isSubAgentTool(tc)) completeSubAgentCard(tc, run.assistantMsgId);
+      else completeToolActivityLine(tc.id, run.assistantMsgId);
     }
   }
 
@@ -2370,8 +2373,204 @@ function isEditToolClickable(tc, running = false) {
   return !running && (tc.name === 'edit' || tc.name === 'edit_file') && tc.id;
 }
 
+function isSubAgentTool(tc) {
+  return tc?.name === 'task';
+}
+
+function isToolCallRunning(tc) {
+  return Boolean(tc && (tc.status || 'complete') !== 'complete');
+}
+
+function getSubAgentDescription(tc) {
+  const args = tc?.args || {};
+  return args.description || args.prompt || '';
+}
+
+function getSubAgentActivityText(tc, running = true) {
+  const activity = tc?.activity ? String(tc.activity).trim() : '';
+  const desc = getSubAgentDescription(tc);
+  if (activity && activity !== desc) return activity;
+  if (running) return 'Starting sub-agent…';
+  return activity || 'Completed';
+}
+
+function renderSubAgentCardHTML(tc, running = false) {
+  const desc = getSubAgentDescription(tc);
+  const title = desc ? truncateLabel(desc, 56) : 'Sub-agent';
+  const activity = getSubAgentActivityText(tc, running);
+  const stateClass = running ? ' is-running' : ' is-done';
+  const shimmerClass = running ? ' is-shimmer' : '';
+
+  return `
+    <div class="subagent-inline${stateClass}" id="subagent-${tc.id}" data-tool-id="${escapeHtml(tc.id)}">
+      <div class="subagent-inline-header">
+        ${running
+    ? '<span class="subagent-inline-spinner" aria-hidden="true"></span>'
+    : '<span class="subagent-inline-check" aria-hidden="true">✓</span>'}
+        <span class="subagent-inline-title">${escapeHtml(title)}</span>
+      </div>
+      <div class="subagent-inline-activity${shimmerClass}">
+        <span class="subagent-inline-activity-text">${escapeHtml(activity)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function applySubAgentCardState(card, tc, running) {
+  if (!card) return;
+
+  const desc = getSubAgentDescription(tc);
+  const title = desc ? truncateLabel(desc, 56) : 'Sub-agent';
+  const activity = getSubAgentActivityText(tc, running);
+
+  const titleEl = card.querySelector('.subagent-inline-title');
+  if (titleEl && titleEl.textContent !== title) titleEl.textContent = title;
+
+  const activityEl = card.querySelector('.subagent-inline-activity-text');
+  if (activityEl && activityEl.textContent !== activity) activityEl.textContent = activity;
+
+  card.querySelector('.subagent-inline-activity')?.classList.toggle('is-shimmer', running);
+  card.classList.toggle('is-running', running);
+  card.classList.toggle('is-done', !running);
+
+  const header = card.querySelector('.subagent-inline-header');
+  if (!header) return;
+
+  if (running) {
+    const check = header.querySelector('.subagent-inline-check');
+    if (check) {
+      const spinner = document.createElement('span');
+      spinner.className = 'subagent-inline-spinner';
+      spinner.setAttribute('aria-hidden', 'true');
+      check.replaceWith(spinner);
+    } else if (!header.querySelector('.subagent-inline-spinner')) {
+      const spinner = document.createElement('span');
+      spinner.className = 'subagent-inline-spinner';
+      spinner.setAttribute('aria-hidden', 'true');
+      header.insertBefore(spinner, header.firstChild);
+    }
+  } else {
+    const spinner = header.querySelector('.subagent-inline-spinner');
+    if (spinner) {
+      const check = document.createElement('span');
+      check.className = 'subagent-inline-check';
+      check.setAttribute('aria-hidden', 'true');
+      check.textContent = '✓';
+      spinner.replaceWith(check);
+    }
+  }
+}
+
+function mountSubAgentCard(meta, tc, running = true) {
+  if (!meta || !tc?.id) return null;
+
+  let card = document.getElementById(`subagent-${tc.id}`);
+  if (!card) {
+    meta.insertAdjacentHTML('beforeend', renderSubAgentCardHTML(tc, running));
+    card = document.getElementById(`subagent-${tc.id}`);
+    if (card) Physics.messageIn(card, { soft: true });
+  } else {
+    applySubAgentCardState(card, tc, running);
+  }
+  return card;
+}
+
+function getAssistantMeta(msgId) {
+  const msgEl = document.getElementById(`msg-${msgId}`);
+  if (!msgEl) return null;
+
+  const body = msgEl.querySelector('.assistant-body');
+  if (!body) return null;
+
+  let meta = getActiveToolMeta(body);
+  if (!meta) {
+    meta = document.createElement('div');
+    meta.className = 'assistant-meta';
+    const content = body.querySelector('.md-content');
+    if (content) {
+      const hasText = content.textContent.trim().length > 0;
+      if (hasText) {
+        body.insertBefore(meta, content.nextSibling);
+      } else {
+        body.insertBefore(meta, content);
+      }
+    } else {
+      body.prepend(meta);
+    }
+  }
+  return meta;
+}
+
+function showSubAgentCard(tc, msgId) {
+  const meta = getAssistantMeta(msgId);
+  if (!meta) return;
+  mountSubAgentCard(meta, tc, isToolCallRunning(tc));
+}
+
+function showSubAgentCardInline(tc, msgId) {
+  const msgEl = document.getElementById(`msg-${msgId}`);
+  if (!msgEl) return;
+
+  const body = msgEl.querySelector('.assistant-body');
+  if (!body) return;
+
+  const contentEl = document.getElementById(`content-${msgId}`);
+  const hasPriorText = Boolean(contentEl?.innerHTML.trim());
+
+  if (hasPriorText) {
+    const prior = document.createElement('div');
+    prior.className = 'md-content md-content-segment';
+    prior.innerHTML = contentEl.innerHTML;
+    body.insertBefore(prior, contentEl);
+    contentEl.innerHTML = '';
+    contentEl.classList.remove('is-streaming');
+
+    const meta = document.createElement('div');
+    meta.className = 'assistant-meta';
+    body.insertBefore(meta, contentEl);
+    mountSubAgentCard(meta, tc, isToolCallRunning(tc));
+  } else {
+    showSubAgentCard(tc, msgId);
+  }
+}
+
+function updateSubAgentCard(tc, msgId, chatId = null) {
+  const running = isToolCallRunning(tc);
+  const activity = getSubAgentActivityText(tc, running);
+  const card = document.getElementById(`subagent-${tc.id}`);
+
+  if (card) {
+    const currentActivity = card.querySelector('.subagent-inline-activity-text')?.textContent;
+    const stillRunning = card.classList.contains('is-running');
+    if (running && stillRunning && currentActivity === activity) {
+      if (chatId && !state.userHasScrolledUp && isCurrentChatVisible(chatId)) scrollToEnd(false);
+      return;
+    }
+    applySubAgentCardState(card, tc, running);
+  } else if (running) {
+    showSubAgentCardInline(tc, msgId);
+  }
+
+  if (chatId && !state.userHasScrolledUp && isCurrentChatVisible(chatId)) {
+    scrollToEnd(false);
+  }
+}
+
+function completeSubAgentCard(tc, msgId) {
+  if (!tc) return;
+  const card = document.getElementById(`subagent-${tc.id}`);
+  if (card) {
+    applySubAgentCardState(card, { ...tc, status: 'complete' }, false);
+    return;
+  }
+  const meta = getAssistantMeta(msgId);
+  if (meta) mountSubAgentCard(meta, { ...tc, status: 'complete' }, false);
+}
+
 function renderToolActivityLineHTML(tc, running = false) {
-  const runClass = running ? ' running' : ' done';
+  if (isSubAgentTool(tc)) {
+    return renderSubAgentCardHTML(tc, running);
+  }
   const idAttr = tc.id ? ` id="tc-${tc.id}"` : '';
 
   if (!running && isFileMutationTool(tc.name)) {
@@ -2383,18 +2582,35 @@ function renderToolActivityLineHTML(tc, running = false) {
   }
 
   const label = running ? getToolActivityLabel(tc) : (getToolActivityLabelDone(tc) || getToolActivityLabel(tc));
+  const runClass = running ? ' running' : ' done';
   return `<div class="tool-activity-line${runClass}"${idAttr}><span class="tool-activity-text">${escapeHtml(label)}</span></div>`;
 }
 
 function renderToolCallsHTML(toolCalls, msgId) {
   if (!toolCalls?.length) return '';
-  const lines = toolCalls.map((tc) => {
-    const normalized = (tc.status || 'complete') === 'complete'
-      ? tc
-      : { ...tc, status: 'complete' };
-    return renderToolActivityLineHTML(normalized, false);
-  });
-  return `<div class="tool-activity">${lines.join('')}</div>`;
+
+  let html = '';
+  let regularLines = [];
+
+  function flushRegular() {
+    if (!regularLines.length) return;
+    html += `<div class="tool-activity">${regularLines.join('')}</div>`;
+    regularLines = [];
+  }
+
+  for (const tc of toolCalls) {
+    if (isSubAgentTool(tc)) {
+      flushRegular();
+      html += renderSubAgentCardHTML(tc, isToolCallRunning(tc));
+    } else {
+      const normalized = (tc.status || 'complete') === 'complete'
+        ? tc
+        : { ...tc, status: 'complete' };
+      regularLines.push(renderToolActivityLineHTML(normalized, false));
+    }
+  }
+  flushRegular();
+  return html;
 }
 
 function getActiveToolMeta(body) {
@@ -2496,6 +2712,11 @@ function hideInlineThinking(msgId) {
 }
 
 function showToolActivityLine(tc, msgId) {
+  if (isSubAgentTool(tc)) {
+    updateSubAgentCard(tc, msgId);
+    return;
+  }
+
   const container = getToolActivityContainer(msgId);
   if (!container) return;
 
@@ -2522,6 +2743,11 @@ function showToolActivityLine(tc, msgId) {
 }
 
 function showToolActivityLineInline(tc, msgId, chatId) {
+  if (isSubAgentTool(tc)) {
+    updateSubAgentCard(tc, msgId);
+    return;
+  }
+
   const msgEl = document.getElementById(`msg-${msgId}`);
   if (!msgEl) return;
 
@@ -2573,6 +2799,11 @@ function showToolActivityLineInline(tc, msgId, chatId) {
 
 function completeToolActivityLine(tcId, msgId) {
   const tc = findToolCallById(tcId);
+  if (tc && isSubAgentTool(tc)) {
+    completeSubAgentCard(tc, msgId);
+    return;
+  }
+
   let line = document.getElementById(`tc-${tcId}`);
   if (!line) {
     const container = getToolActivityContainer(msgId);
@@ -2914,37 +3145,51 @@ function appendStreamDelta(run, delta) {
   if (!state.userHasScrolledUp && isCurrentChatVisible(run.chatId)) scrollToEnd(false);
 }
 
+function mergeToolCall(prev, next) {
+  if (!prev) return next;
+  if (!next) return prev;
+  return {
+    ...prev,
+    ...next,
+    args: { ...prev.args, ...next.args },
+  };
+}
+
 function upsertToolCall(run, toolCall) {
   if (!toolCall?.id) return;
 
   const msg = state.chatMessages[run.chatId]?.find((m) => m.id === run.assistantMsgId);
   if (!msg) return;
 
-  run.toolCalls.set(toolCall.id, toolCall);
+  const merged = mergeToolCall(run.toolCalls.get(toolCall.id), toolCall);
+  run.toolCalls.set(toolCall.id, merged);
   msg.toolCalls = Array.from(run.toolCalls.values());
 
   ensureAssistantMessageRendered(run);
 
-  if ((toolCall.status === 'pending' || toolCall.status === 'running') && msg.eventLog) {
+  if ((merged.status === 'pending' || merged.status === 'running') && msg.eventLog) {
     msg.eventLog.push({ type: 'tool', seq: msg.eventLog.length });
   }
 
-  if (toolCall.status === 'pending' || toolCall.status === 'running') {
+  if (merged.status === 'pending' || merged.status === 'running') {
     hideInlineThinking(run.assistantMsgId);
-    if (toolCall.name === 'question') {
+    if (merged.name === 'question') {
       syncInlineQuestion(run.assistantMsgId, {
         chatId: run.chatId,
         sessionId: run.sessionId,
-        toolCallId: toolCall.id,
-        questions: toolCall.args?.questions,
+        toolCallId: merged.id,
+        questions: merged.args?.questions,
         requestId: null,
       });
+    } else if (isSubAgentTool(merged)) {
+      updateSubAgentCard(merged, run.assistantMsgId, run.chatId);
     } else {
-      showToolActivityLineInline(toolCall, run.assistantMsgId, run.chatId);
+      showToolActivityLineInline(merged, run.assistantMsgId, run.chatId);
     }
-  } else if (toolCall.status === 'complete') {
-    if (toolCall.name === 'question') removeInlineQuestion(run.assistantMsgId);
-    completeToolActivityLine(toolCall.id, run.assistantMsgId);
+  } else if (merged.status === 'complete') {
+    if (merged.name === 'question') removeInlineQuestion(run.assistantMsgId);
+    if (isSubAgentTool(merged)) completeSubAgentCard(merged, run.assistantMsgId);
+    else completeToolActivityLine(merged.id, run.assistantMsgId);
     showInlineThinking(run);
   }
   scheduleSaveChatState();
@@ -2968,8 +3213,9 @@ function applyLateToolUpdate(chatId, toolCall, sessionId = null) {
 
   if (!msg.toolCalls) msg.toolCalls = [];
   const idx = msg.toolCalls.findIndex((t) => t.id === toolCall.id);
-  if (idx >= 0) msg.toolCalls[idx] = toolCall;
-  else msg.toolCalls.push(toolCall);
+  const merged = mergeToolCall(idx >= 0 ? msg.toolCalls[idx] : null, toolCall);
+  if (idx >= 0) msg.toolCalls[idx] = merged;
+  else msg.toolCalls.push(merged);
 
   if (!isEmptyAssistantMessage(msg) && isCurrentChatVisible(chatId)) {
     if (!document.getElementById(`msg-${msg.id}`)) {
@@ -2977,21 +3223,24 @@ function applyLateToolUpdate(chatId, toolCall, sessionId = null) {
     }
   }
 
-  if (toolCall.status === 'pending' || toolCall.status === 'running') {
-    if (toolCall.name === 'question') {
+  if (merged.status === 'pending' || merged.status === 'running') {
+    if (merged.name === 'question') {
       syncInlineQuestion(msg.id, {
         chatId,
         sessionId,
-        toolCallId: toolCall.id,
-        questions: toolCall.args?.questions,
+        toolCallId: merged.id,
+        questions: merged.args?.questions,
         requestId: null,
       });
+    } else if (isSubAgentTool(merged)) {
+      updateSubAgentCard(merged, msg.id, chatId);
     } else {
-      showToolActivityLine(toolCall, msg.id);
+      showToolActivityLine(merged, msg.id);
     }
-  } else if (toolCall.status === 'complete') {
-    if (toolCall.name === 'question') removeInlineQuestion(msg.id);
-    completeToolActivityLine(toolCall.id, msg.id);
+  } else if (merged.status === 'complete') {
+    if (merged.name === 'question') removeInlineQuestion(msg.id);
+    if (isSubAgentTool(merged)) completeSubAgentCard(merged, msg.id);
+    else completeToolActivityLine(merged.id, msg.id);
   }
   saveChatState();
 }

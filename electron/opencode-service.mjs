@@ -65,6 +65,8 @@ const activePolls = new Set();
 const messageRoles = new Map();
 const seenQuestionRequests = new Set();
 const seenPermissionRequests = new Set();
+/** @type {Map<string, { chatId: string, parentSessionId: string, toolCallId: string, args: object, workspace?: string }>} */
+const taskChildSessions = new Map();
 
 const DEFAULT_PERMISSION_CONFIG = {
   read: {
@@ -82,6 +84,216 @@ function sleep(ms) {
 function getLatestAssistantEntry(messages = []) {
   const assistants = messages.filter((entry) => entry.info?.role === 'assistant');
   return assistants[assistants.length - 1] || null;
+}
+
+function truncateActivity(text, max = 72) {
+  if (!text) return '';
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+function fileBasename(pathValue) {
+  if (!pathValue) return '';
+  return String(pathValue).split(/[/\\]/).pop();
+}
+
+function formatToolPartActivity(part) {
+  const input = part.state?.input || part.input || {};
+  const tool = part.tool;
+  const pathValue = input.path || input.file || input.filePath;
+  const base = fileBasename(pathValue);
+
+  switch (tool) {
+    case 'read':
+      return base ? `Reading ${base}…` : 'Reading file…';
+    case 'write':
+    case 'create':
+      return base ? `Writing ${base}…` : 'Writing file…';
+    case 'edit':
+    case 'apply_patch':
+      return base ? `Editing ${base}…` : 'Editing file…';
+    case 'bash':
+      return input.command
+        ? `Running ${truncateActivity(input.command, 48)}…`
+        : 'Running command…';
+    case 'grep': {
+      const pattern = input.pattern ?? input.regex ?? input.grep;
+      return pattern
+        ? `Searching for "${truncateActivity(pattern, 32)}"…`
+        : 'Searching file contents…';
+    }
+    case 'glob':
+    case 'search_files': {
+      const pattern = input.glob_pattern ?? input.pattern;
+      return pattern
+        ? `Finding files matching "${truncateActivity(pattern, 32)}"…`
+        : 'Finding files…';
+    }
+    case 'webfetch':
+      return input.url ? `Fetching ${truncateActivity(input.url, 40)}…` : 'Fetching URL…';
+    case 'websearch':
+      return input.search_term || input.query
+        ? `Searching the web for "${truncateActivity(input.search_term || input.query, 32)}"…`
+        : 'Searching the web…';
+    default:
+      return `${String(tool || 'tool').replace(/_/g, ' ')}…`;
+  }
+}
+
+function formatTextPartActivity(text) {
+  const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return null;
+  return truncateActivity(cleaned, 72);
+}
+
+/** @type {Map<string, string>} */
+const lastTaskActivity = new Map();
+
+function getTaskChildSessionId(meta = {}) {
+  return meta.sessionId || meta.sessionID || null;
+}
+
+function registerTaskChildSession(childSessionId, info) {
+  if (!childSessionId || !info?.toolCallId) return;
+  taskChildSessions.set(childSessionId, info);
+}
+
+function unregisterTaskChildSession(childSessionId) {
+  if (childSessionId) taskChildSessions.delete(childSessionId);
+}
+
+function clearTaskChildSessionsForParent(parentSessionId) {
+  if (!parentSessionId) return;
+  for (const [childId, info] of taskChildSessions.entries()) {
+    if (info.parentSessionId === parentSessionId) {
+      lastTaskActivity.delete(info.toolCallId);
+      taskChildSessions.delete(childId);
+    }
+  }
+}
+
+async function fetchChildSessionActivity(childSessionId, workspace) {
+  if (!client || !childSessionId) return null;
+  try {
+    const result = await client.session.messages({
+      path: { id: childSessionId },
+      ...directoryOptions(workspace),
+    });
+    const messages = result.data || [];
+
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const entry = messages[i];
+      if (entry.info?.role !== 'assistant') continue;
+      const lastTool = [...(entry.parts || [])].reverse().find((p) => p.type === 'tool');
+      if (lastTool) return formatToolPartActivity(lastTool);
+    }
+
+    for (const entry of messages) {
+      if (entry.info?.role !== 'assistant') continue;
+      const textPart = entry.parts?.find((p) => p.type === 'text' && p.text?.trim());
+      if (textPart) return formatTextPartActivity(textPart.text);
+    }
+  } catch {
+    /* child session may not exist yet */
+  }
+  return null;
+}
+
+function shouldEmitTaskActivity(toolCallId, activity, running) {
+  if (!toolCallId) return true;
+  if (!running) {
+    lastTaskActivity.delete(toolCallId);
+    return true;
+  }
+  const prev = lastTaskActivity.get(toolCallId);
+  if (prev === activity) return false;
+  if (activity) lastTaskActivity.set(toolCallId, activity);
+  return true;
+}
+
+function emitSubAgentActivityFromChildPart(part, delta = null) {
+  const link = taskChildSessions.get(part.sessionID);
+  if (!link || !emitEvent) return;
+
+  let activity = null;
+  if (part.type === 'tool') {
+    activity = formatToolPartActivity(part);
+  } else if (part.type === 'text') {
+    activity = formatTextPartActivity(part.text || delta);
+  }
+  if (!activity || !shouldEmitTaskActivity(link.toolCallId, activity, true)) return;
+
+  emitEvent({
+    type: 'tool-update',
+    chatId: link.chatId,
+    sessionId: link.parentSessionId,
+    toolCall: {
+      id: link.toolCallId,
+      name: 'task',
+      args: link.args,
+      status: 'running',
+      activity,
+    },
+  });
+}
+
+async function enrichTaskToolCall(part, toolCall, chatId, sessionId, workspace) {
+  if (toolCall.name !== 'task') return toolCall;
+
+  const state = part?.state || {};
+  const meta = state.metadata || part?.metadata || {};
+  const childSessionId = getTaskChildSessionId(meta);
+  const description = toolCall.args?.description || '';
+  const ws = workspace || chatWorkspaces.get(chatId);
+
+  if (toolCall.status === 'complete') {
+    if (childSessionId) unregisterTaskChildSession(childSessionId);
+    if (!toolCall.activity || toolCall.activity === description) {
+      const activity = childSessionId ? await fetchChildSessionActivity(childSessionId, ws) : null;
+      toolCall.activity = activity || 'Completed';
+    }
+    return toolCall;
+  }
+
+  if (childSessionId) {
+    registerTaskChildSession(childSessionId, {
+      chatId,
+      parentSessionId: sessionId,
+      toolCallId: toolCall.id,
+      args: toolCall.args,
+      workspace: ws,
+    });
+  }
+
+  const activity = childSessionId ? await fetchChildSessionActivity(childSessionId, ws) : null;
+  if (activity && activity !== description) {
+    toolCall.activity = activity;
+  } else {
+    toolCall.activity = 'Starting sub-agent…';
+  }
+  return toolCall;
+}
+
+async function emitToolUpdate(chatId, sessionId, messageId, part, toolCall) {
+  const ws = chatWorkspaces.get(chatId);
+  const enriched = part?.tool === 'task' || toolCall.name === 'task'
+    ? await enrichTaskToolCall(part, { ...toolCall }, chatId, sessionId, ws)
+    : toolCall;
+  if (!emitEvent) return;
+  const running = enriched.status === 'pending' || enriched.status === 'running';
+  if (
+    enriched.name === 'task'
+    && !shouldEmitTaskActivity(enriched.id, enriched.activity, running)
+  ) {
+    return;
+  }
+  emitEvent({
+    type: 'tool-update',
+    chatId,
+    sessionId,
+    messageId,
+    toolCall: enriched,
+  });
 }
 
 async function getAssistantMessageIds(sessionId, workspace) {
@@ -176,13 +388,7 @@ async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantI
             if (signature !== prev) {
               seenTools.set(part.id, signature);
               lastActivity = Date.now();
-              emitEvent({
-                type: 'tool-update',
-                chatId,
-                sessionId,
-                messageId: part.messageID,
-                toolCall: mapped,
-              });
+              void emitToolUpdate(chatId, sessionId, part.messageID, part, mapped);
               if (
                 part.tool === 'question'
                 && (mapped.status === 'pending' || mapped.status === 'running')
@@ -194,6 +400,10 @@ async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantI
                   toolCallId: part.id,
                 });
               }
+            } else if (part.tool === 'task' && (mapped.status === 'pending' || mapped.status === 'running')) {
+              // Re-fetch child session activity even when the task part itself hasn't changed.
+              lastActivity = Date.now();
+              void emitToolUpdate(chatId, sessionId, part.messageID, part, mapped);
             }
           }
         }
@@ -362,13 +572,8 @@ async function flushToolStates(chatId, sessionId) {
     const latest = getLatestAssistantEntry(msgRes.data || []);
     for (const part of latest?.parts || []) {
       if (part.type !== 'tool') continue;
-      emitEvent({
-        type: 'tool-update',
-        chatId,
-        sessionId,
-        messageId: part.messageID,
-        toolCall: mapToolToFrontend(part),
-      });
+      const toolCall = mapToolToFrontend(part);
+      await emitToolUpdate(chatId, sessionId, part.messageID, part, toolCall);
     }
   } catch (_) {
     /* session may have been removed */
@@ -377,6 +582,7 @@ async function flushToolStates(chatId, sessionId) {
 
 async function emitDone(chatId, sessionId) {
   await flushToolStates(chatId, sessionId);
+  clearTaskChildSessionsForParent(sessionId);
   if (emitEvent) emitEvent({ type: 'done', chatId, sessionId });
 }
 
@@ -545,6 +751,11 @@ function mapToolToFrontend(part) {
   if (diffSource?.oldText != null && diffSource?.newText != null) {
     if (args.old_string == null) args.old_string = diffSource.oldText;
     if (args.new_string == null) args.new_string = diffSource.newText;
+  }
+
+  if (part.tool === 'task') {
+    const childSessionId = getTaskChildSessionId(meta);
+    if (childSessionId) tc.childSessionId = childSessionId;
   }
 
   return tc;
@@ -781,6 +992,11 @@ function handleBusEvent(event) {
     case 'message.part.updated': {
       const part = event.properties?.part;
       if (!part?.sessionID) break;
+
+      if (taskChildSessions.has(part.sessionID)) {
+        emitSubAgentActivityFromChildPart(part, event.properties?.delta);
+      }
+
       const chatId = getChatIdForSession(part.sessionID);
       if (!chatId) break;
 
@@ -813,13 +1029,7 @@ function handleBusEvent(event) {
         messageRoles.set(part.messageID, 'assistant');
         const toolCall = mapToolToFrontend(part);
         const input = part.state?.input || {};
-        emitEvent({
-          type: 'tool-update',
-          chatId,
-          sessionId: part.sessionID,
-          messageId: part.messageID,
-          toolCall,
-        });
+        void emitToolUpdate(chatId, part.sessionID, part.messageID, part, toolCall);
         if (
           part.tool === 'question'
           && (toolCall.status === 'pending' || toolCall.status === 'running')
