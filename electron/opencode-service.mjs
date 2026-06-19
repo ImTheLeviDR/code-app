@@ -398,6 +398,78 @@ function countContentLines(content) {
   return lines.length;
 }
 
+function normalizeToolPath(value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  return value.replace(/\\/g, '/').trim();
+}
+
+function pathsMatch(target, candidate) {
+  const a = normalizeToolPath(target);
+  const b = normalizeToolPath(candidate);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.endsWith(`/${b}`) || b.endsWith(`/${a}`)) return true;
+  const aBase = a.split('/').pop();
+  const bBase = b.split('/').pop();
+  return aBase && aBase === bBase;
+}
+
+function findMatchingFileEntry(files, pathHint = '') {
+  if (!Array.isArray(files) || !files.length) return null;
+  if (pathHint) {
+    const match = files.find((file) =>
+      pathsMatch(pathHint, file.relativePath)
+      || pathsMatch(pathHint, file.filePath)
+      || pathsMatch(pathHint, file.movePath),
+    );
+    if (match) return match;
+  }
+  return files.length === 1 ? files[0] : null;
+}
+
+function extractDiffText(part, state, input, args) {
+  const meta = state.metadata || part.metadata || {};
+  const pathHint = args.path || meta.filepath || meta.file || '';
+  const fileEntry = findMatchingFileEntry(meta.files, pathHint);
+
+  if (fileEntry?.patch && typeof fileEntry.patch === 'string' && fileEntry.patch.trim()) {
+    return {
+      diffText: fileEntry.patch,
+      path: fileEntry.relativePath || fileEntry.filePath || pathHint,
+    };
+  }
+
+  const filediff = meta.filediff || meta.fileDiff;
+  const diffText = meta.diff || meta.patch || filediff?.patch || filediff?.diff;
+  if (typeof diffText === 'string' && diffText.trim()) {
+    return { diffText, path: pathHint || fileEntry?.relativePath || '' };
+  }
+
+  if (typeof input.patchText === 'string' && input.patchText.trim()) {
+    return { patchText: input.patchText, path: pathHint };
+  }
+
+  const oldText = input.oldString ?? input.old_string ?? input.oldContent;
+  const newText = input.newString ?? input.new_string ?? input.newContent;
+  if (oldText != null && newText != null) {
+    return {
+      path: pathHint,
+      oldText: String(oldText),
+      newText: String(newText),
+    };
+  }
+
+  if (part.tool === 'write' && input.content != null) {
+    return {
+      path: pathHint,
+      oldText: '',
+      newText: String(input.content),
+    };
+  }
+
+  return null;
+}
+
 function extractLineStats(part, state, input) {
   const meta = state.metadata || part.metadata || {};
   const filediff = meta.filediff || meta.fileDiff;
@@ -450,6 +522,9 @@ function mapToolToFrontend(part) {
   if (!args.path && meta.filepath) args.path = meta.filepath;
   if (!args.path && meta.file) args.path = meta.file;
 
+  const diffSource = extractDiffText(part, state, input, args);
+  if (diffSource?.path && !args.path) args.path = diffSource.path;
+
   const { additions, deletions } = extractLineStats(part, state, input);
 
   const tc = {
@@ -464,6 +539,13 @@ function mapToolToFrontend(part) {
     additions,
     deletions,
   };
+
+  if (diffSource?.diffText) tc.diffText = diffSource.diffText;
+  if (diffSource?.patchText && !args.patchText) args.patchText = diffSource.patchText;
+  if (diffSource?.oldText != null && diffSource?.newText != null) {
+    if (args.old_string == null) args.old_string = diffSource.oldText;
+    if (args.new_string == null) args.new_string = diffSource.newText;
+  }
 
   return tc;
 }

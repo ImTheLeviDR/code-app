@@ -3322,7 +3322,7 @@ function attachDiffsToMessages() {
         allTools.push(...msg.toolCalls);
       }
       for (const tc of allTools) {
-        if ((tc.name === 'edit' || tc.name === 'edit_file') && !tc.diff) {
+        if (tc.name === 'edit' || tc.name === 'edit_file') {
           tc.diff = getEditDiffForTool(tc);
         }
       }
@@ -3330,26 +3330,162 @@ function attachDiffsToMessages() {
   }
 }
 
+function pathsMatchForDiff(target, candidate) {
+  const a = String(target || '').replace(/\\/g, '/').trim();
+  const b = String(candidate || '').replace(/\\/g, '/').trim();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.endsWith(`/${b}`) || b.endsWith(`/${a}`)) return true;
+  const aBase = a.split('/').pop();
+  const bBase = b.split('/').pop();
+  return aBase && aBase === bBase;
+}
+
+function extractFileDiffFromUnified(diffText, targetPath) {
+  if (!diffText || typeof diffText !== 'string') return '';
+  const text = diffText.replace(/\r\n/g, '\n');
+  if (!targetPath) return text;
+
+  const sections = text.split(/(?=^diff |^--- )/m);
+  if (sections.length <= 1) return text;
+
+  const match = sections.find((section) =>
+    pathsMatchForDiff(targetPath, section)
+    || section.includes(targetPath)
+    || pathsMatchForDiff(targetPath, section.split('\n')[0]),
+  );
+  return match || text;
+}
+
+function parseUnifiedDiff(diffText, targetPath = '') {
+  const section = extractFileDiffFromUnified(diffText, targetPath);
+  const hunks = [];
+  let current = null;
+
+  for (const rawLine of section.replace(/\r\n/g, '\n').split('\n')) {
+    if (rawLine.startsWith('@@')) {
+      if (current?.lines?.length) hunks.push(current);
+      current = { header: rawLine, lines: [] };
+      continue;
+    }
+    if (rawLine.startsWith('+++') || rawLine.startsWith('---') || rawLine.startsWith('diff ')) continue;
+    if (!current) continue;
+
+    if (rawLine.startsWith('+')) {
+      current.lines.push({ type: 'add', text: rawLine.slice(1) });
+    } else if (rawLine.startsWith('-')) {
+      current.lines.push({ type: 'del', text: rawLine.slice(1) });
+    } else if (rawLine.startsWith(' ') || rawLine === '') {
+      current.lines.push({ type: 'ctx', text: rawLine.startsWith(' ') ? rawLine.slice(1) : rawLine });
+    }
+  }
+
+  if (current?.lines?.length) hunks.push(current);
+  return { path: targetPath, hunks };
+}
+
+function parseOpencodePatchForFile(patchText, targetPath = '') {
+  if (!patchText || typeof patchText !== 'string') return null;
+  const lines = patchText.replace(/\r\n/g, '\n').split('\n');
+  let filePath = targetPath;
+  let inTarget = false;
+  let currentHunk = null;
+  const hunks = [];
+
+  for (const line of lines) {
+    const header = line.match(/^\*\*\* (Update File|Add File|Delete File):\s*(.+)$/);
+    if (header) {
+      const candidate = header[2].trim();
+      inTarget = !targetPath
+        || pathsMatchForDiff(targetPath, candidate)
+        || targetPath.includes(candidate);
+      filePath = candidate;
+      if (header[1] === 'Delete File' && inTarget) {
+        return {
+          path: filePath,
+          hunks: [{ lines: [{ type: 'del', text: '(entire file deleted)' }] }],
+        };
+      }
+      currentHunk = null;
+      continue;
+    }
+    if (line.startsWith('*** ')) {
+      inTarget = false;
+      currentHunk = null;
+      continue;
+    }
+    if (!inTarget) continue;
+    if (line.startsWith('@@')) {
+      if (currentHunk?.lines?.length) hunks.push(currentHunk);
+      currentHunk = { header: line, lines: [] };
+      continue;
+    }
+    if (!currentHunk) currentHunk = { lines: [] };
+    if (line.startsWith('+')) currentHunk.lines.push({ type: 'add', text: line.slice(1) });
+    else if (line.startsWith('-')) currentHunk.lines.push({ type: 'del', text: line.slice(1) });
+    else if (line.startsWith(' ')) currentHunk.lines.push({ type: 'ctx', text: line.slice(1) });
+  }
+
+  if (currentHunk?.lines?.length) hunks.push(currentHunk);
+  if (!hunks.length) return null;
+  return { path: filePath || targetPath, hunks };
+}
+
+function buildLineDiff(path, oldText, newText) {
+  const lines = [];
+  for (const line of String(oldText).split(/\r?\n/)) {
+    lines.push({ type: 'del', text: line });
+  }
+  for (const line of String(newText).split(/\r?\n/)) {
+    lines.push({ type: 'add', text: line });
+  }
+  if (!lines.length) return { path, hunks: [] };
+  return { path, hunks: [{ lines }] };
+}
+
+function isPlaceholderEditDiff(diff) {
+  const lines = diff?.hunks?.[0]?.lines;
+  if (!lines?.length) return false;
+  const text = lines.map((line) => line.text).join('\n');
+  return text.includes('previous implementation') && text.includes('updated implementation');
+}
+
+function normalizeDiffPathHint(path) {
+  if (!path || typeof path !== 'string') return 'file';
+  const first = path.split(',')[0].trim();
+  return first || 'file';
+}
+
 function getEditDiffForTool(tc) {
-  if (tc.diff) return tc.diff;
-  const path = tc.args?.path || 'file';
+  const path = normalizeDiffPathHint(tc.args?.path || tc.diff?.path || 'file');
+
+  if (tc.diffText) {
+    const parsed = parseUnifiedDiff(tc.diffText, path);
+    if (parsed.hunks.length) return parsed;
+  }
+
+  const oldStr = tc.args?.old_string ?? tc.args?.oldString ?? tc.args?.oldContent;
+  const newStr = tc.args?.new_string ?? tc.args?.newString ?? tc.args?.newContent;
+  if (oldStr != null && newStr != null) {
+    return buildLineDiff(path, oldStr, newStr);
+  }
+
+  const patchText = tc.args?.patchText;
+  if (patchText) {
+    const parsed = parseOpencodePatchForFile(patchText, path);
+    if (parsed?.hunks?.length) return parsed;
+  }
+
+  if ((tc.name === 'write' || tc.name === 'write_file') && tc.args?.content != null) {
+    return buildLineDiff(path, '', tc.args.content);
+  }
+
+  if (tc.diff?.hunks?.length && !isPlaceholderEditDiff(tc.diff)) return tc.diff;
+
   const sample = EDIT_DIFF_SAMPLES?.[path];
   if (sample) return { path, ...sample };
 
-  const file = getFileBasename(path);
-  return {
-    path,
-    hunks: [
-      {
-        lines: [
-          { type: 'ctx', text: `// ${file}` },
-          { type: 'del', text: '  // previous implementation' },
-          { type: 'add', text: '  // updated implementation' },
-          { type: 'ctx', text: '  return result;' },
-        ],
-      },
-    ],
-  };
+  return { path, hunks: [] };
 }
 
 function openEditDiffFromLine(lineEl) {
@@ -3359,16 +3495,38 @@ function openEditDiffFromLine(lineEl) {
   if (tc?.name === 'edit' || tc?.name === 'edit_file') openEditDiffPopup(tc);
 }
 
+function forceCloseEditDiffPopup() {
+  const overlay = document.getElementById('diffOverlay');
+  if (!overlay) return;
+  document.removeEventListener('keydown', editDiffKeyHandler);
+  Physics.cancel(overlay);
+  const panel = overlay.querySelector('.diff-modal');
+  const codeEl = overlay.querySelector('.diff-code');
+  if (panel) Physics.cancel(panel);
+  if (codeEl) Physics.cancel(codeEl);
+  overlay.remove();
+}
+
 function openEditDiffPopup(tc) {
-  closeEditDiffPopup();
+  forceCloseEditDiffPopup();
 
   const diff = getEditDiffForTool(tc);
-  const file = getFileBasename(diff.path || tc.args?.path);
+  const fullPath = normalizeDiffPathHint(tc.args?.path || diff.path || '');
+  const file = getFileBasename(fullPath);
+  const showPath = fullPath && fullPath !== file;
   const { adds, dels } = getToolLineStats(tc);
-  let stats = '';
-  if (adds > 0) stats += `<span class="tool-edit-stat tool-edit-stat-add">+${adds}</span>`;
-  if (dels > 0) stats += `<span class="tool-edit-stat tool-edit-stat-del">-${dels}</span>`;
-  const statsHtml = stats ? `<span class="diff-header-stats">${stats}</span>` : '';
+
+  const badges = [];
+  if (adds > 0) badges.push(`<span class="diff-header-badge diff-header-badge-add">+${adds}</span>`);
+  if (dels > 0) badges.push(`<span class="diff-header-badge diff-header-badge-del">-${dels}</span>`);
+  const badgesHtml = badges.length
+    ? `<div class="diff-header-badges">${badges.join('')}</div>`
+    : '';
+
+  const changedLines = adds + dels;
+  const footerMeta = changedLines > 0
+    ? `${changedLines} line${changedLines === 1 ? '' : 's'} changed`
+    : '';
 
   const overlay = document.createElement('div');
   overlay.className = 'diff-overlay';
@@ -3376,14 +3534,33 @@ function openEditDiffPopup(tc) {
   overlay.innerHTML = `
     <div class="diff-modal" role="dialog" aria-modal="true" aria-label="Edit diff for ${escapeHtml(file)}">
       <div class="diff-header">
-        <div class="diff-header-main">
-          <span class="diff-header-label">Edited</span>
-          <span class="diff-header-file">${escapeHtml(file)}</span>
-          ${statsHtml}
+        <div class="diff-header-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>
+            <path d="M14 2v6h6M10 13h4M10 17h4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+          </svg>
         </div>
-        <button type="button" class="diff-close-btn" aria-label="Close">&times;</button>
+        <div class="diff-header-text">
+          <div class="diff-header-title-row">
+            <span class="diff-header-label">Edited</span>
+            <span class="diff-header-file">${escapeHtml(file)}</span>
+            ${badgesHtml}
+          </div>
+          ${showPath ? `<div class="diff-header-path">${escapeHtml(fullPath)}</div>` : ''}
+        </div>
+        <button type="button" class="diff-close-btn" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
       </div>
-      <div class="diff-body">${renderDiffHTML(diff)}</div>
+      <div class="diff-body">
+        <div class="diff-code">${renderDiffHTML(diff)}</div>
+      </div>
+      <div class="diff-footer">
+        <span class="diff-footer-hint"><kbd>Esc</kbd> to close</span>
+        ${footerMeta ? `<span class="diff-footer-meta">${escapeHtml(footerMeta)}</span>` : ''}
+      </div>
     </div>
   `;
 
@@ -3395,7 +3572,8 @@ function openEditDiffPopup(tc) {
   document.body.appendChild(overlay);
 
   const panel = overlay.querySelector('.diff-modal');
-  Physics.modalIn(overlay, panel);
+  const codeEl = overlay.querySelector('.diff-code');
+  Physics.diffModalIn(overlay, panel, codeEl);
   document.addEventListener('keydown', editDiffKeyHandler);
   overlay.querySelector('.diff-close-btn').focus();
 }
@@ -3403,12 +3581,25 @@ function openEditDiffPopup(tc) {
 function renderDiffHTML(diff) {
   const hunks = diff?.hunks || [];
   if (!hunks.length) {
-    return '<div class="diff-empty">No diff available</div>';
+    return `
+      <div class="diff-empty">
+        <div class="diff-empty-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="1.75"/>
+            <path d="M10 13h4M10 17h4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <span>No diff available</span>
+      </div>
+    `;
   }
 
   return hunks.map((hunk) => {
+    const headerHtml = hunk.header
+      ? `<div class="diff-hunk-header">${escapeHtml(hunk.header)}</div>`
+      : '';
     const lines = (hunk.lines || []).map((line) => {
-      const prefix = line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
+      const prefix = line.type === 'add' ? '+ ' : line.type === 'del' ? '- ' : '  ';
       return `
         <div class="diff-line diff-line-${line.type}">
           <span class="diff-line-prefix">${prefix}</span>
@@ -3416,7 +3607,7 @@ function renderDiffHTML(diff) {
         </div>
       `;
     }).join('');
-    return `<div class="diff-hunk">${lines}</div>`;
+    return `<div class="diff-hunk">${headerHtml}<div class="diff-hunk-lines">${lines}</div></div>`;
   }).join('');
 }
 
@@ -3424,7 +3615,8 @@ function closeEditDiffPopup(overlay = document.getElementById('diffOverlay')) {
   if (!overlay) return;
   document.removeEventListener('keydown', editDiffKeyHandler);
   const panel = overlay.querySelector('.diff-modal');
-  Physics.modalOut(overlay, panel, () => overlay.remove());
+  const codeEl = overlay.querySelector('.diff-code');
+  Physics.diffModalOut(overlay, panel, codeEl, () => overlay.remove());
 }
 
 function editDiffKeyHandler(e) {

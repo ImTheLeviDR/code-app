@@ -223,6 +223,44 @@ const Physics = (() => {
     });
   }
 
+  function diffModalIn(overlay, panel, content) {
+    animate(overlay, { opacity: 1 }, { from: { opacity: 0 }, preset: 'soft' });
+    animate(panel, { opacity: 1, y: 0, scale: 1 }, {
+      from: { opacity: 0, y: 22, scale: 0.94 },
+      preset: 'snappy',
+    });
+
+    if (!content) return;
+
+    animate(content, { opacity: 1, y: 0 }, {
+      from: { opacity: 0, y: 14 },
+      preset: 'gentle',
+    });
+
+    const hunks = content.querySelectorAll('.diff-hunk');
+    if (!hunks.length) return;
+
+    hunks.forEach((hunk, i) => {
+      setTimeout(() => {
+        animate(hunk, { opacity: 1, y: 0, scale: 1 }, {
+          from: { opacity: 0, y: 10, scale: 0.98 },
+          preset: 'gentle',
+        });
+      }, 90 + i * 45);
+    });
+  }
+
+  function diffModalOut(overlay, panel, content, onComplete) {
+    if (content) {
+      animate(content, { opacity: 0, y: 8, scale: 0.98 }, { preset: 'stiff' });
+    }
+    animate(panel, { opacity: 0, y: 14, scale: 0.96 }, { preset: 'stiff' });
+    animate(overlay, { opacity: 0 }, {
+      preset: 'stiff',
+      onComplete,
+    });
+  }
+
   function messageIn(el, options = {}) {
     if (options.soft) {
       animate(el, { opacity: 1 }, { from: { opacity: 0 }, preset: 'gentle' });
@@ -500,6 +538,8 @@ const Physics = (() => {
     stagger,
     modalIn,
     modalOut,
+    diffModalIn,
+    diffModalOut,
     messageIn,
     lineIn,
     lineOut,
