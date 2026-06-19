@@ -797,6 +797,14 @@ const SettingsStore = (() => {
         </div>
 
         <p class="settings-about-copyright">© ${new Date().getFullYear()} Code app</p>
+
+        <div class="prov-group settings-reset-group">
+          <div class="prov-group-label">Reset</div>
+          <div class="prov-group-panel settings-reset-panel">
+            <p class="settings-reset-desc">Remove all projects, chats, and settings. This cannot be undone.</p>
+            <button class="settings-about-btn settings-about-btn--danger" type="button" data-action="reset-app">Reset app</button>
+          </div>
+        </div>
       </div>
     `;
   }
@@ -848,6 +856,16 @@ const SettingsStore = (() => {
       } catch (_) {
         showToast('Could not copy to clipboard');
       }
+    });
+
+    container.querySelector('[data-action="reset-app"]')?.addEventListener('click', () => {
+      showActionToast({
+        message: 'Erase all projects, chats, and settings?',
+        actionLabel: 'Reset',
+        onAction: () => {
+          if (typeof window.resetApp === 'function') window.resetApp();
+        },
+      });
     });
   }
 

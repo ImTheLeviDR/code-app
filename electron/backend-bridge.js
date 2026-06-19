@@ -148,6 +148,12 @@ function registerBackendHandlers({ getMainWindow, getWorkspace }) {
     if (result?.error) return null;
     return result;
   });
+
+  ipcMain.handle('backend:reply-permission', async (_evt, payload) => {
+    const result = await safeCall(getMainWindow, getWorkspace, (mod) => mod.replyPermission(payload));
+    if (result?.error) return result;
+    return result;
+  });
 }
 
 async function shutdownBackend() {

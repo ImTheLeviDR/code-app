@@ -28,6 +28,17 @@ function saveChatState(data) {
   fs.renameSync(tmpPath, filePath);
 }
 
+function deleteChatState() {
+  const filePath = getChatStatePath();
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return true;
+  } catch (err) {
+    console.error('Failed to delete chat state file:', err);
+    return false;
+  }
+}
+
 function registerChatPersistenceHandlers(ipcMain) {
   ipcMain.on('chats:save-sync', (event, data) => {
     try {
@@ -47,10 +58,19 @@ function registerChatPersistenceHandlers(ipcMain) {
       event.returnValue = null;
     }
   });
+  ipcMain.on('chats:delete-sync', (event) => {
+    try {
+      event.returnValue = deleteChatState();
+    } catch (err) {
+      console.error('Failed to delete chat state file:', err);
+      event.returnValue = false;
+    }
+  });
 }
 
 module.exports = {
   loadChatState,
   saveChatState,
+  deleteChatState,
   registerChatPersistenceHandlers,
 };

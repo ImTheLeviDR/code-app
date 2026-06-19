@@ -64,6 +64,16 @@ const activeRuns = new Map();
 const activePolls = new Set();
 const messageRoles = new Map();
 const seenQuestionRequests = new Set();
+const seenPermissionRequests = new Set();
+
+const DEFAULT_PERMISSION_CONFIG = {
+  read: {
+    '*': 'allow',
+    '*.env': 'ask',
+    '*.env.*': 'ask',
+    '*.env.example': 'allow',
+  },
+};
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -305,6 +315,7 @@ async function spawnServer(port, options) {
     timeout: options.timeout || 30000,
     config: {
       model: options.defaultModel || 'opencode/big-pickle',
+      permission: DEFAULT_PERMISSION_CONFIG,
     },
   });
 
@@ -490,20 +501,62 @@ function getChatIdForSession(sessionId) {
   return sessionChats.get(sessionId) || null;
 }
 
-async function approvePermission(permission) {
-  if (!client || !permission?.id || !permission?.sessionID) return;
-  if (permission.type === 'question') return;
+async function replyToPermission(sessionId, permissionId, response) {
+  if (!client || !sessionId || !permissionId) return { ok: false };
   try {
-    await client.postSessionIdPermissionsPermissionId({
+    const result = await client.postSessionIdPermissionsPermissionId({
       path: {
-        id: permission.sessionID,
-        permissionID: permission.id,
+        id: sessionId,
+        permissionID: permissionId,
       },
-      body: { response: 'allow', remember: true },
+      body: { response },
+      ...directoryOptions(),
     });
-  } catch (_) {
-    /* permission may have expired */
+    if (result.error) return { ok: false, error: result.error };
+    seenPermissionRequests.add(permissionId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Permission reply failed' };
   }
+}
+
+function isEnvFilePermission(permission) {
+  const check = (value) => {
+    if (typeof value !== 'string' || !value) return false;
+    return /\.env(\.|$)/i.test(value) && !/\.env\.example$/i.test(value);
+  };
+  const patterns = [].concat(permission?.pattern || permission?.patterns || []);
+  if (patterns.some(check)) return true;
+  const filePath = permission?.metadata?.path || permission?.metadata?.file;
+  return check(String(filePath || ''));
+}
+
+function needsUserConfirmation(permission) {
+  if (!permission || permission.type === 'question') return false;
+  if (isEnvFilePermission(permission)) return true;
+  return ['bash', 'external_directory', 'doom_loop', 'webfetch', 'websearch'].includes(permission.type);
+}
+
+async function handlePermissionUpdated(permission) {
+  if (!permission?.id || !permission?.sessionID) return;
+  if (permission.type === 'question') return;
+  if (seenPermissionRequests.has(permission.id)) return;
+
+  if (needsUserConfirmation(permission)) {
+    seenPermissionRequests.add(permission.id);
+    const chatId = getChatIdForSession(permission.sessionID);
+    if (!chatId || !emitEvent) return;
+    emitEvent({
+      type: 'permission-request',
+      chatId,
+      sessionId: permission.sessionID,
+      permissionId: permission.id,
+      permission,
+    });
+    return;
+  }
+
+  await replyToPermission(permission.sessionID, permission.id, 'always');
 }
 
 function questionQueryString() {
@@ -750,8 +803,15 @@ function handleBusEvent(event) {
       break;
     }
 
-    case 'permission.updated': {
-      approvePermission(event.properties);
+    case 'permission.updated':
+    case 'permission.asked': {
+      void handlePermissionUpdated(event.properties);
+      break;
+    }
+
+    case 'permission.replied': {
+      const permissionId = event.properties?.permissionID || event.properties?.requestID;
+      if (permissionId) seenPermissionRequests.add(permissionId);
       break;
     }
 
@@ -1237,4 +1297,9 @@ export async function resolveQuestionRequestId(sessionId) {
     await sleep(250);
   }
   return null;
+}
+
+export async function replyPermission({ sessionId, permissionId, response }) {
+  if (!client) throw new Error('OpenCode server is not running');
+  return replyToPermission(sessionId, permissionId, response);
 }

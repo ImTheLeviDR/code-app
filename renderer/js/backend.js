@@ -106,6 +106,12 @@ const Backend = (() => {
     return window.backendAPI.resolveQuestionRequestId(sessionId);
   }
 
+  async function replyPermission(payload) {
+    if (!isAvailable()) throw new Error('Backend unavailable');
+    await ensureReady();
+    return window.backendAPI.replyPermission(payload);
+  }
+
   function onEvent(handler) {
     eventHandlers.add(handler);
     if (!eventUnsubscribe && isAvailable()) {
@@ -132,6 +138,7 @@ const Backend = (() => {
     rejectQuestion,
     listQuestions,
     resolveQuestionRequestId,
+    replyPermission,
     onEvent,
   };
 })();

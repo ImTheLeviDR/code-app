@@ -226,7 +226,10 @@ function sanitizeChatMessagesForPersistence(chatMessages) {
 }
 
 let saveChatStateTimer = null;
+let suppressChatPersistence = false;
+
 function scheduleSaveChatState() {
+  if (suppressChatPersistence) return;
   clearTimeout(saveChatStateTimer);
   saveChatStateTimer = setTimeout(saveChatState, 400);
 }
@@ -249,6 +252,7 @@ function buildChatStatePayload() {
 }
 
 function saveChatState() {
+  if (suppressChatPersistence) return;
   clearTimeout(saveChatStateTimer);
   saveChatStateTimer = null;
   try {
@@ -598,6 +602,15 @@ function renderUserMessageHTML(msg) {
       <div class="user-message-stack">
         ${imagesHtml}
         ${textHtml}
+        <div class="message-actions">
+          <button class="msg-action-btn" onclick="copyMessageContent(this)">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+              <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Copy
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -704,6 +717,7 @@ const chatsNeedingContextSync = new Set();
 const abortedChatIds = new Set();
 const aiRuns = new Map();
 const questionRequests = new Map();
+const permissionRequests = new Map();
 
 function isChatGenerating(chatId) {
   return Boolean(chatId && aiRuns.has(chatId));
@@ -1731,10 +1745,7 @@ function syncWelcomeProjectDropdown() {
     </button>
   `).join('');
 
-  menu.innerHTML = `
-    <div class="project-picker-list">
-      ${optionsHtml || '<div class="project-picker-empty">No projects yet</div>'}
-    </div>
+  const openFolderBtn = `
     <button class="project-picker-open-folder" type="button" data-action="open-folder">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1742,6 +1753,10 @@ function syncWelcomeProjectDropdown() {
       Open folder…
     </button>
   `;
+
+  menu.innerHTML = optionsHtml
+    ? `<div class="project-picker-list">${optionsHtml}</div>${openFolderBtn}`
+    : openFolderBtn;
 
   menu.querySelectorAll('.project-picker-option').forEach((opt) => {
     opt.addEventListener('click', (e) => {
@@ -1801,21 +1816,6 @@ function initWelcomeProjectDropdown() {
 
 function updateProjectSelection() {
   updateNavActive();
-
-  const project = getSelectedProject();
-  const promptEl = dom.welcomeTitle?.querySelector('.welcome-title-prompt');
-  const emptyEl = dom.welcomeTitle?.querySelector('.welcome-title-empty');
-
-  if (project) {
-    dom.welcomeTitle?.classList.remove('no-project');
-    promptEl?.removeAttribute('hidden');
-    emptyEl?.setAttribute('hidden', '');
-  } else {
-    dom.welcomeTitle?.classList.add('no-project');
-    promptEl?.setAttribute('hidden', '');
-    emptyEl?.removeAttribute('hidden');
-  }
-
   syncWelcomeProjectDropdown();
 }
 
@@ -3177,6 +3177,12 @@ function handleBackendEvent(event) {
     return;
   }
 
+  if (event.type === 'permission-request') {
+    const msgId = resolvePermissionMsgId(event);
+    if (msgId) syncInlinePermission(msgId, event);
+    return;
+  }
+
   if (event.type === 'tool-update') {
     if (!aiRuns.has(event.chatId)) {
       applyLateToolUpdate(event.chatId, event.toolCall, event.sessionId);
@@ -4211,7 +4217,7 @@ function copyCode(btn) {
 
 function copyMessageContent(btn) {
   const msgWrapper = btn.closest('.message-wrapper');
-  const content = msgWrapper.querySelector('.md-content');
+  const content = msgWrapper.querySelector('.md-content, .user-bubble');
   if (content) {
     navigator.clipboard.writeText(content.innerText).then(() => {
       btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Copied!`;
@@ -4464,6 +4470,13 @@ function bindEvents() {
     if (skipBtn) {
       const card = skipBtn.closest('.question-inline');
       if (card) void dismissInlineQuestion(card.dataset.msgId);
+      return;
+    }
+
+    const permBtn = e.target.closest('[data-permission-action]');
+    if (permBtn) {
+      const card = permBtn.closest('.permission-inline');
+      if (card) void submitInlinePermission(card.dataset.msgId, permBtn.dataset.permissionAction);
     }
   });
 
@@ -4613,6 +4626,119 @@ function resolveQuestionMsgId(event) {
 
   const latest = [...msgs].reverse().find((m) => m.role === 'assistant');
   return latest?.id || null;
+}
+
+function resolvePermissionMsgId(event) {
+  return resolveQuestionMsgId(event);
+}
+
+function formatPermissionLabel(permission) {
+  const title = permission?.title || permission?.type || 'Permission required';
+  const filePath = permission?.metadata?.path || permission?.metadata?.file;
+  if (filePath) return `${title}: ${filePath}`;
+  const patterns = [].concat(permission?.pattern || permission?.patterns || []);
+  if (patterns.length) return `${title}: ${patterns.join(', ')}`;
+  return title;
+}
+
+function syncInlinePermission(msgId, event) {
+  const permission = event.permission;
+  if (!permission && !event.permissionId) return;
+
+  let req = permissionRequests.get(msgId);
+  if (!req) {
+    req = {
+      permissionId: event.permissionId || permission?.id,
+      chatId: event.chatId,
+      sessionId: event.sessionId || permission?.sessionID || null,
+      label: formatPermissionLabel(permission),
+      submitting: false,
+    };
+    permissionRequests.set(msgId, req);
+  } else {
+    if (event.permissionId) req.permissionId = event.permissionId;
+    if (event.sessionId) req.sessionId = event.sessionId;
+    if (permission) req.label = formatPermissionLabel(permission);
+  }
+
+  mountInlinePermissionUI(msgId);
+
+  if (!state.userHasScrolledUp && isCurrentChatVisible(event.chatId)) scrollToEnd(false);
+}
+
+function getInlinePermissionHost(msgId) {
+  const body = document.querySelector(`#msg-${msgId} .assistant-body`);
+  if (!body) return null;
+
+  let card = body.querySelector('.permission-inline');
+  if (!card) {
+    card = document.createElement('div');
+    card.className = 'permission-inline';
+    card.dataset.msgId = msgId;
+    const content = body.querySelector('.md-content');
+    if (content) body.insertBefore(card, content);
+    else body.appendChild(card);
+  }
+  return card;
+}
+
+function mountInlinePermissionUI(msgId) {
+  const req = permissionRequests.get(msgId);
+  if (!req) return;
+
+  const card = getInlinePermissionHost(msgId);
+  if (!card) return;
+
+  card.innerHTML = `
+    <p class="permission-inline-prompt">${escapeHtml(req.label)}</p>
+    <div class="permission-inline-footer">
+      <button type="button" class="permission-action-btn" data-permission-action="reject">Deny</button>
+      <button type="button" class="permission-action-btn permission-action-btn--primary" data-permission-action="once">Allow once</button>
+      <button type="button" class="permission-action-btn permission-action-btn--primary" data-permission-action="always">Always allow</button>
+    </div>
+  `;
+  Physics.messageIn(card, { soft: true });
+}
+
+async function submitInlinePermission(msgId, response) {
+  const req = permissionRequests.get(msgId);
+  if (!req || req.submitting) return;
+  if (!req.sessionId || !req.permissionId) {
+    showToast('Permission request expired');
+    return;
+  }
+
+  req.submitting = true;
+  const card = document.querySelector(`#msg-${msgId} .permission-inline`);
+  card?.querySelectorAll('[data-permission-action]').forEach((btn) => {
+    btn.disabled = true;
+  });
+
+  try {
+    const result = await Backend.replyPermission({
+      sessionId: req.sessionId,
+      permissionId: req.permissionId,
+      response,
+    });
+    if (!result?.ok) {
+      showToast('Could not respond to permission request');
+      req.submitting = false;
+      card?.querySelectorAll('[data-permission-action]').forEach((btn) => {
+        btn.disabled = false;
+      });
+      return;
+    }
+  } catch (_) {
+    showToast('Could not respond to permission request');
+    req.submitting = false;
+    card?.querySelectorAll('[data-permission-action]').forEach((btn) => {
+      btn.disabled = false;
+    });
+    return;
+  }
+
+  permissionRequests.delete(msgId);
+  card?.remove();
 }
 
 function syncInlineQuestion(msgId, event) {
@@ -5522,6 +5648,56 @@ async function installAppUpdate() {
 }
 
 window.installAppUpdate = installAppUpdate;
+
+function buildEmptyChatStatePayload() {
+  return {
+    projects: [],
+    chatMessages: {},
+    nextMsgId: 1000,
+    selectedProjectId: null,
+    selectedChatId: null,
+    expandedChatLists: [],
+  };
+}
+
+function resetApp() {
+  suppressChatPersistence = true;
+  clearTimeout(saveChatStateTimer);
+  saveChatStateTimer = null;
+
+  try {
+    localStorage.removeItem(CHAT_STORAGE_KEY);
+    localStorage.removeItem(SELECTED_MODEL_KEY);
+    localStorage.removeItem('code-app-settings');
+
+    const emptyPayload = buildEmptyChatStatePayload();
+    if (window.electronAPI?.saveChatsSync) {
+      const saved = window.electronAPI.saveChatsSync(emptyPayload);
+      if (!saved) {
+        showToast('Could not reset app');
+        suppressChatPersistence = false;
+        return;
+      }
+    } else if (window.electronAPI?.deleteChatsSync && !window.electronAPI.deleteChatsSync()) {
+      showToast('Could not reset app');
+      suppressChatPersistence = false;
+      return;
+    }
+
+    if (window.electronAPI?.deleteChatsSync) {
+      window.electronAPI.deleteChatsSync();
+    }
+  } catch (err) {
+    console.error('Failed to reset app:', err);
+    showToast('Could not reset app');
+    suppressChatPersistence = false;
+    return;
+  }
+
+  location.reload();
+}
+
+window.resetApp = resetApp;
 
 /* ============================================================
    BOOTSTRAP

@@ -71,6 +71,7 @@ body.physics-motion .search-modal,
 body.physics-motion .diff-overlay,
 body.physics-motion .diff-modal,
 body.physics-motion .question-inline,
+body.physics-motion .permission-inline,
 body.physics-motion .settings-screen,
 body.physics-motion .tool-activity-line,
 body.physics-motion .toast {
@@ -3367,6 +3368,33 @@ textarea {
   color: var(--text-primary);
 }
 
+.settings-about-btn--danger {
+  color: var(--error);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: var(--error-dim);
+}
+
+.settings-about-btn--danger:hover {
+  color: #fff;
+  background: var(--error);
+  border-color: var(--error);
+}
+
+.settings-reset-group {
+  margin-top: 28px;
+}
+
+.settings-reset-panel {
+  padding: 14px 16px;
+}
+
+.settings-reset-desc {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 .settings-about-system-panel {
   max-width: 520px;
 }
@@ -3576,6 +3604,66 @@ textarea {
 
 .settings-sound-option.active .settings-sound-preview-btn {
   border-color: rgba(124, 45, 237, 0.25);
+}
+
+/* ============================================================
+   PERMISSION PROMPT (inline in message)
+   ============================================================ */
+
+.permission-inline {
+  width: min(100%, 420px);
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-left: 2px solid #f59e0b;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+}
+
+.permission-inline-prompt {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.permission-inline-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.permission-action-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.permission-action-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.permission-action-btn--primary {
+  color: var(--text-primary);
+  border-color: rgba(124, 45, 237, 0.35);
+}
+
+.permission-action-btn--primary:hover:not(:disabled) {
+  background: rgba(124, 45, 237, 0.12);
+  border-color: rgba(124, 45, 237, 0.5);
+}
+
+.permission-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* ============================================================

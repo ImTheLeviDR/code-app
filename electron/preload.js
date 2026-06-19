@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   signalAppReady: () => ipcRenderer.send('app-ready'),
   saveChatsSync: (data) => ipcRenderer.sendSync('chats:save-sync', data),
   loadChatsSync: () => ipcRenderer.sendSync('chats:load-sync'),
+  deleteChatsSync: () => ipcRenderer.sendSync('chats:delete-sync'),
   onAppSaveState: (cb) => {
     const listener = () => cb();
     ipcRenderer.on('app-save-state', listener);
@@ -49,6 +50,7 @@ contextBridge.exposeInMainWorld('backendAPI', {
   rejectQuestion: (payload) => ipcRenderer.invoke('backend:reject-question', payload),
   listQuestions: (sessionId) => ipcRenderer.invoke('backend:list-questions', sessionId),
   resolveQuestionRequestId: (sessionId) => ipcRenderer.invoke('backend:resolve-question-id', sessionId),
+  replyPermission: (payload) => ipcRenderer.invoke('backend:reply-permission', payload),
   onEvent: (cb) => {
     const listener = (_, event) => cb(event);
     ipcRenderer.on('backend:event', listener);
