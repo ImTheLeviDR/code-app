@@ -2387,11 +2387,11 @@ function getSubAgentDescription(tc) {
 }
 
 function getSubAgentActivityText(tc, running = true) {
+  if (!running) return 'Task completed';
   const activity = tc?.activity ? String(tc.activity).trim() : '';
   const desc = getSubAgentDescription(tc);
   if (activity && activity !== desc) return activity;
-  if (running) return 'Starting sub-agent…';
-  return activity || 'Completed';
+  return 'Starting sub-agent…';
 }
 
 function renderSubAgentCardHTML(tc, running = false) {

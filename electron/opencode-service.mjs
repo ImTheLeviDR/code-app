@@ -248,10 +248,7 @@ async function enrichTaskToolCall(part, toolCall, chatId, sessionId, workspace) 
 
   if (toolCall.status === 'complete') {
     if (childSessionId) unregisterTaskChildSession(childSessionId);
-    if (!toolCall.activity || toolCall.activity === description) {
-      const activity = childSessionId ? await fetchChildSessionActivity(childSessionId, ws) : null;
-      toolCall.activity = activity || 'Completed';
-    }
+    toolCall.activity = 'Task completed';
     return toolCall;
   }
 
