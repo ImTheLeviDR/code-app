@@ -6,6 +6,234 @@
 
 const SETTINGS_STORAGE_KEY = 'code-app-settings';
 
+/* ============================================================
+   THEME SYSTEM
+   ============================================================ */
+
+const THEMES = [
+  {
+    id: 'default',
+    name: 'Default',
+    accent: '#7c3aed',
+    vars: {
+      'bg-base': '#0d0d0d', 'bg-sidebar': '#111111', 'bg-main': '#141414',
+      'bg-elevated': '#1a1a1a', 'bg-hover': '#1e1e1e', 'bg-active': '#222222',
+      'bg-input': '#181818', 'bg-message-user': '#1c1c1c', 'bg-tool': '#161616',
+      'border': '#2a2a2a', 'border-light': '#363636', 'border-focus': '#c4b5fd',
+      'text-primary': '#f3f3f3', 'text-secondary': '#bdbdbd', 'text-muted': '#9a9a9a',
+      'input-placeholder': '#a7a7a7',
+      'accent': '#7c3aed', 'accent-hover': '#6d28d9', 'accent-text': '#c4b5fd',
+      'accent-glow': 'rgba(124, 45, 237, 0.14)', 'accent-glow2': 'rgba(124, 45, 237, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'mono',
+    name: 'Mono',
+    accent: '#6b7280',
+    vars: {
+      'bg-base': '#0a0a0a', 'bg-sidebar': '#0e0e0e', 'bg-main': '#111111',
+      'bg-elevated': '#161616', 'bg-hover': '#1a1a1a', 'bg-active': '#1e1e1e',
+      'bg-input': '#141414', 'bg-message-user': '#181818', 'bg-tool': '#121212',
+      'border': '#222222', 'border-light': '#2e2e2e', 'border-focus': '#9ca3af',
+      'text-primary': '#e5e5e5', 'text-secondary': '#a3a3a3', 'text-muted': '#808080',
+      'input-placeholder': '#8a8a8a',
+      'accent': '#6b7280', 'accent-hover': '#5a626f', 'accent-text': '#9ca3af',
+      'accent-glow': 'rgba(107, 114, 128, 0.14)', 'accent-glow2': 'rgba(107, 114, 128, 0.10)',
+      'success': '#6b7280', 'success-dim': 'rgba(107, 114, 128, 0.15)',
+      'warning': '#9ca3af', 'error': '#9ca3af', 'error-dim': 'rgba(156, 163, 175, 0.12)', 'info': '#9ca3af',
+    },
+  },
+  {
+    id: 'midnight',
+    name: 'Midnight',
+    accent: '#3b82f6',
+    vars: {
+      'bg-base': '#0a0e1a', 'bg-sidebar': '#0e121f', 'bg-main': '#111625',
+      'bg-elevated': '#161c2e', 'bg-hover': '#1a2238', 'bg-active': '#1e2740',
+      'bg-input': '#13182a', 'bg-message-user': '#171d30', 'bg-tool': '#0f1423',
+      'border': '#1e2a44', 'border-light': '#2a3a5c', 'border-focus': '#93c5fd',
+      'text-primary': '#e8edf5', 'text-secondary': '#b0bccf', 'text-muted': '#8a96b0',
+      'input-placeholder': '#9aa5bf',
+      'accent': '#3b82f6', 'accent-hover': '#2563eb', 'accent-text': '#93c5fd',
+      'accent-glow': 'rgba(59, 130, 246, 0.14)', 'accent-glow2': 'rgba(59, 130, 246, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'emerald',
+    name: 'Emerald',
+    accent: '#10b981',
+    vars: {
+      'bg-base': '#0a140e', 'bg-sidebar': '#0d1811', 'bg-main': '#101d14',
+      'bg-elevated': '#15241a', 'bg-hover': '#192c20', 'bg-active': '#1e3426',
+      'bg-input': '#121f18', 'bg-message-user': '#16261c', 'bg-tool': '#0e1a12',
+      'border': '#1e3a28', 'border-light': '#2a4e36', 'border-focus': '#a7f3d0',
+      'text-primary': '#e2f0e8', 'text-secondary': '#a8c4b4', 'text-muted': '#84a894',
+      'input-placeholder': '#96b8a4',
+      'accent': '#10b981', 'accent-hover': '#059669', 'accent-text': '#a7f3d0',
+      'accent-glow': 'rgba(16, 185, 129, 0.14)', 'accent-glow2': 'rgba(16, 185, 129, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'ruby',
+    name: 'Ruby',
+    accent: '#ef4444',
+    vars: {
+      'bg-base': '#140a0a', 'bg-sidebar': '#180d0d', 'bg-main': '#1c1010',
+      'bg-elevated': '#241515', 'bg-hover': '#2c1919', 'bg-active': '#341e1e',
+      'bg-input': '#1e1212', 'bg-message-user': '#221717', 'bg-tool': '#160c0c',
+      'border': '#3a1e1e', 'border-light': '#4e2a2a', 'border-focus': '#fca5a5',
+      'text-primary': '#f0e2e2', 'text-secondary': '#c4a8a8', 'text-muted': '#a88484',
+      'input-placeholder': '#b89696',
+      'accent': '#ef4444', 'accent-hover': '#dc2626', 'accent-text': '#fca5a5',
+      'accent-glow': 'rgba(239, 68, 68, 0.14)', 'accent-glow2': 'rgba(239, 68, 68, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'amber',
+    name: 'Amber',
+    accent: '#f59e0b',
+    vars: {
+      'bg-base': '#141008', 'bg-sidebar': '#18140a', 'bg-main': '#1c180d',
+      'bg-elevated': '#241e12', 'bg-hover': '#2c2616', 'bg-active': '#342e1a',
+      'bg-input': '#1e1a10', 'bg-message-user': '#221e12', 'bg-tool': '#16120a',
+      'border': '#3a3018', 'border-light': '#4e4022', 'border-focus': '#fde68a',
+      'text-primary': '#f0e8d8', 'text-secondary': '#c4b898', 'text-muted': '#a89876',
+      'input-placeholder': '#b8a886',
+      'accent': '#f59e0b', 'accent-hover': '#d97706', 'accent-text': '#fde68a',
+      'accent-glow': 'rgba(245, 158, 11, 0.14)', 'accent-glow2': 'rgba(245, 158, 11, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'sky',
+    name: 'Sky',
+    accent: '#0ea5e9',
+    vars: {
+      'bg-base': '#081218', 'bg-sidebar': '#0c161c', 'bg-main': '#0f1a22',
+      'bg-elevated': '#14222a', 'bg-hover': '#182a34', 'bg-active': '#1c323e',
+      'bg-input': '#111e28', 'bg-message-user': '#15222c', 'bg-tool': '#0c1820',
+      'border': '#1a3442', 'border-light': '#26485c', 'border-focus': '#bae6fd',
+      'text-primary': '#dceaf2', 'text-secondary': '#a0bccf', 'text-muted': '#7ca0b8',
+      'input-placeholder': '#8fb0c8',
+      'accent': '#0ea5e9', 'accent-hover': '#0284c7', 'accent-text': '#bae6fd',
+      'accent-glow': 'rgba(14, 165, 233, 0.14)', 'accent-glow2': 'rgba(14, 165, 233, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'rose',
+    name: 'Rose',
+    accent: '#ec4899',
+    vars: {
+      'bg-base': '#140a12', 'bg-sidebar': '#180d16', 'bg-main': '#1c101a',
+      'bg-elevated': '#241522', 'bg-hover': '#2c192a', 'bg-active': '#341e32',
+      'bg-input': '#1e121c', 'bg-message-user': '#221720', 'bg-tool': '#160c14',
+      'border': '#3a1e32', 'border-light': '#4e2a46', 'border-focus': '#f9a8d4',
+      'text-primary': '#f0e2ea', 'text-secondary': '#c4a8b8', 'text-muted': '#a884a0',
+      'input-placeholder': '#b896ac',
+      'accent': '#ec4899', 'accent-hover': '#db2777', 'accent-text': '#f9a8d4',
+      'accent-glow': 'rgba(236, 72, 153, 0.14)', 'accent-glow2': 'rgba(236, 72, 153, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'teal',
+    name: 'Teal',
+    accent: '#14b8a6',
+    vars: {
+      'bg-base': '#081414', 'bg-sidebar': '#0c1818', 'bg-main': '#0e1c1c',
+      'bg-elevated': '#142424', 'bg-hover': '#182c2c', 'bg-active': '#1c3434',
+      'bg-input': '#102020', 'bg-message-user': '#142626', 'bg-tool': '#0c1a1a',
+      'border': '#1a3838', 'border-light': '#264c4c', 'border-focus': '#99f6e4',
+      'text-primary': '#dceeea', 'text-secondary': '#a0c4be', 'text-muted': '#7ca8a2',
+      'input-placeholder': '#8fbab4',
+      'accent': '#14b8a6', 'accent-hover': '#0d9488', 'accent-text': '#99f6e4',
+      'accent-glow': 'rgba(20, 184, 166, 0.14)', 'accent-glow2': 'rgba(20, 184, 166, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'violet',
+    name: 'Violet',
+    accent: '#8b5cf6',
+    vars: {
+      'bg-base': '#0e0a18', 'bg-sidebar': '#120d1c', 'bg-main': '#151022',
+      'bg-elevated': '#1b152a', 'bg-hover': '#201934', 'bg-active': '#251e3e',
+      'bg-input': '#171228', 'bg-message-user': '#1b152e', 'bg-tool': '#100c1a',
+      'border': '#281e44', 'border-light': '#382a5e', 'border-focus': '#c4b5fd',
+      'text-primary': '#e8e2f2', 'text-secondary': '#b2a8cc', 'text-muted': '#8e84b0',
+      'input-placeholder': '#9e94c0',
+      'accent': '#8b5cf6', 'accent-hover': '#7c3aed', 'accent-text': '#c4b5fd',
+      'accent-glow': 'rgba(139, 92, 246, 0.14)', 'accent-glow2': 'rgba(139, 92, 246, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'slate',
+    name: 'Slate',
+    accent: '#64748b',
+    vars: {
+      'bg-base': '#0c0e12', 'bg-sidebar': '#101216', 'bg-main': '#13161b',
+      'bg-elevated': '#181c22', 'bg-hover': '#1c2028', 'bg-active': '#20242e',
+      'bg-input': '#15181e', 'bg-message-user': '#191c24', 'bg-tool': '#0e1016',
+      'border': '#242a34', 'border-light': '#303848', 'border-focus': '#cbd5e1',
+      'text-primary': '#e2e6ed', 'text-secondary': '#a8b0c0', 'text-muted': '#8690a4',
+      'input-placeholder': '#96a0b4',
+      'accent': '#64748b', 'accent-hover': '#556379', 'accent-text': '#cbd5e1',
+      'accent-glow': 'rgba(100, 116, 139, 0.14)', 'accent-glow2': 'rgba(100, 116, 139, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+  {
+    id: 'orange',
+    name: 'Orange',
+    accent: '#f97316',
+    vars: {
+      'bg-base': '#140e08', 'bg-sidebar': '#18120a', 'bg-main': '#1c150c',
+      'bg-elevated': '#241c12', 'bg-hover': '#2c2416', 'bg-active': '#342c1a',
+      'bg-input': '#1e1810', 'bg-message-user': '#221c12', 'bg-tool': '#16100a',
+      'border': '#3a2c18', 'border-light': '#4e3c22', 'border-focus': '#fdba74',
+      'text-primary': '#f0e6d8', 'text-secondary': '#c4b498', 'text-muted': '#a89476',
+      'input-placeholder': '#b8a486',
+      'accent': '#f97316', 'accent-hover': '#ea580c', 'accent-text': '#fdba74',
+      'accent-glow': 'rgba(249, 115, 22, 0.14)', 'accent-glow2': 'rgba(249, 115, 22, 0.10)',
+      'success': '#22c55e', 'success-dim': 'rgba(34, 197, 94, 0.15)',
+      'warning': '#f59e0b', 'error': '#ef4444', 'error-dim': 'rgba(239, 68, 68, 0.12)', 'info': '#60a5fa',
+    },
+  },
+];
+
+function applyTheme(themeId) {
+  const theme = THEMES.find(t => t.id === themeId) || THEMES[0];
+  const root = document.documentElement;
+  for (const [key, value] of Object.entries(theme.vars)) {
+    root.style.setProperty(`--${key}`, value);
+  }
+}
+
+function getThemeAccent(themeId) {
+  const theme = THEMES.find(t => t.id === themeId) || THEMES[0];
+  return theme.accent;
+}
+
+/* ============================================================
+   SETTINGS STORE
+   ============================================================ */
+
 const SettingsStore = (() => {
   let settings = loadSettingsFromStorage();
   let pageEl = null;
@@ -53,6 +281,10 @@ const SettingsStore = (() => {
     };
     next.imageProcessing = {
       enabled: next.imageProcessing?.enabled !== false,
+    };
+    next.appearance = {
+      themeId: next.appearance?.themeId || 'default',
+      fontSize: next.appearance?.fontSize || 13,
     };
     return next;
   }
@@ -653,7 +885,6 @@ const SettingsStore = (() => {
 
   function renderComingSoon(label) {
     const icons = {
-      appearance: `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`,
       shortcuts: `<rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2"/><path d="M16 2l-4 5-4-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
     };
     const icon =
@@ -669,6 +900,114 @@ const SettingsStore = (() => {
         <p>This section is under construction and will be available in a future update.</p>
       </div>
     `;
+  }
+
+  function renderAppearanceContent() {
+    const currentThemeId = settings.appearance?.themeId || 'default';
+    const currentFontSize = settings.appearance?.fontSize || 13;
+
+    return `
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <h2>Appearance</h2>
+          <p>Customize the look and feel of the app.</p>
+        </div>
+
+        <div class="sett-appe-group">
+          <div class="sett-appe-group-label">Theme</div>
+          <div class="sett-appe-grid">
+            ${THEMES.map((theme) => {
+              const isActive = theme.id === currentThemeId;
+              return `
+                <button
+                  class="sett-appe-card${isActive ? ' active' : ''}"
+                  type="button"
+                  data-theme-id="${theme.id}"
+                  title="${escapeHtml(theme.name)}"
+                >
+                  <div class="sett-appe-card-swatch" style="--swatch-accent: ${theme.accent}">
+                    <div class="sett-appe-card-swatch-bar" style="background: ${theme.accent}"></div>
+                    <div class="sett-appe-card-swatch-dots">
+                      <span style="background: ${theme.vars['bg-elevated']}"></span>
+                      <span style="background: ${theme.vars['bg-elevated']}"></span>
+                      <span style="background: ${theme.vars['border-light']}"></span>
+                    </div>
+                  </div>
+                  <div class="sett-appe-card-label">
+                    <span>${escapeHtml(theme.name)}</span>
+                    ${isActive ? '<svg class="sett-appe-card-check" width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>' : ''}
+                  </div>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="sett-appe-group">
+          <div class="sett-appe-group-label">Text size</div>
+          <div class="sett-appe-size-row">
+            <span class="sett-appe-size-label">A</span>
+            <input
+              type="range"
+              class="sett-appe-size-slider"
+              data-appe-field="fontSize"
+              min="11"
+              max="16"
+              step="0.5"
+              value="${currentFontSize}"
+              aria-valuemin="11"
+              aria-valuemax="16"
+              aria-valuenow="${currentFontSize}"
+              aria-label="Text size"
+            />
+            <span class="sett-appe-size-label is-lg">A</span>
+            <span class="sett-appe-size-value" data-appe-size-label>${currentFontSize}px</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindAppearanceEvents(container) {
+    container.querySelectorAll('.sett-appe-card').forEach((card) => {
+      card.addEventListener('click', () => {
+        const themeId = card.dataset.themeId;
+        if (themeId === settings.appearance.themeId) return;
+
+        settings.appearance.themeId = themeId;
+        persistSettings();
+        applyTheme(themeId);
+
+        container.querySelectorAll('.sett-appe-card').forEach((c) => {
+          c.classList.remove('active');
+          const check = c.querySelector('.sett-appe-card-check');
+          if (check) check.remove();
+        });
+        card.classList.add('active');
+        const labelEl = card.querySelector('.sett-appe-card-label');
+        const checkSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        checkSvg.setAttribute('class', 'sett-appe-card-check');
+        checkSvg.setAttribute('width', '12');
+        checkSvg.setAttribute('height', '12');
+        checkSvg.setAttribute('viewBox', '0 0 24 24');
+        checkSvg.setAttribute('fill', 'none');
+        checkSvg.innerHTML = '<path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+        labelEl.appendChild(checkSvg);
+      });
+    });
+
+    const sizeSlider = container.querySelector('[data-appe-field="fontSize"]');
+    const sizeLabel = container.querySelector('[data-appe-size-label]');
+    sizeSlider?.addEventListener('input', () => {
+      const val = parseFloat(sizeSlider.value);
+      if (sizeLabel) sizeLabel.textContent = `${val}px`;
+    });
+    sizeSlider?.addEventListener('change', () => {
+      const val = parseFloat(sizeSlider.value);
+      settings.appearance.fontSize = val;
+      persistSettings();
+      document.documentElement.style.setProperty('--font-size', `${val}px`);
+    });
   }
 
   const APP_LOGO_SVG = `
@@ -886,8 +1225,7 @@ const SettingsStore = (() => {
         {
           id: "appearance",
           label: "Appearance",
-          soon: true,
-          icon: `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+          icon: `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`,
         },
         {
           id: "shortcuts",
@@ -940,6 +1278,8 @@ const SettingsStore = (() => {
         return renderProvidersContent();
       case "notifications":
         return renderNotificationsContent();
+      case "appearance":
+        return renderAppearanceContent();
       case "about":
         return renderAboutContent();
       default:
@@ -966,6 +1306,11 @@ const SettingsStore = (() => {
       }
       Physics.bindPressTargets(contentEl);
       Physics.bindToggleTargets(contentEl);
+    }
+
+    if (activeCategory === "appearance") {
+      bindAppearanceEvents(contentEl);
+      Physics.bindPressTargets(contentEl);
     }
 
     if (activeCategory === "about") {
@@ -1257,3 +1602,19 @@ const SettingsStore = (() => {
 
 function openSettings()  { SettingsStore.open(); }
 function closeSettings() { SettingsStore.close(); }
+
+/* Apply saved appearance on startup */
+(function initAppearance() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const appe = parsed?.appearance;
+      if (appe) {
+        applyTheme(appe.themeId || 'default');
+        const fs = parseFloat(appe.fontSize);
+        if (fs > 0) document.documentElement.style.setProperty('--font-size', `${fs}px`);
+      }
+    }
+  } catch (_) { /* ignore */ }
+})();

@@ -139,6 +139,10 @@ const DEFAULT_SETTINGS = {
   imageProcessing: {
     enabled: true,
   },
+  appearance: {
+    themeId: 'default',
+    fontSize: 13,
+  },
 };
 
 /* AI response templates, keyed by detected intent */
