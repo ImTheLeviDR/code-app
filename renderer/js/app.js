@@ -859,6 +859,7 @@ async function init() {
   });
 
   bindEvents();
+  if (typeof SidebarContextMenu !== 'undefined') SidebarContextMenu.bind();
   setupWindowControls();
   setupUpdateListener();
   animateWelcomeInputPlaceholders();
@@ -1628,6 +1629,109 @@ function createChatItem(chat, projectId) {
 
   item.addEventListener('click', () => openChat(chat.id, chat.title, projectId));
   return item;
+}
+
+function cleanupChatRuntimeState(chatId) {
+  delete state.chatMessages[chatId];
+  chatsNeedingContextSync.delete(chatId);
+  abortedChatIds.delete(chatId);
+  aiRuns.delete(chatId);
+
+  for (const [msgId, req] of questionRequests.entries()) {
+    if (req.chatId === chatId) questionRequests.delete(msgId);
+  }
+  for (const [msgId, req] of permissionRequests.entries()) {
+    if (req.chatId === chatId) permissionRequests.delete(msgId);
+  }
+}
+
+async function deleteChat(chatId) {
+  const project = findChatProject(chatId);
+  const chat = findChatById(chatId);
+  if (!project || !chat) return;
+
+  if (isChatGenerating(chatId)) {
+    await abortAgentRun(chatId);
+  }
+  cleanupChatRuntimeState(chatId);
+
+  project.chats = project.chats.filter((c) => c.id !== chatId);
+  const wasSelected = state.selectedChatId === chatId;
+
+  if (wasSelected) {
+    state.selectedChatId = null;
+  }
+
+  saveChatState();
+  renderSidebar();
+  updateActiveChat();
+  updateNavActive();
+
+  if (wasSelected) {
+    showWelcomeScreen();
+  }
+
+  showToast(`Deleted "${chat.title}"`);
+}
+
+async function deleteProject(projectId) {
+  const project = state.projects.find((p) => p.id === projectId);
+  if (!project) return;
+
+  const chatIds = (project.chats || []).map((c) => c.id);
+  const runningIds = chatIds.filter((id) => isChatGenerating(id));
+  await Promise.all(runningIds.map((id) => abortAgentRun(id)));
+  for (const chatId of chatIds) {
+    cleanupChatRuntimeState(chatId);
+  }
+
+  const wasSelectedProject = state.selectedProjectId === projectId;
+  const wasSelectedChat = chatIds.includes(state.selectedChatId);
+
+  state.projects = state.projects.filter((p) => p.id !== projectId);
+  state.expandedProjects.delete(projectId);
+  state.expandedChatLists.delete(projectId);
+
+  if (wasSelectedProject) {
+    state.selectedProjectId = state.projects[0]?.id || null;
+  }
+  if (wasSelectedChat) {
+    state.selectedChatId = null;
+  }
+
+  if (state.selectedProjectId) {
+    state.expandedProjects.add(state.selectedProjectId);
+    void setActiveProjectWorkspace(state.selectedProjectId);
+  }
+
+  saveChatState();
+  renderSidebar();
+  updateProjectSelection();
+  updateActiveChat();
+  updateNavActive();
+
+  if (wasSelectedChat || wasSelectedProject) {
+    showWelcomeScreen();
+  }
+
+  showToast(`Removed "${project.name}"`);
+}
+
+function renameChat(chatId, title) {
+  const chat = findChatById(chatId);
+  if (!chat) return;
+
+  const trimmed = title.trim();
+  if (!trimmed || trimmed === chat.title) return;
+
+  chat.title = trimmed;
+  if (state.selectedChatId === chatId) {
+    dom.chatTitle.textContent = trimmed;
+  }
+
+  saveChatState();
+  syncChatItem(chatId);
+  showToast('Chat renamed');
 }
 
 function toggleProject(projectId) {
@@ -4992,6 +5096,10 @@ function bindEvents() {
     }
     // Escape to go back or close dropdowns
     if (e.key === 'Escape') {
+      if (typeof SidebarContextMenu !== 'undefined') {
+        SidebarContextMenu.close();
+        SidebarContextMenu.closeConfirm();
+      }
       if (typeof TitlebarMenu !== 'undefined') TitlebarMenu.closeAllMenus();
       if (document.getElementById('diffOverlay')) {
         closeEditDiffPopup();

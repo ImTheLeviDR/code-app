@@ -854,6 +854,178 @@ textarea {
   border-left-color: var(--accent);
 }
 
+/* Sidebar context menu */
+.context-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 200px;
+  padding: 4px 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.context-menu-option {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  border-radius: 0;
+  transition: background-color var(--transition-fast);
+}
+
+.context-menu-option:hover,
+.context-menu-option:focus-visible {
+  background: rgba(124, 45, 237, 0.14);
+  outline: none;
+}
+
+.context-menu-option:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.context-menu-option-danger {
+  color: #f87171;
+}
+
+.context-menu-option-danger:hover:not(:disabled),
+.context-menu-option-danger:focus-visible:not(:disabled) {
+  background: rgba(248, 113, 113, 0.12);
+  color: #fca5a5;
+}
+
+.context-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-menu-shortcut {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-light);
+}
+
+/* Confirm / prompt dialogs */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 400;
+  animation: fade-in 0.15s ease;
+}
+
+.confirm-modal {
+  width: min(420px, 100%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  animation: modal-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.confirm-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.confirm-message {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.confirm-input {
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color var(--transition-fast);
+  user-select: text;
+}
+
+.confirm-input:focus {
+  border-color: rgba(124, 45, 237, 0.5);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-btn {
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.confirm-btn-cancel {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.confirm-btn-cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.confirm-btn-primary {
+  background: var(--accent-glow);
+  border-color: rgba(124, 45, 237, 0.35);
+  color: var(--accent-text);
+}
+
+.confirm-btn-primary:hover {
+  background: rgba(124, 45, 237, 0.16);
+  border-color: rgba(124, 45, 237, 0.5);
+}
+
+.confirm-btn-danger {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.35);
+  color: #fca5a5;
+}
+
+.confirm-btn-danger:hover {
+  background: rgba(248, 113, 113, 0.2);
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #fecaca;
+}
+
 /* ============================================================
    MAIN AREA
    ============================================================ */
