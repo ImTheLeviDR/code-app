@@ -227,6 +227,42 @@ function runInstaller(installerPath) {
   spawn(installerPath, [], { detached: true, stdio: 'ignore' }).unref();
 }
 
+function cleanupInstaller(installerPath) {
+  try {
+    fs.unlinkSync(installerPath);
+  } catch {
+    /* ignore */
+  }
+  try {
+    const tempDir = path.dirname(installerPath);
+    fs.rmdirSync(tempDir);
+  } catch {
+    /* ignore */
+  }
+}
+
+function cleanupStaleInstallers() {
+  try {
+    const tempDir = path.join(app.getPath('temp'), 'code-app-updates');
+    if (!fs.existsSync(tempDir)) return;
+    for (const file of fs.readdirSync(tempDir)) {
+      const filePath = path.join(tempDir, file);
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      fs.rmdirSync(tempDir);
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function saveRendererState(getMainWindow) {
   const win = getMainWindow?.();
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
@@ -373,6 +409,7 @@ async function downloadAndInstall(getMainWindow, helpers = {}) {
     helpers.prepareForQuit?.();
     helpers.destroyTray?.();
     runInstaller(installerPath);
+    cleanupInstaller(installerPath);
 
     state.installPhase = 'done';
     notifyRenderer(getMainWindow);
@@ -406,6 +443,7 @@ function registerUpdateHandlers(ipcMain, helpers) {
   });
 
   app.whenReady().then(() => {
+    cleanupStaleInstallers();
     setTimeout(() => {
       void checkForUpdates(getMainWindow, { notify: true });
     }, 2500);
