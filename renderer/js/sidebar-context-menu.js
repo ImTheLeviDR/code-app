@@ -55,8 +55,8 @@ const SidebarContextMenu = (() => {
   function showConfirmDialog({
     title,
     message,
-    confirmLabel = 'Delete',
-    cancelLabel = 'Cancel',
+    confirmLabel = t('common.delete'),
+    cancelLabel = t('common.cancel'),
     destructive = true,
     onConfirm,
   }) {
@@ -103,8 +103,8 @@ const SidebarContextMenu = (() => {
     title,
     message,
     value = '',
-    confirmLabel = 'Save',
-    cancelLabel = 'Cancel',
+    confirmLabel = t('common.save'),
+    cancelLabel = t('common.cancel'),
     onConfirm,
   }) {
     close();
@@ -229,7 +229,7 @@ const SidebarContextMenu = (() => {
           data-action="${item.action}"
           ${item.disabled ? 'disabled' : ''}
         >
-          <span class="context-menu-label">${escapeHtml(item.label)}</span>
+          <span class="context-menu-label">${escapeHtml(item.labelKey ? t(item.labelKey) : item.label)}</span>
           ${shortcut}
         </button>
       `;
@@ -292,18 +292,18 @@ const SidebarContextMenu = (() => {
 
   function getHeaderChatMenuItems(chat) {
     return [
-      { label: 'Rename', action: 'rename-chat' },
-      { label: 'Export chat…', action: 'export-chat' },
+      { labelKey: 'contextMenu.rename', action: 'rename-chat' },
+      { labelKey: 'contextMenu.exportChat', action: 'export-chat' },
       { separator: true },
-      { label: 'New chat', action: 'new-chat', shortcut: 'Ctrl+N' },
+      { labelKey: 'sidebar.newChat', action: 'new-chat', shortcut: 'Ctrl+N' },
       { separator: true },
       {
-        label: chat.running ? 'Delete chat (running)' : 'Delete chat',
+        labelKey: chat.running ? 'contextMenu.deleteChatRunning' : 'contextMenu.deleteChat',
         action: 'delete-chat',
         danger: true,
       },
       {
-        label: 'Remove project',
+        labelKey: 'contextMenu.removeProject',
         action: 'delete-project',
         danger: true,
       },
@@ -312,10 +312,10 @@ const SidebarContextMenu = (() => {
 
   function getProjectMenuItems(project) {
     return [
-      { label: 'New chat', action: 'new-chat', shortcut: 'Ctrl+N' },
+      { labelKey: 'sidebar.newChat', action: 'new-chat', shortcut: 'Ctrl+N' },
       { separator: true },
       {
-        label: 'Remove project',
+        labelKey: 'contextMenu.removeProject',
         action: 'delete-project',
         danger: true,
       },
@@ -324,10 +324,10 @@ const SidebarContextMenu = (() => {
 
   function getChatMenuItems(chat) {
     const items = [
-      { label: 'Rename', action: 'rename-chat' },
+      { labelKey: 'contextMenu.rename', action: 'rename-chat' },
       { separator: true },
       {
-        label: chat.running ? 'Delete chat (running)' : 'Delete chat',
+        labelKey: chat.running ? 'contextMenu.deleteChatRunning' : 'contextMenu.deleteChat',
         action: 'delete-chat',
         danger: true,
       },
@@ -461,20 +461,24 @@ const SidebarContextMenu = (() => {
 
     if (window.electronAPI?.saveFileDialog && window.electronAPI?.writeTextFile) {
       const filePath = await window.electronAPI.saveFileDialog({
-        title: 'Export chat',
+        title: t('contextMenu.exportSaveTitle'),
         defaultPath: defaultFilename,
         filters: isJson
-          ? [{ name: 'JSON', extensions: ['json'] }]
-          : [{ name: 'Plain text', extensions: ['txt'] }],
+          ? [{ name: t('contextMenu.exportFilterJson'), extensions: ['json'] }]
+          : [{ name: t('contextMenu.exportFilterTxt'), extensions: ['txt'] }],
       });
       if (!filePath) return;
       await window.electronAPI.writeTextFile({ filePath, content });
-      if (typeof showToast === 'function') showToast(`Exported to ${filePath.split(/[/\\]/).pop()}`);
+      if (typeof showToast === 'function') {
+        showToast(t('toast.exportedTo', { filename: filePath.split(/[/\\]/).pop() }));
+      }
       return;
     }
 
     downloadExportFallback(defaultFilename, content, mimeType);
-    if (typeof showToast === 'function') showToast(`Downloaded ${defaultFilename}`);
+    if (typeof showToast === 'function') {
+      showToast(t('toast.downloadedFile', { filename: defaultFilename }));
+    }
   }
 
   function showExportDialog(chatId) {
@@ -485,21 +489,21 @@ const SidebarContextMenu = (() => {
     confirmOverlay.className = 'confirm-overlay';
     confirmOverlay.innerHTML = `
       <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="exportDialogTitle">
-        <h2 class="confirm-title" id="exportDialogTitle">Export chat</h2>
-        <p class="confirm-message">Choose a format, then pick where to save the file.</p>
+        <h2 class="confirm-title" id="exportDialogTitle">${escapeHtml(t('contextMenu.exportChatTitle'))}</h2>
+        <p class="confirm-message">${escapeHtml(t('contextMenu.exportChatMessage'))}</p>
         <div class="export-format-options">
           <label class="export-format-option">
             <input type="radio" name="exportFormat" value="json" checked />
-            <span>JSON — full chat data</span>
+            <span>${escapeHtml(t('contextMenu.exportFormatJson'))}</span>
           </label>
           <label class="export-format-option">
             <input type="radio" name="exportFormat" value="txt" />
-            <span>Plain text — readable transcript</span>
+            <span>${escapeHtml(t('contextMenu.exportFormatTxt'))}</span>
           </label>
         </div>
         <div class="confirm-actions">
-          <button type="button" class="confirm-btn confirm-btn-cancel" data-action="cancel">Cancel</button>
-          <button type="button" class="confirm-btn confirm-btn-primary" data-action="confirm">Export…</button>
+          <button type="button" class="confirm-btn confirm-btn-cancel" data-action="cancel">${escapeHtml(t('common.cancel'))}</button>
+          <button type="button" class="confirm-btn confirm-btn-primary" data-action="confirm">${escapeHtml(t('common.export'))}</button>
         </div>
       </div>
     `;
@@ -544,14 +548,14 @@ const SidebarContextMenu = (() => {
       case 'delete-project': {
         const chatCount = project.chats?.length || 0;
         const chatNote = chatCount === 1
-          ? '1 chat'
-          : `${chatCount} chats`;
+          ? t('contextMenu.chatCountOne')
+          : t('contextMenu.chatCountOther', { count: chatCount });
         showConfirmDialog({
-          title: 'Remove project?',
+          title: t('contextMenu.removeProjectTitle'),
           message: chatCount
-            ? `"${project.name}" and its ${chatNote} will be permanently deleted.`
-            : `"${project.name}" will be removed from the sidebar.`,
-          confirmLabel: 'Remove',
+            ? t('contextMenu.removeProjectWithChats', { name: project.name, chatNote })
+            : t('contextMenu.removeProjectEmpty', { name: project.name }),
+          confirmLabel: t('common.remove'),
           onConfirm: () => void deleteProject(projectId),
         });
         break;
@@ -569,19 +573,19 @@ const SidebarContextMenu = (() => {
     switch (action) {
       case 'rename-chat':
         showPromptDialog({
-          title: 'Rename chat',
+          title: t('contextMenu.renameChatTitle'),
           value: chat.title,
-          confirmLabel: 'Rename',
+          confirmLabel: t('common.rename'),
           onConfirm: (title) => renameChat(chatId, title),
         });
         break;
       case 'delete-chat':
         showConfirmDialog({
-          title: 'Delete chat?',
+          title: t('contextMenu.deleteChatTitle'),
           message: chat.running
-            ? `"${chat.title}" is still running. It will be stopped and permanently deleted.`
-            : `"${chat.title}" will be permanently deleted.`,
-          confirmLabel: 'Delete',
+            ? t('contextMenu.deleteChatRunningMessage', { title: chat.title })
+            : t('contextMenu.deleteChatMessage', { title: chat.title }),
+          confirmLabel: t('common.delete'),
           onConfirm: () => void deleteChat(chatId),
         });
         break;
