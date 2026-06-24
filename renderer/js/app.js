@@ -763,6 +763,7 @@ const dom = {
   continueSuggestion: $('continueSuggestion'),
   continueSuggestionBtn: $('continueSuggestionBtn'),
   chatTitle:        $('chatTitle'),
+  chatMoreBtn:      $('chatMoreBtn'),
   messagesList:     $('messagesList'),
   scrollToBottom:   $('scrollToBottom'),
   minimizeBtn:      $('minimizeBtn'),

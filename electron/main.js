@@ -309,6 +309,27 @@ ipcMain.handle('dialog:open-images', async () => {
   return result.filePaths.map(filePathToDataUrl);
 });
 
+ipcMain.handle('dialog:save-file', async (_evt, options = {}) => {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const result = await dialog.showSaveDialog(win, {
+    title: options.title || 'Save File',
+    defaultPath: options.defaultPath,
+    filters: Array.isArray(options.filters) && options.filters.length
+      ? options.filters
+      : [{ name: 'All Files', extensions: ['*'] }],
+  });
+  if (result.canceled || !result.filePath) return null;
+  return result.filePath;
+});
+
+ipcMain.handle('fs:write-text-file', async (_evt, { filePath, content }) => {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new Error('Invalid file path');
+  }
+  fs.writeFileSync(filePath, typeof content === 'string' ? content : String(content ?? ''), 'utf8');
+  return true;
+});
+
 ipcMain.handle('openrouter:describe-images', async (_evt, { apiKey, images }) => {
   if (!apiKey?.trim()) throw new Error('OpenRouter API key is required');
   if (!Array.isArray(images) || !images.length) return [];
