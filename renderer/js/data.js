@@ -114,22 +114,6 @@ const DEFAULT_SETTINGS = {
       apiKey: '',
       enabled: true,
     },
-    {
-      id: 'prov-openai',
-      type: 'openai',
-      name: 'OpenAI',
-      baseUrl: PROVIDER_PRESETS.openai.baseUrl,
-      apiKey: '',
-      enabled: false,
-    },
-    {
-      id: 'prov-anthropic',
-      type: 'anthropic',
-      name: 'Anthropic',
-      baseUrl: PROVIDER_PRESETS.anthropic.baseUrl,
-      apiKey: '',
-      enabled: false,
-    },
   ],
   notifications: {
     taskCompleteEnabled: true,
