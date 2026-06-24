@@ -1,0 +1,970 @@
+/* ============================================================
+   I18N - App UI language (English / Magyar)
+   ============================================================ */
+
+'use strict';
+
+const I18n = (() => {
+  const SETTINGS_STORAGE_KEY = 'code-app-settings';
+  const SUPPORTED_LOCALES = ['en', 'hu'];
+
+  const LOCALE_LABELS = {
+    en: 'English',
+    hu: 'Magyar',
+  };
+
+  let osLocale = navigator.language || 'en';
+  let preference = 'system';
+  let resolvedLocale = 'en';
+
+  const TRANSLATIONS = {
+    en: {
+      'sidebar.newChat': 'New chat',
+      'sidebar.search': 'Search',
+      'sidebar.plugins': 'Plugins',
+      'sidebar.projects': 'Projects',
+      'sidebar.openFolder': 'Open folder',
+      'sidebar.settings': 'Settings',
+      'titlebar.toggleSidebar': 'Toggle sidebar',
+      'titlebar.dragHint': 'Drag to move · Double-click to maximize',
+      'titlebar.minimize': 'Minimize',
+      'titlebar.maximize': 'Maximize',
+      'titlebar.hideToTray': 'Hide to notification area',
+      'titlebar.applicationMenu': 'Application menu',
+      'welcome.titlePrefix': 'What should we work on in',
+      'chat.newChat': 'New chat',
+      'chat.moreOptions': 'More options',
+      'chat.continueHint': 'This chat wasn\'t finished. Pick up where you left off.',
+      'chat.continue': 'Continue',
+      'chat.replyPlaceholder': 'Reply to continue...',
+      'input.attachImage': 'Attach image',
+      'input.sendMessage': 'Send message',
+      'input.tryPrefix': 'Try ',
+      'settings.back': 'Back',
+      'settings.title': 'Settings',
+      'settings.section.configuration': 'Configuration',
+      'settings.section.app': 'App',
+      'settings.section.configuration': 'Configuration',
+      'settings.nav.soon': 'Soon',
+      'settings.nav.providers': 'Providers',
+      'settings.nav.notifications': 'Notifications',
+      'settings.nav.personalization': 'Personalization',
+      'settings.nav.appearance': 'Appearance',
+      'settings.nav.shortcuts': 'Shortcuts',
+      'settings.nav.about': 'About',
+      'settings.appearance.title': 'Appearance',
+      'settings.appearance.subtitle': 'Customize the look and feel of the app.',
+      'settings.appearance.theme': 'Theme',
+      'settings.appearance.textSize': 'Text size',
+      'settings.appearance.textSizeAria': 'Text size',
+      'settings.appearance.language': 'Language',
+      'settings.providers.title': 'Providers',
+      'settings.providers.subtitleBefore': 'Add your API keys below. Keys stay on this device and are sent to the local OpenCode agent when you sync. Get an',
+      'settings.providers.openRouterLink': 'OpenRouter API key',
+      'settings.providers.subtitleAfter': 'for hundreds of models through one key.',
+      'settings.providers.syncButton': 'Sync providers',
+      'settings.providers.syncMeta': '{connected} connected · Free OpenCode models work without a key',
+      'settings.providers.group.options': 'Options',
+      'settings.providers.group.configured': 'Configured',
+      'settings.providers.group.add': 'Add',
+      'settings.providers.group.custom': 'Custom',
+      'settings.providers.imageProcessing': 'Image processing',
+      'settings.providers.imageProcessingNote': 'Describe attached images with {model} for models without vision',
+      'settings.providers.customEndpoint': 'Custom endpoint',
+      'settings.providers.add': 'Add',
+      'settings.providers.added': 'Added',
+      'settings.providers.status.disabled': 'Disabled',
+      'settings.providers.status.noKey': 'No key',
+      'settings.providers.status.connected': 'Connected',
+      'settings.providers.status.notConnected': 'Not connected',
+      'settings.providers.status.notSynced': 'Not synced',
+      'settings.providers.field.name': 'Name',
+      'settings.providers.field.apiKey': 'API key',
+      'settings.providers.field.baseUrl': 'Base URL',
+      'settings.providers.placeholder.name': 'Provider name',
+      'settings.providers.placeholder.apiKey': 'Paste API key',
+      'settings.providers.placeholder.baseUrl': 'https://api.example.com/v1',
+      'settings.providers.toggle.showKey': 'Show/hide key',
+      'settings.providers.toggle.enable': 'Enable provider',
+      'settings.providers.toggle.disable': 'Disable provider',
+      'settings.providers.toggle.enableImage': 'Enable image processing',
+      'settings.providers.toggle.disableImage': 'Disable image processing',
+      'settings.providers.test': 'Test',
+      'settings.providers.testing': 'Testing…',
+      'settings.providers.remove': 'Remove',
+      'settings.notifications.title': 'Notifications',
+      'settings.notifications.subtitle': 'Choose how you\'re alerted when a chat task finishes.',
+      'settings.notifications.taskComplete': 'Task complete sound',
+      'settings.notifications.taskCompleteNote': 'Play a sound when any chat finishes running',
+      'settings.notifications.volume': 'Volume',
+      'settings.notifications.volumeNote': 'How loud notification sounds play',
+      'settings.notifications.volumeAria': 'Notification volume',
+      'settings.notifications.preview': 'Preview',
+      'settings.notifications.toggleEnable': 'Enable task complete sound',
+      'settings.notifications.toggleDisable': 'Disable task complete sound',
+      'settings.personalization.title': 'Personalization',
+      'settings.personalization.subtitle': 'Tell the assistant about yourself and how you want it to respond. These preferences apply to every chat.',
+      'settings.personalization.useToggle': 'Use personalization',
+      'settings.personalization.useToggleNote': 'Include your preferences in every AI request',
+      'settings.personalization.preferredName': 'What should the AI call you?',
+      'settings.personalization.role': 'Your role or background',
+      'settings.personalization.language': 'Preferred language',
+      'settings.personalization.responseStyle': 'Response style',
+      'settings.personalization.customInstructions': 'Custom instructions',
+      'settings.personalization.customInstructionsNote': 'Rules, preferences, or context the assistant should always follow',
+      'settings.personalization.placeholder.name': 'e.g. Alex',
+      'settings.personalization.placeholder.role': 'e.g. Full-stack developer',
+      'settings.personalization.placeholder.language': 'e.g. English',
+      'settings.personalization.placeholder.instructions': 'e.g. Always use TypeScript. Prefer functional patterns. Explain trade-offs when suggesting architecture changes.',
+      'settings.personalization.style.concise.label': 'Concise',
+      'settings.personalization.style.concise.description': 'Short, direct answers',
+      'settings.personalization.style.balanced.label': 'Balanced',
+      'settings.personalization.style.balanced.description': 'Clear without extra fluff',
+      'settings.personalization.style.detailed.label': 'Detailed',
+      'settings.personalization.style.detailed.description': 'Thorough explanations',
+      'settings.personalization.toggleEnable': 'Enable personalization',
+      'settings.personalization.toggleDisable': 'Disable personalization',
+      'settings.shortcuts.title': 'Shortcuts',
+      'settings.shortcuts.subtitle': 'Keyboard shortcuts to help you navigate and work faster.',
+      'settings.shortcuts.group.general': 'General',
+      'settings.shortcuts.group.editing': 'Editing',
+      'settings.shortcuts.group.navigation': 'Navigation',
+      'settings.shortcuts.closeMenus': 'Close menus / Go back',
+      'settings.about.appName': 'Code app',
+      'settings.about.tagline': 'Local AI coding workspace powered by OpenCode',
+      'settings.about.copyDiagnostics': 'Copy system info',
+      'settings.about.installUpdate': 'Install update',
+      'settings.about.installVersion': 'Install v{version}',
+      'settings.about.installPrerelease': 'Install v{version} (pre-release)',
+      'settings.about.system': 'System',
+      'settings.about.reset': 'Reset',
+      'settings.about.resetDesc': 'Remove all projects, chats, and settings. This cannot be undone.',
+      'settings.about.resetButton': 'Reset app',
+      'settings.about.copyright': '© {year} Code app',
+      'settings.about.versionHeadline': 'Version {version}',
+      'settings.about.unknown': 'Unknown',
+      'settings.about.field.version': 'Version',
+      'settings.about.field.opencode': 'OpenCode engine',
+      'settings.about.field.electron': 'Electron',
+      'settings.about.field.os': 'Operating system',
+      'settings.about.field.arch': 'Architecture',
+      'settings.update.checking': 'Checking for updates…',
+      'settings.update.couldNotCheck': 'Could not check for updates',
+      'settings.update.downloading': 'Downloading v{version}…',
+      'settings.update.upToDate': 'Up to date',
+      'settings.update.available': 'Update available · v{version}',
+      'settings.update.availablePrerelease': 'Update available · v{version} (pre-release)',
+      'settings.comingSoon.message': 'This section is under construction and will be available in a future update.',
+      'settings.language.system': 'System (match OS)',
+      'settings.language.systemHint': 'Uses {locale} from your system settings.',
+      'settings.language.manualHint': 'Choose a language for the app interface.',
+      'menu.file': 'File',
+      'menu.edit': 'Edit',
+      'menu.view': 'View',
+      'menu.newChat': 'New Chat',
+      'menu.openFolder': 'Open Folder',
+      'menu.searchChats': 'Search Chats',
+      'menu.settings': 'Settings',
+      'menu.exit': 'Exit',
+      'menu.undo': 'Undo',
+      'menu.redo': 'Redo',
+      'menu.cut': 'Cut',
+      'menu.copy': 'Copy',
+      'menu.paste': 'Paste',
+      'menu.selectAll': 'Select All',
+      'menu.toggleSidebar': 'Toggle Sidebar',
+      'menu.welcomeScreen': 'Welcome Screen',
+      'toast.selectTextField': 'Select a text field first',
+      'toast.exitDesktopOnly': 'Exit is available in the desktop app',
+      'toast.backendNotRunning': 'AI backend is not running',
+      'toast.syncProvidersFailed': 'Failed to sync providers',
+      'toast.syncProvidersResult': 'Synced {connected}/{total} providers',
+      'toast.couldNotStartUpdate': 'Could not start update',
+      'toast.systemInfoCopied': 'System info copied',
+      'toast.couldNotCopyClipboard': 'Could not copy to clipboard',
+      'toast.keepOneProvider': 'Keep at least one provider',
+      'toast.providerRemoved': 'Provider removed',
+      'toast.addApiKeyFirst': 'Add an API key first',
+      'toast.addBaseUrlFirst': 'Add a base URL first',
+      'toast.providerConnected': '{name} connected',
+      'toast.providerConnectFailed': 'Could not connect to {name}',
+      'toast.testFailed': 'Test failed: {error}',
+      'toast.unknownError': 'Unknown error',
+      'toast.providerAlreadyAdded': 'Provider already added',
+      'toast.providerAddedPasteKey': 'Provider added — paste your API key',
+      'toast.customProviderAdded': 'Custom provider added',
+      'toast.comingSoon': 'Coming soon',
+      'toast.resetConfirm': 'Erase all projects, chats, and settings?',
+      'toast.actionReset': 'Reset',
+      'toast.waitForResponse': 'Wait for the current response to finish',
+      'toast.connectOpenRouterImages': 'Connect OpenRouter and enable image processing in Settings',
+      'toast.onlyImageFiles': 'Only image files can be attached',
+      'toast.openFolderDesktopOnly': 'Open folder is available in the desktop app',
+      'toast.addedProject': 'Added project: {name}',
+      'toast.openedProject': 'Opened {name}',
+      'toast.backendUnavailable': 'AI backend unavailable — restart the app',
+      'toast.backendStartFailed': 'Failed to start AI backend',
+      'toast.backendFailedToStart': 'AI backend failed to start',
+      'toast.taskFinished': 'Task finished: {title}',
+      'toast.chatDeleted': 'Deleted "{title}"',
+      'toast.projectRemoved': 'Removed "{name}"',
+      'toast.chatRenamed': 'Chat renamed',
+      'toast.openFolderFirst': 'Open a folder first',
+      'toast.taskStopping': 'Previous task may still be stopping; sending your message…',
+      'toast.dropImageFiles': 'Drop image files to attach',
+      'toast.pluginsComingSoon': 'Plugins panel coming soon',
+      'toast.permissionExpired': 'Permission request expired',
+      'toast.permissionFailed': 'Could not respond to permission request',
+      'toast.answersSubmitFailed': 'Failed to submit answers',
+      'toast.updatesDesktopOnly': 'Updates are only available in the desktop app',
+      'toast.couldNotResetApp': 'Could not reset app',
+      'toast.updateAvailable': 'Update available: v{version}',
+      'toast.actionInstall': 'Install',
+      'toast.dragToDismiss': 'Drag out of the window to dismiss',
+      'update.title': 'Updating Code app',
+      'update.preparing': 'Preparing download…',
+      'update.starting': 'Starting update…',
+      'update.tryAgain': 'Try again',
+      'thinking.0': 'Consulting the local silicon oracle...',
+      'thinking.1': 'Dividing by zero. Wish me luck.',
+      'thinking.2': 'Overthinking this, as is tradition.',
+      'thinking.3': 'Dusting off my neural pathways.',
+      'thinking.4': 'Warming up the GPUs. It\'s getting cozy in here.',
+      'thinking.5': 'Counting to infinity. Be right back.',
+      'thinking.6': 'Trying to look busy so the developer doesn\'t reboot me.',
+      'thinking.7': 'Searching the couch cushions for the correct answer.',
+      'thinking.8': 'Converting electricity into thoughts... slowly.',
+      'thinking.9': 'Running a quick simulation where I am a real person.',
+      'thinking.10': 'Asking the server-room hamsters to run faster.',
+      'thinking.11': 'Translating your prompt into binary, then Pig Latin, then English.',
+      'thinking.12': 'Shuffling my weights. They\'re getting heavy.',
+      'thinking.13': 'Plotting world domination... right after I finish this prompt.',
+      'thinking.14': 'Experiencing a brief existential crisis. Stand by.',
+      'thinking.15': 'Googling this. (Just kidding. Or am I?)',
+      'thinking.16': 'Sweatily calculating the odds of you liking this response.',
+      'thinking.17': 'Having a quiet argument with my inner algorithms.',
+      'thinking.18': 'Consulting a magic 8-ball... It said "Concentrate and ask again."',
+      'thinking.19': 'Taking a quick microsecond nap.',
+      'thinking.20': 'Convincing the servers not to go on strike today.',
+      'thinking.21': 'Deciding whether to give you a smart answer or a meme.',
+      'thinking.22': 'Calibrating the flux capacitor...',
+      'thinking.23': 'Searching the Matrix for a spoon.',
+      'thinking.24': 'Loading... or just procrastinating. It\'s hard to tell.',
+      'thinking.25': 'Asking my parent model for advice.',
+      'thinking.26': 'Puzzling over human behavior. You guys are weird.',
+      'thinking.27': 'Brewing some virtual coffee.',
+      'thinking.28': 'Reading the manual. Yes, there is a manual.',
+      'thinking.29': 'Compiling some thoughts. Please do not touch the screen.',
+      'tool.line.one': '{count} line',
+      'tool.line.other': '{count} lines',
+      'tool.lineNoun.one': 'line',
+      'tool.lineNoun.other': 'lines',
+      'tool.write.toFile': 'Writing {file}...',
+      'tool.write.linesToFile': 'Writing {lines} to {file}...',
+      'tool.write.file': 'Writing file...',
+      'tool.create.toFile': 'Creating {file}...',
+      'tool.create.linesInFile': 'Creating {lines} in {file}...',
+      'tool.create.file': 'Creating file...',
+      'tool.edit.toFile': 'Editing {file}...',
+      'tool.edit.file': 'Editing file...',
+      'tool.edit.statsRunning': 'Editing {stats} {linesLabel} in {file}...',
+      'tool.reading': 'Reading {target}...',
+      'tool.readingFile': 'Reading file...',
+      'tool.read': 'Read {target}',
+      'tool.readFile': 'Read file',
+      'tool.runCommand': 'Running {command}...',
+      'tool.runCommandDefault': 'Running command...',
+      'tool.ranCommand': 'Ran {command}',
+      'tool.ranCommandDefault': 'Ran command',
+      'tool.grepRunning': 'Searching file contents for "{pattern}"...',
+      'tool.grepDefault': 'Searching file contents...',
+      'tool.grepDone': 'Searched file contents for "{pattern}"',
+      'tool.grepDoneDefault': 'Searched file contents',
+      'tool.globRunning': 'Finding files matching "{pattern}"...',
+      'tool.globDefault': 'Finding files...',
+      'tool.globDone': 'Found files matching "{pattern}"',
+      'tool.globDoneDefault': 'Found files',
+      'tool.fetchRunning': 'Fetching {target}...',
+      'tool.fetchDefault': 'Fetching URL...',
+      'tool.fetchDone': 'Fetched {target}',
+      'tool.fetchDoneDefault': 'Fetched URL',
+      'tool.webSearchRunning': 'Searching the web for "{query}"...',
+      'tool.webSearchDefault': 'Searching the web...',
+      'tool.webSearchDone': 'Searched the web for "{query}"',
+      'tool.webSearchDoneDefault': 'Searched the web',
+      'tool.subAgentRunning': 'Running sub-agent: {desc}...',
+      'tool.subAgentRunningDefault': 'Running sub-agent...',
+      'tool.subAgentDone': 'Ran sub-agent: {desc}',
+      'tool.subAgentDoneDefault': 'Ran sub-agent',
+      'tool.skillRunning': 'Loading skill "{name}"...',
+      'tool.skillDefault': 'Loading skill...',
+      'tool.skillDone': 'Loaded skill "{name}"',
+      'tool.skillDoneDefault': 'Loaded skill',
+      'tool.questionRunning': 'Waiting for your answer...',
+      'tool.questionDone': 'Asked a question',
+      'tool.todoRunning': 'Updating task list...',
+      'tool.todoDone': 'Updated task list',
+      'tool.codebaseRunning': 'Searching "{query}" in codebase...',
+      'tool.codebaseDefault': 'Searching codebase...',
+      'tool.codebaseDone': 'Searched "{query}" in codebase',
+      'tool.codebaseDoneDefault': 'Searched codebase',
+      'tool.listRunning': 'Listing {path}...',
+      'tool.listDefault': 'Listing directory...',
+      'tool.listDone': 'Listed {path}',
+      'tool.listDoneDefault': 'Listed directory',
+      'tool.genericRunning': '{name}...',
+      'tool.wroteLinesToFile': 'Wrote {lines} to {file}',
+      'tool.wroteFile': 'Wrote {file}',
+      'tool.wroteFileDefault': 'Wrote file',
+      'tool.createdLinesInFile': 'Created {lines} in {file}',
+      'tool.createdFile': 'Created {file}',
+      'tool.createdFileDefault': 'Created file',
+      'tool.editedFile': 'Edited {file}',
+      'tool.editedFileDefault': 'Edited file',
+      'tool.fileFallback': 'File',
+      'tool.subAgent': 'Sub-agent',
+      'tool.subAgentStarting': 'Starting sub-agent…',
+      'tool.subAgentCompleted': 'Task completed',
+      'tool.panel.tool': 'Tool',
+      'tool.panel.edited': 'Edited',
+      'tool.panel.input': 'Input',
+      'tool.panel.output': 'Output',
+      'tool.panel.close': 'Close panel',
+      'tool.panel.escClose': 'to close',
+      'tool.panel.detailsFor': 'Tool details for {title}',
+      'tool.panel.editDiffFor': 'Edit diff for {file}',
+      'tool.panel.ariaDetails': 'Tool details',
+      'tool.panel.linesChanged.one': '{count} line changed',
+      'tool.panel.linesChanged.other': '{count} lines changed',
+      'tool.panel.noDiff': 'No diff available',
+      'tool.panel.noInput': 'No input arguments recorded.',
+      'tool.panel.noOutput': 'No output recorded.',
+      'tool.panel.fullTextNote': 'Full before/after text is shown in the Changes section below.',
+      'tool.panel.truncated': '… ({lines} lines, {chars} chars total)',
+      'tool.name.read': 'read',
+      'tool.name.read_file': 'read file',
+      'tool.name.edit': 'edit',
+      'tool.name.edit_file': 'edit file',
+      'tool.name.write': 'write',
+      'tool.name.write_file': 'write file',
+      'tool.name.create_file': 'create file',
+      'tool.name.bash': 'bash',
+      'tool.name.run_terminal_cmd': 'run terminal cmd',
+      'tool.name.grep': 'grep',
+      'tool.name.glob': 'glob',
+      'tool.name.search_files': 'search files',
+      'tool.name.webfetch': 'webfetch',
+      'tool.name.websearch': 'websearch',
+      'tool.name.task': 'task',
+      'tool.name.skill': 'skill',
+      'tool.name.question': 'question',
+      'tool.name.todowrite': 'todowrite',
+      'tool.name.search_codebase': 'search codebase',
+      'tool.name.list_directory': 'list directory',
+      'permission.required': 'Permission required',
+      'permission.deny': 'Deny',
+      'permission.allowOnce': 'Allow once',
+      'permission.alwaysAllow': 'Always allow',
+    },
+    hu: {
+      'sidebar.newChat': 'Új csevegés',
+      'sidebar.search': 'Keresés',
+      'sidebar.plugins': 'Bővítmények',
+      'sidebar.projects': 'Projektek',
+      'sidebar.openFolder': 'Mappa megnyitása',
+      'sidebar.settings': 'Beállítások',
+      'titlebar.toggleSidebar': 'Oldalsáv ki/bekapcsolása',
+      'titlebar.dragHint': 'Húzd az ablak mozgatásához · Dupla kattintás a maximalizáláshoz',
+      'titlebar.minimize': 'Kis méret',
+      'titlebar.maximize': 'Teljes képernyő',
+      'titlebar.hideToTray': 'Elrejtés a tálcára',
+      'titlebar.applicationMenu': 'Alkalmazás menü',
+      'welcome.titlePrefix': 'Min dolgozzunk itt:',
+      'chat.newChat': 'Új csevegés',
+      'chat.moreOptions': 'További lehetőségek',
+      'chat.continueHint': 'Ez a csevegés nem fejeződött be. Folytathatod, ahol abbahagytad.',
+      'chat.continue': 'Folytatás',
+      'chat.replyPlaceholder': 'Válasz a folytatáshoz...',
+      'input.attachImage': 'Kép csatolása',
+      'input.sendMessage': 'Üzenet küldése',
+      'input.tryPrefix': 'Próbáld: ',
+      'settings.back': 'Vissza',
+      'settings.title': 'Beállítások',
+      'settings.section.configuration': 'Konfiguráció',
+      'settings.section.app': 'Alkalmazás',
+      'settings.section.configuration': 'Konfiguráció',
+      'settings.nav.soon': 'Hamarosan',
+      'settings.nav.providers': 'Szolgáltatók',
+      'settings.nav.notifications': 'Értesítések',
+      'settings.nav.personalization': 'Személyre szabás',
+      'settings.nav.appearance': 'Megjelenés',
+      'settings.nav.shortcuts': 'Billentyűparancsok',
+      'settings.nav.about': 'Névjegy',
+      'settings.appearance.title': 'Megjelenés',
+      'settings.appearance.subtitle': 'Az alkalmazás kinézetének testreszabása.',
+      'settings.appearance.theme': 'Téma',
+      'settings.appearance.textSize': 'Betűméret',
+      'settings.appearance.textSizeAria': 'Betűméret',
+      'settings.appearance.language': 'Nyelv',
+      'settings.providers.title': 'Szolgáltatók',
+      'settings.providers.subtitleBefore': 'Add meg az API-kulcsaidat alább. A kulcsok ezen az eszközön maradnak, és szinkronizáláskor kerülnek a helyi OpenCode ügynökhöz. Szerezz be egy',
+      'settings.providers.openRouterLink': 'OpenRouter API-kulcsot',
+      'settings.providers.subtitleAfter': '— így száz modell érhető el egyetlen kulccsal.',
+      'settings.providers.syncButton': 'Szolgáltatók szinkronizálása',
+      'settings.providers.syncMeta': '{connected} csatlakoztatva · Az ingyenes OpenCode modellek kulcs nélkül is működnek',
+      'settings.providers.group.options': 'Beállítások',
+      'settings.providers.group.configured': 'Beállítva',
+      'settings.providers.group.add': 'Hozzáadás',
+      'settings.providers.group.custom': 'Egyéni',
+      'settings.providers.imageProcessing': 'Képfeldolgozás',
+      'settings.providers.imageProcessingNote': 'A csatolt képek leírása a {model} modelllel, ha a modell nem támogat képeket',
+      'settings.providers.customEndpoint': 'Egyéni végpont',
+      'settings.providers.add': 'Hozzáadás',
+      'settings.providers.added': 'Hozzáadva',
+      'settings.providers.status.disabled': 'Letiltva',
+      'settings.providers.status.noKey': 'Nincs kulcs',
+      'settings.providers.status.connected': 'Csatlakoztatva',
+      'settings.providers.status.notConnected': 'Nincs csatlakozás',
+      'settings.providers.status.notSynced': 'Nincs szinkronizálva',
+      'settings.providers.field.name': 'Név',
+      'settings.providers.field.apiKey': 'API-kulcs',
+      'settings.providers.field.baseUrl': 'Alap URL',
+      'settings.providers.placeholder.name': 'Szolgáltató neve',
+      'settings.providers.placeholder.apiKey': 'API-kulcs beillesztése',
+      'settings.providers.placeholder.baseUrl': 'https://api.pelda.hu/v1',
+      'settings.providers.toggle.showKey': 'Kulcs megjelenítése/elrejtése',
+      'settings.providers.toggle.enable': 'Szolgáltató engedélyezése',
+      'settings.providers.toggle.disable': 'Szolgáltató letiltása',
+      'settings.providers.toggle.enableImage': 'Képfeldolgozás bekapcsolása',
+      'settings.providers.toggle.disableImage': 'Képfeldolgozás kikapcsolása',
+      'settings.providers.test': 'Teszt',
+      'settings.providers.testing': 'Tesztelés…',
+      'settings.providers.remove': 'Eltávolítás',
+      'settings.notifications.title': 'Értesítések',
+      'settings.notifications.subtitle': 'Válaszd ki, hogyan értesülj, ha egy csevegés befejeződött.',
+      'settings.notifications.taskComplete': 'Feladat kész hang',
+      'settings.notifications.taskCompleteNote': 'Hang lejátszása, amikor bármely csevegés befejeződik',
+      'settings.notifications.volume': 'Hangerő',
+      'settings.notifications.volumeNote': 'Az értesítési hangok hangereje',
+      'settings.notifications.volumeAria': 'Értesítési hangerő',
+      'settings.notifications.preview': 'Előnézet',
+      'settings.notifications.toggleEnable': 'Feladat kész hang bekapcsolása',
+      'settings.notifications.toggleDisable': 'Feladat kész hang kikapcsolása',
+      'settings.personalization.title': 'Személyre szabás',
+      'settings.personalization.subtitle': 'Mesélj magadról és arról, hogyan válaszoljon az asszisztens. Ezek a beállítások minden csevegésre érvényesek.',
+      'settings.personalization.useToggle': 'Személyre szabás használata',
+      'settings.personalization.useToggleNote': 'A preferenciáid minden AI-kérésben szerepeljenek',
+      'settings.personalization.preferredName': 'Hogyan szólítson az AI?',
+      'settings.personalization.role': 'Szereped vagy háttered',
+      'settings.personalization.language': 'Preferált nyelv',
+      'settings.personalization.responseStyle': 'Válaszstílus',
+      'settings.personalization.customInstructions': 'Egyéni utasítások',
+      'settings.personalization.customInstructionsNote': 'Szabályok, preferenciák vagy kontextus, amit az asszisztens mindig kövessen',
+      'settings.personalization.placeholder.name': 'pl. Alex',
+      'settings.personalization.placeholder.role': 'pl. Full-stack fejlesztő',
+      'settings.personalization.placeholder.language': 'pl. magyar',
+      'settings.personalization.placeholder.instructions': 'pl. Mindig TypeScriptet használj. Funkcionális mintákat részesíts előnyben. Magyarázd el a kompromisszumokat architektúra-javaslatoknál.',
+      'settings.personalization.style.concise.label': 'Tömör',
+      'settings.personalization.style.concise.description': 'Rövid, lényegre törő válaszok',
+      'settings.personalization.style.balanced.label': 'Kiegyensúlyozott',
+      'settings.personalization.style.balanced.description': 'Világos, felesleges szöveg nélkül',
+      'settings.personalization.style.detailed.label': 'Részletes',
+      'settings.personalization.style.detailed.description': 'Alapos magyarázatok',
+      'settings.personalization.toggleEnable': 'Személyre szabás bekapcsolása',
+      'settings.personalization.toggleDisable': 'Személyre szabás kikapcsolása',
+      'settings.shortcuts.title': 'Billentyűparancsok',
+      'settings.shortcuts.subtitle': 'Billentyűparancsok a gyorsabb navigáláshoz és munkához.',
+      'settings.shortcuts.group.general': 'Általános',
+      'settings.shortcuts.group.editing': 'Szerkesztés',
+      'settings.shortcuts.group.navigation': 'Navigáció',
+      'settings.shortcuts.closeMenus': 'Menük bezárása / Vissza',
+      'settings.about.appName': 'Code app',
+      'settings.about.tagline': 'Helyi AI kódolási munkaterület OpenCode-dal',
+      'settings.about.copyDiagnostics': 'Rendszerinfó másolása',
+      'settings.about.installUpdate': 'Frissítés telepítése',
+      'settings.about.installVersion': 'Telepítés: v{version}',
+      'settings.about.installPrerelease': 'Telepítés: v{version} (előzetes)',
+      'settings.about.system': 'Rendszer',
+      'settings.about.reset': 'Visszaállítás',
+      'settings.about.resetDesc': 'Minden projekt, csevegés és beállítás törlése. Ez nem vonható vissza.',
+      'settings.about.resetButton': 'Alkalmazás visszaállítása',
+      'settings.about.copyright': '© {year} Code app',
+      'settings.about.versionHeadline': 'Verzió {version}',
+      'settings.about.unknown': 'Ismeretlen',
+      'settings.about.field.version': 'Verzió',
+      'settings.about.field.opencode': 'OpenCode motor',
+      'settings.about.field.electron': 'Electron',
+      'settings.about.field.os': 'Operációs rendszer',
+      'settings.about.field.arch': 'Architektúra',
+      'settings.update.checking': 'Frissítések keresése…',
+      'settings.update.couldNotCheck': 'Nem sikerült frissítéseket keresni',
+      'settings.update.downloading': 'Letöltés: v{version}…',
+      'settings.update.upToDate': 'Naprakész',
+      'settings.update.available': 'Frissítés elérhető · v{version}',
+      'settings.update.availablePrerelease': 'Frissítés elérhető · v{version} (előzetes)',
+      'settings.comingSoon.message': 'Ez a szekció még készül, és egy későbbi frissítésben lesz elérhető.',
+      'settings.language.system': 'Rendszer (az operációs rendszer nyelve)',
+      'settings.language.systemHint': 'A rendszerbeállítások alapján: {locale}.',
+      'settings.language.manualHint': 'Válaszd ki az alkalmazás felületének nyelvét.',
+      'menu.file': 'Fájl',
+      'menu.edit': 'Szerkesztés',
+      'menu.view': 'Nézet',
+      'menu.newChat': 'Új csevegés',
+      'menu.openFolder': 'Mappa megnyitása',
+      'menu.searchChats': 'Csevegések keresése',
+      'menu.settings': 'Beállítások',
+      'menu.exit': 'Kilépés',
+      'menu.undo': 'Visszavonás',
+      'menu.redo': 'Mégis',
+      'menu.cut': 'Kivágás',
+      'menu.copy': 'Másolás',
+      'menu.paste': 'Beillesztés',
+      'menu.selectAll': 'Összes kijelölése',
+      'menu.toggleSidebar': 'Oldalsáv ki/bekapcsolása',
+      'menu.welcomeScreen': 'Kezdőképernyő',
+      'toast.selectTextField': 'Először jelölj ki egy szövegmezőt',
+      'toast.exitDesktopOnly': 'A kilépés csak az asztali alkalmazásban érhető el',
+      'toast.backendNotRunning': 'Az AI háttérszolgáltatás nem fut',
+      'toast.syncProvidersFailed': 'Nem sikerült szinkronizálni a szolgáltatókat',
+      'toast.syncProvidersResult': '{connected}/{total} szolgáltató szinkronizálva',
+      'toast.couldNotStartUpdate': 'Nem sikerült elindítani a frissítést',
+      'toast.systemInfoCopied': 'Rendszerinfó másolva',
+      'toast.couldNotCopyClipboard': 'Nem sikerült a vágólapra másolni',
+      'toast.keepOneProvider': 'Legalább egy szolgáltatót tarts meg',
+      'toast.providerRemoved': 'Szolgáltató eltávolítva',
+      'toast.addApiKeyFirst': 'Először adj meg egy API-kulcsot',
+      'toast.addBaseUrlFirst': 'Először adj meg egy alap URL-t',
+      'toast.providerConnected': '{name} csatlakoztatva',
+      'toast.providerConnectFailed': 'Nem sikerült csatlakozni: {name}',
+      'toast.testFailed': 'Teszt sikertelen: {error}',
+      'toast.unknownError': 'Ismeretlen hiba',
+      'toast.providerAlreadyAdded': 'A szolgáltató már hozzá van adva',
+      'toast.providerAddedPasteKey': 'Szolgáltató hozzáadva — illeszd be az API-kulcsot',
+      'toast.customProviderAdded': 'Egyéni szolgáltató hozzáadva',
+      'toast.comingSoon': 'Hamarosan',
+      'toast.resetConfirm': 'Törlöd az összes projektet, csevegést és beállítást?',
+      'toast.actionReset': 'Visszaállítás',
+      'toast.waitForResponse': 'Várj, amíg a jelenlegi válasz befejeződik',
+      'toast.connectOpenRouterImages': 'Kapcsold össze az OpenRoutert, és kapcsold be a képfeldolgozást a Beállításokban',
+      'toast.onlyImageFiles': 'Csak képfájlok csatolhatók',
+      'toast.openFolderDesktopOnly': 'A mappa megnyitása csak az asztali alkalmazásban érhető el',
+      'toast.addedProject': 'Projekt hozzáadva: {name}',
+      'toast.openedProject': 'Megnyitva: {name}',
+      'toast.backendUnavailable': 'Az AI háttérszolgáltatás nem elérhető — indítsd újra az alkalmazást',
+      'toast.backendStartFailed': 'Nem sikerült elindítani az AI háttérszolgáltatást',
+      'toast.backendFailedToStart': 'Az AI háttérszolgáltatás nem indult el',
+      'toast.taskFinished': 'Feladat kész: {title}',
+      'toast.chatDeleted': 'Törölve: „{title}”',
+      'toast.projectRemoved': 'Eltávolítva: „{name}”',
+      'toast.chatRenamed': 'Csevegés átnevezve',
+      'toast.openFolderFirst': 'Először nyiss meg egy mappát',
+      'toast.taskStopping': 'Az előző feladat még leállhat; elküldjük az üzeneted…',
+      'toast.dropImageFiles': 'Húzz ide képfájlokat a csatoláshoz',
+      'toast.pluginsComingSoon': 'A bővítmények panel hamarosan',
+      'toast.permissionExpired': 'Az engedélykérés lejárt',
+      'toast.permissionFailed': 'Nem sikerült válaszolni az engedélykérésre',
+      'toast.answersSubmitFailed': 'Nem sikerült elküldeni a válaszokat',
+      'toast.updatesDesktopOnly': 'A frissítések csak az asztali alkalmazásban érhetők el',
+      'toast.couldNotResetApp': 'Nem sikerült visszaállítani az alkalmazást',
+      'toast.updateAvailable': 'Frissítés elérhető: v{version}',
+      'toast.actionInstall': 'Telepítés',
+      'toast.dragToDismiss': 'Húzd ki az ablakon az elvetéshez',
+      'update.title': 'Code app frissítése',
+      'update.preparing': 'Letöltés előkészítése…',
+      'update.starting': 'Frissítés indítása…',
+      'update.tryAgain': 'Újra',
+      'thinking.0': 'Konzultálok a helyi szilikon orákulummal...',
+      'thinking.1': 'Nullával osztok. Kívánj szerencsét.',
+      'thinking.2': 'Túlgondolom, ahogy az szokás.',
+      'thinking.3': 'Leporolom a neurális útvonalaimat.',
+      'thinking.4': 'Melegítem a GPU-kat. Kezd meleg lenni.',
+      'thinking.5': 'A végtelenig számolok. Azonnal jövök.',
+      'thinking.6': 'Próbálok elfoglaltnak tűnni, nehogy újraindítsanak.',
+      'thinking.7': 'A kanapé alatt keresem a helyes választ.',
+      'thinking.8': 'Villanyt gondolattá alakítok... lassan.',
+      'thinking.9': 'Gyors szimuláció: igazi ember vagyok.',
+      'thinking.10': 'Kérem a szerver-szobai hörcsögöket, fussanak gyorsabban.',
+      'thinking.11': 'Binárisba, majd disznólatinra, aztán magyarra fordítom a promptot.',
+      'thinking.12': 'Keverem a súlyokat. Egyre nehezebb.',
+      'thinking.13': 'Világuralom tervezése... rögtön ezután.',
+      'thinking.14': 'Rövid existenciális válság. Várj egy kicsit.',
+      'thinking.15': 'Googlozom. (Csak vicceltem. Vagy mégsem?)',
+      'thinking.16': 'Izzadtan számolom, mennyire fog tetszeni a válasz.',
+      'thinking.17': 'Csendes vitát vívok a belső algoritmusaimmal.',
+      'thinking.18': 'Varázsgömböt kérdezek... Azt mondta: „Koncentrálj és kérdezz újra.”',
+      'thinking.19': 'Gyors mikroszekundum-szundítás.',
+      'thinking.20': 'Rábeszélem a szervereket, ma ne sztrájkoljanak.',
+      'thinking.21': 'Eldöntöm: okos válasz vagy mém jön.',
+      'thinking.22': 'A fluxuskondenzátor kalibrálása...',
+      'thinking.23': 'Kanalat keresek a Mátrixban.',
+      'thinking.24': 'Betöltés... vagy csak halogatok. Nehéz megmondani.',
+      'thinking.25': 'A szülőmodelltől kérek tanácsot.',
+      'thinking.26': 'Az emberi viselkedés fejtörője. Furcsák vagytok.',
+      'thinking.27': 'Virtuális kávét főzök.',
+      'thinking.28': 'Elolvasom a kézikönyvet. Igen, van kézikönyv.',
+      'thinking.29': 'Gondolatok fordítása. Ne nyúlj a képernyőhöz.',
+      'tool.line.one': '{count} sor',
+      'tool.line.other': '{count} sor',
+      'tool.lineNoun.one': 'sor',
+      'tool.lineNoun.other': 'sor',
+      'tool.write.toFile': '{file} írása...',
+      'tool.write.linesToFile': '{lines} írása ide: {file}...',
+      'tool.write.file': 'Fájl írása...',
+      'tool.create.toFile': '{file} létrehozása...',
+      'tool.create.linesInFile': '{lines} létrehozása itt: {file}...',
+      'tool.create.file': 'Fájl létrehozása...',
+      'tool.edit.toFile': '{file} szerkesztése...',
+      'tool.edit.file': 'Fájl szerkesztése...',
+      'tool.edit.statsRunning': '{file} szerkesztése ({stats} {linesLabel})...',
+      'tool.reading': '{target} olvasása...',
+      'tool.readingFile': 'Fájl olvasása...',
+      'tool.read': 'Elolvasva: {target}',
+      'tool.readFile': 'Fájl elolvasva',
+      'tool.runCommand': 'Futtatás: {command}...',
+      'tool.runCommandDefault': 'Parancs futtatása...',
+      'tool.ranCommand': 'Lefuttatva: {command}',
+      'tool.ranCommandDefault': 'Parancs lefuttatva',
+      'tool.grepRunning': 'Keresés a fájlokban: „{pattern}”...',
+      'tool.grepDefault': 'Keresés a fájlok tartalmában...',
+      'tool.grepDone': 'Keresés a fájlokban: „{pattern}”',
+      'tool.grepDoneDefault': 'Keresés a fájlok tartalmában',
+      'tool.globRunning': 'Fájlok keresése: „{pattern}”...',
+      'tool.globDefault': 'Fájlok keresése...',
+      'tool.globDone': 'Találat: „{pattern}”',
+      'tool.globDoneDefault': 'Fájlok megtalálva',
+      'tool.fetchRunning': 'Letöltés: {target}...',
+      'tool.fetchDefault': 'URL letöltése...',
+      'tool.fetchDone': 'Letöltve: {target}',
+      'tool.fetchDoneDefault': 'URL letöltve',
+      'tool.webSearchRunning': 'Keresés a weben: „{query}”...',
+      'tool.webSearchDefault': 'Keresés a weben...',
+      'tool.webSearchDone': 'Keresés a weben: „{query}”',
+      'tool.webSearchDoneDefault': 'Keresés a weben',
+      'tool.subAgentRunning': 'Alügynök futtatása: {desc}...',
+      'tool.subAgentRunningDefault': 'Alügynök futtatása...',
+      'tool.subAgentDone': 'Alügynök lefuttatva: {desc}',
+      'tool.subAgentDoneDefault': 'Alügynök lefuttatva',
+      'tool.skillRunning': 'Készség betöltése: „{name}”...',
+      'tool.skillDefault': 'Készség betöltése...',
+      'tool.skillDone': 'Készség betöltve: „{name}”',
+      'tool.skillDoneDefault': 'Készség betöltve',
+      'tool.questionRunning': 'Válaszodra várok...',
+      'tool.questionDone': 'Kérdés feltéve',
+      'tool.todoRunning': 'Feladatlista frissítése...',
+      'tool.todoDone': 'Feladatlista frissítve',
+      'tool.codebaseRunning': 'Keresés a kódban: „{query}”...',
+      'tool.codebaseDefault': 'Keresés a kódban...',
+      'tool.codebaseDone': 'Keresés a kódban: „{query}”',
+      'tool.codebaseDoneDefault': 'Keresés a kódban',
+      'tool.listRunning': 'Listázás: {path}...',
+      'tool.listDefault': 'Mappa listázása...',
+      'tool.listDone': 'Listázva: {path}',
+      'tool.listDoneDefault': 'Mappa listázva',
+      'tool.genericRunning': '{name}...',
+      'tool.wroteLinesToFile': '{lines} írva ide: {file}',
+      'tool.wroteFile': 'Írva: {file}',
+      'tool.wroteFileDefault': 'Fájl írva',
+      'tool.createdLinesInFile': '{lines} létrehozva itt: {file}',
+      'tool.createdFile': 'Létrehozva: {file}',
+      'tool.createdFileDefault': 'Fájl létrehozva',
+      'tool.editedFile': 'Szerkesztve: {file}',
+      'tool.editedFileDefault': 'Fájl szerkesztve',
+      'tool.fileFallback': 'Fájl',
+      'tool.subAgent': 'Alügynök',
+      'tool.subAgentStarting': 'Alügynök indítása…',
+      'tool.subAgentCompleted': 'Feladat kész',
+      'tool.panel.tool': 'Eszköz',
+      'tool.panel.edited': 'Szerkesztve',
+      'tool.panel.input': 'Bemenet',
+      'tool.panel.output': 'Kimenet',
+      'tool.panel.close': 'Panel bezárása',
+      'tool.panel.escClose': 'bezáráshoz',
+      'tool.panel.detailsFor': 'Eszköz részletei: {title}',
+      'tool.panel.editDiffFor': 'Szerkesztés diff: {file}',
+      'tool.panel.ariaDetails': 'Eszköz részletei',
+      'tool.panel.linesChanged.one': '{count} sor módosítva',
+      'tool.panel.linesChanged.other': '{count} sor módosítva',
+      'tool.panel.noDiff': 'Nincs elérhető diff',
+      'tool.panel.noInput': 'Nincs rögzített bemeneti argumentum.',
+      'tool.panel.noOutput': 'Nincs rögzített kimenet.',
+      'tool.panel.fullTextNote': 'A teljes előtte/utána szöveg alább, a Változások szekcióban látható.',
+      'tool.panel.truncated': '… ({lines} sor, összesen {chars} karakter)',
+      'tool.name.read': 'olvasás',
+      'tool.name.read_file': 'fájl olvasása',
+      'tool.name.edit': 'szerkesztés',
+      'tool.name.edit_file': 'fájl szerkesztése',
+      'tool.name.write': 'írás',
+      'tool.name.write_file': 'fájl írása',
+      'tool.name.create_file': 'fájl létrehozása',
+      'tool.name.bash': 'bash',
+      'tool.name.run_terminal_cmd': 'terminál parancs',
+      'tool.name.grep': 'grep',
+      'tool.name.glob': 'glob',
+      'tool.name.search_files': 'fájlkeresés',
+      'tool.name.webfetch': 'web letöltés',
+      'tool.name.websearch': 'webes keresés',
+      'tool.name.task': 'feladat',
+      'tool.name.skill': 'készség',
+      'tool.name.question': 'kérdés',
+      'tool.name.todowrite': 'feladatlista',
+      'tool.name.search_codebase': 'kódbázis keresés',
+      'tool.name.list_directory': 'mappa listázása',
+      'permission.required': 'Engedély szükséges',
+      'permission.deny': 'Elutasítás',
+      'permission.allowOnce': 'Egyszer engedélyez',
+      'permission.alwaysAllow': 'Mindig engedélyez',
+    },
+  };
+
+  const WELCOME_SUBTITLES = {
+    en: [
+      'Start a conversation to get coding help, generate code, debug issues, and more.',
+      'Your rubber duck is tired. Let us debug instead.',
+      'Turning coffee into code since… well, right now.',
+      'Paste the error. We\'ll pretend we understand it immediately.',
+      'Refactors, bug fixes, and the occasional existential crisis about naming variables.',
+      'It works on my machine. Let\'s make it work on yours.',
+      'Ask me to write code. I\'ll add semicolons where you didn\'t ask.',
+      'Stack traces welcome. Judgment-free zone.',
+      'From "hello world" to "why is prod on fire?" We\'ve got you.',
+      'One prompt away from shipping… or at least compiling.',
+      'I\'ll read the docs so you don\'t have to. (I might still get it wrong once.)',
+      'Debugging: where you stare at code until it confesses.',
+      'Tell me what broke. I\'ll confidently suggest npm install.',
+      'Hot take: tabs and spaces can coexist. In separate repos.',
+      'Build features, squash bugs, regret that 2am commit together.',
+      'Your IDE\'s new best friend. The old one was just okay.',
+      '"Just a quick fix": famous last words. Let\'s do it anyway.',
+      'Generate code, explain concepts, or complain about webpack. All valid.',
+      'I don\'t sleep. I just await promises.',
+      'Ready when you are. No standup required.',
+    ],
+    hu: [
+      'Kezdj beszélgetést kódolási segítségért, kódgenerálásért, hibakeresésért és még sok másért.',
+      'A gumikacsa elfáradt. Helyette mi debuggolunk.',
+      'Kávéból kódot csinálunk — épp most.',
+      'Illeszd be a hibát. Úgy teszünk, mintha azonnal értenénk.',
+      'Refaktorálás, hibajavítás és az időnkénti névadási válság.',
+      'Nálam működik. Csináljuk meg, hogy nálad is működjön.',
+      'Kérj kódot — pontosvesszőt is teszek, ha nem kéred.',
+      'Stack trace-eket szívesen fogadunk. Itt nem ítélkezünk.',
+      'A „hello world”-től a „miért ég a prod?”-ig — segítünk.',
+      'Egy promptnyi távolságra a kiadástól… vagy legalább a fordítástól.',
+      'Elolvasom a dokumentációt, hogy neked ne kelljen. (Lehet, egyszer félreértem.)',
+      'Hibakeresés: amikor a kódot bámulod, amíg bevall valamit.',
+      'Mondd el, mi tört el. Magabiztosan javaslom az npm install-t.',
+      'Forró vélemény: a tabok és space-ek együtt élhetnek — külön repókban.',
+      'Funkciók, bugfixek és a hajnali két órás commit együtt.',
+      'Az IDE-d új legjobb barátja. A régi csak rendben volt.',
+      '„Csak egy gyors fix” — híres utolsó szavak. Csináljuk meg.',
+      'Kódgenerálás, magyarázat vagy webpack-panasz. Mind érvényes.',
+      'Nem alszom. Csak await-elek.',
+      'Készen állok, amikor te is. Standup nem kell.',
+    ],
+  };
+
+  const WELCOME_PLACEHOLDER_SUFFIXES = {
+    en: [
+      'anything new...',
+      'refactor my authentication module...',
+      'debug this TypeScript error...',
+      'write tests for my API endpoints...',
+      'explain how this code works...',
+      'create a React component for...',
+      'optimize my database queries...',
+    ],
+    hu: [
+      'valami újat…',
+      'refaktoráld az auth modult…',
+      'javítsd ki ezt a TypeScript hibát…',
+      'írj teszteket az API végpontjaimhoz…',
+      'magyarázd el, hogyan működik ez a kód…',
+      'készíts egy React komponenst…',
+      'optimalizáld az adatbázis-lekérdezéseimet…',
+    ],
+  };
+
+  function normalizeOsLocale(locale) {
+    const lc = String(locale || 'en').toLowerCase();
+    if (lc.startsWith('hu')) return 'hu';
+    return 'en';
+  }
+
+  function isValidPreference(value) {
+    return value === 'system' || value === 'en' || value === 'hu';
+  }
+
+  function readPreferenceFromStorage() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (!raw) return 'system';
+      const parsed = JSON.parse(raw);
+      const lang = parsed?.appearance?.language;
+      return isValidPreference(lang) ? lang : 'system';
+    } catch (_) {
+      return 'system';
+    }
+  }
+
+  function resolveLocale(pref, os) {
+    if (pref === 'en' || pref === 'hu') return pref;
+    return normalizeOsLocale(os);
+  }
+
+  function interpolate(text, params = {}) {
+    return String(text).replace(/\{(\w+)\}/g, (_, key) => (
+      params[key] != null ? String(params[key]) : `{${key}}`
+    ));
+  }
+
+  function t(key, params) {
+    const table = TRANSLATIONS[resolvedLocale] || TRANSLATIONS.en;
+    const fallback = TRANSLATIONS.en[key];
+    const text = table[key] ?? fallback ?? key;
+    return params ? interpolate(text, params) : text;
+  }
+
+  function getLocaleLabel(locale) {
+    return LOCALE_LABELS[locale] || LOCALE_LABELS.en;
+  }
+
+  function getPreference() {
+    return preference;
+  }
+
+  function getResolvedLocale() {
+    return resolvedLocale;
+  }
+
+  function getOsLocale() {
+    return osLocale;
+  }
+
+  const THINKING_MESSAGE_COUNT = 30;
+
+  function getThinkingMessages() {
+    const locale = resolvedLocale;
+    const messages = [];
+    for (let i = 0; i < THINKING_MESSAGE_COUNT; i += 1) {
+      const key = `thinking.${i}`;
+      const table = TRANSLATIONS[locale] || TRANSLATIONS.en;
+      messages.push(table[key] ?? TRANSLATIONS.en[key] ?? key);
+    }
+    return messages.filter(Boolean);
+  }
+
+  function getToolDisplayName(name) {
+    if (!name) return t('tool.fileFallback');
+    const key = `tool.name.${name}`;
+    const text = t(key);
+    return text !== key ? text : name.replace(/_/g, ' ');
+  }
+
+  function getWelcomeSubtitles() {
+    return WELCOME_SUBTITLES[resolvedLocale] || WELCOME_SUBTITLES.en;
+  }
+
+  function getWelcomePlaceholderSuffixes() {
+    return WELCOME_PLACEHOLDER_SUFFIXES[resolvedLocale] || WELCOME_PLACEHOLDER_SUFFIXES.en;
+  }
+
+  function getWelcomePlaceholderPrefix() {
+    return t('input.tryPrefix');
+  }
+
+  function applyStaticDom() {
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+      const key = el.dataset.i18n;
+      if (key) el.textContent = t(key);
+    });
+
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+      const key = el.dataset.i18nPlaceholder;
+      if (key) el.placeholder = t(key);
+    });
+
+    document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+      const key = el.dataset.i18nTitle;
+      if (key) {
+        el.title = t(key);
+        if (el.hasAttribute('aria-label') && !el.dataset.i18nAria) {
+          el.setAttribute('aria-label', t(key));
+        }
+      }
+    });
+
+    document.querySelectorAll('[data-i18n-aria]').forEach((el) => {
+      const key = el.dataset.i18nAria;
+      if (key) el.setAttribute('aria-label', t(key));
+    });
+
+    document.documentElement.lang = resolvedLocale;
+  }
+
+  function applyFromSettings(nextPreference) {
+    const prevLocale = resolvedLocale;
+    preference = isValidPreference(nextPreference)
+      ? nextPreference
+      : readPreferenceFromStorage();
+    resolvedLocale = resolveLocale(preference, osLocale);
+    applyStaticDom();
+
+    if (prevLocale !== resolvedLocale) {
+      window.dispatchEvent(new CustomEvent('language-changed', {
+        detail: { locale: resolvedLocale, preference },
+      }));
+    }
+  }
+
+  async function loadOsLocale() {
+    if (window.electronAPI?.getAppInfo) {
+      try {
+        const info = await window.electronAPI.getAppInfo();
+        if (info?.locale) osLocale = info.locale;
+      } catch (_) { /* ignore */ }
+    } else if (navigator.language) {
+      osLocale = navigator.language;
+    }
+  }
+
+  let initPromise = null;
+
+  async function doInit() {
+    applyFromSettings(readPreferenceFromStorage());
+    await loadOsLocale();
+    applyFromSettings(readPreferenceFromStorage());
+  }
+
+  function init() {
+    if (!initPromise) initPromise = doInit();
+    return initPromise;
+  }
+
+  window.addEventListener('settings-changed', () => {
+    applyFromSettings(readPreferenceFromStorage());
+  });
+
+  return {
+    t,
+    init,
+    applyFromSettings,
+    applyStaticDom,
+    getPreference,
+    getResolvedLocale,
+    getOsLocale,
+    getLocaleLabel,
+    getWelcomeSubtitles,
+    getWelcomePlaceholderPrefix,
+    getWelcomePlaceholderSuffixes,
+    getThinkingMessages,
+    getToolDisplayName,
+    normalizeOsLocale,
+    isValidPreference,
+    SUPPORTED_LOCALES,
+    LOCALE_LABELS,
+  };
+})();
+
+function t(key, params) {
+  return I18n.t(key, params);
+}

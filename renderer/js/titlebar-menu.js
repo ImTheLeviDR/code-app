@@ -7,37 +7,37 @@
 const TitlebarMenu = (() => {
   const MENUBAR_CONFIG = [
     {
-      label: 'File',
+      labelKey: 'menu.file',
       items: [
-        { label: 'New Chat', shortcut: 'Ctrl+N', action: 'new-chat' },
-        { label: 'Open Folder', shortcut: 'Ctrl+O', action: 'open-folder' },
-        { label: 'Search Chats', shortcut: 'Ctrl+K', action: 'search' },
+        { labelKey: 'menu.newChat', shortcut: 'Ctrl+N', action: 'new-chat' },
+        { labelKey: 'menu.openFolder', shortcut: 'Ctrl+O', action: 'open-folder' },
+        { labelKey: 'menu.searchChats', shortcut: 'Ctrl+K', action: 'search' },
         { type: 'separator' },
-        { label: 'Settings', shortcut: 'Ctrl+,', action: 'settings' },
+        { labelKey: 'menu.settings', shortcut: 'Ctrl+,', action: 'settings' },
         { type: 'separator' },
-        { label: 'Exit', shortcut: 'Alt+F4', action: 'exit' },
+        { labelKey: 'menu.exit', shortcut: 'Alt+F4', action: 'exit' },
       ],
     },
     {
-      label: 'Edit',
+      labelKey: 'menu.edit',
       items: [
-        { label: 'Undo', shortcut: 'Ctrl+Z', action: 'undo' },
-        { label: 'Redo', shortcut: 'Ctrl+Y', action: 'redo' },
+        { labelKey: 'menu.undo', shortcut: 'Ctrl+Z', action: 'undo' },
+        { labelKey: 'menu.redo', shortcut: 'Ctrl+Y', action: 'redo' },
         { type: 'separator' },
-        { label: 'Cut', shortcut: 'Ctrl+X', action: 'cut' },
-        { label: 'Copy', shortcut: 'Ctrl+C', action: 'copy' },
-        { label: 'Paste', shortcut: 'Ctrl+V', action: 'paste' },
+        { labelKey: 'menu.cut', shortcut: 'Ctrl+X', action: 'cut' },
+        { labelKey: 'menu.copy', shortcut: 'Ctrl+C', action: 'copy' },
+        { labelKey: 'menu.paste', shortcut: 'Ctrl+V', action: 'paste' },
         { type: 'separator' },
-        { label: 'Select All', shortcut: 'Ctrl+A', action: 'select-all' },
+        { labelKey: 'menu.selectAll', shortcut: 'Ctrl+A', action: 'select-all' },
       ],
     },
     {
-      label: 'View',
+      labelKey: 'menu.view',
       items: [
-        { label: 'Toggle Sidebar', shortcut: 'Ctrl+B', action: 'toggle-sidebar' },
+        { labelKey: 'menu.toggleSidebar', shortcut: 'Ctrl+B', action: 'toggle-sidebar' },
         { type: 'separator' },
-        { label: 'Welcome Screen', action: 'welcome' },
-        { label: 'Settings', shortcut: 'Ctrl+,', action: 'settings' },
+        { labelKey: 'menu.welcomeScreen', action: 'welcome' },
+        { labelKey: 'menu.settings', shortcut: 'Ctrl+,', action: 'settings' },
       ],
     },
   ];
@@ -45,6 +45,7 @@ const TitlebarMenu = (() => {
   let openMenu = null;
   let menuItems = [];
   let clickBound = false;
+  let initialized = false;
 
   function renderMenuItems(items) {
     return items.map((item) => {
@@ -63,7 +64,7 @@ const TitlebarMenu = (() => {
           role="menuitem"
           data-action="${item.action}"
         >
-          <span class="menubar-option-label">${item.label}</span>
+          <span class="menubar-option-label">${t(item.labelKey)}</span>
           ${shortcut}
         </button>
       `;
@@ -99,31 +100,25 @@ const TitlebarMenu = (() => {
 
     switch (action) {
       case 'new-chat':
-        if (!getSelectedProject()) {
-          openProjectFolder();
-          break;
-        }
-        showWelcomeScreen();
-        focusInput(dom.welcomeInput);
+        if (typeof startNewChat === 'function') startNewChat();
         break;
       case 'open-folder':
-        openProjectFolder();
+        if (typeof openFolderDialog === 'function') openFolderDialog();
         break;
       case 'search':
-        openSearch();
+        if (typeof openSearch === 'function') openSearch();
         break;
       case 'settings':
-        openSettings();
+        if (typeof showSettingsScreen === 'function') showSettingsScreen();
         break;
       case 'exit':
         quitApp();
         break;
-      case 'welcome':
-        showWelcomeScreen();
-        focusInput(dom.welcomeInput);
-        break;
       case 'toggle-sidebar':
-        toggleSidebar();
+        if (typeof Sidebar !== 'undefined') Sidebar.toggle();
+        break;
+      case 'welcome':
+        if (typeof showWelcomeScreen === 'function') showWelcomeScreen();
         break;
       case 'undo':
         runEditCommand('undo');
@@ -151,7 +146,7 @@ const TitlebarMenu = (() => {
   function createMenuItem(root, config) {
     root.innerHTML = `
       <button type="button" class="menubar-trigger" aria-haspopup="true" aria-expanded="false">
-        ${config.label}
+        ${t(config.labelKey)}
       </button>
       <div class="menubar-menu" role="menu">
         ${renderMenuItems(config.items)}
@@ -203,6 +198,10 @@ const TitlebarMenu = (() => {
     const menubar = document.getElementById('titlebarMenubar');
     if (!menubar) return;
 
+    menubar.innerHTML = '';
+    menuItems = [];
+    openMenu = null;
+
     MENUBAR_CONFIG.forEach((config) => {
       const item = document.createElement('div');
       item.className = 'menubar-item';
@@ -218,9 +217,19 @@ const TitlebarMenu = (() => {
       });
       clickBound = true;
     }
+
+    initialized = true;
   }
 
-  return { init, closeAllMenus };
+  function refresh() {
+    if (!initialized) {
+      init();
+      return;
+    }
+    init();
+  }
+
+  return { init, refresh, closeAllMenus };
 })();
 
 function runEditCommand(command) {
@@ -238,31 +247,7 @@ function runEditCommand(command) {
     return;
   }
 
-  showToast('Select a text field first');
-}
-
-let sidebarToggling = false;
-
-function toggleSidebar() {
-  if (sidebarToggling || !dom.appBody || !dom.sidebar) return;
-
-  const isHidden = dom.appBody.classList.contains('sidebar-hidden');
-  sidebarToggling = true;
-
-  if (isHidden) {
-    dom.sidebar.style.width = '0px';
-    dom.sidebar.style.opacity = '0';
-    dom.appBody.classList.remove('sidebar-hidden');
-    Physics.sidebarToggle(dom.sidebar, true, () => {
-      sidebarToggling = false;
-    });
-    return;
-  }
-
-  Physics.sidebarToggle(dom.sidebar, false, () => {
-    dom.appBody.classList.add('sidebar-hidden');
-    sidebarToggling = false;
-  });
+  showToast(t('toast.selectTextField'));
 }
 
 function quitApp() {
@@ -276,9 +261,5 @@ function quitApp() {
     return;
   }
 
-  showToast('Exit is available in the desktop app');
+  showToast(t('toast.exitDesktopOnly'));
 }
-
-document.addEventListener('DOMContentLoaded', () => {
-  TitlebarMenu.init();
-});

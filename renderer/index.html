@@ -26,8 +26,8 @@
           type="button"
           class="titlebar-logo-wrap"
           id="titlebarLogoWrap"
-          title="Toggle sidebar"
-          aria-label="Toggle sidebar"
+          data-i18n-title="titlebar.toggleSidebar"
+          data-i18n-aria="titlebar.toggleSidebar"
         >
           <div class="titlebar-logo">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -40,18 +40,18 @@
       <div
         class="titlebar-drag-region"
         id="titlebarDragRegion"
-        title="Drag to move · Double-click to maximize"
+        data-i18n-title="titlebar.dragHint"
         aria-hidden="true"
       ></div>
       <div class="titlebar-right">
         <div class="titlebar-controls">
-          <button class="ctrl-btn minimize-btn" id="minimizeBtn" type="button" title="Minimize" aria-label="Minimize">
+          <button class="ctrl-btn minimize-btn" id="minimizeBtn" type="button" data-i18n-title="titlebar.minimize" data-i18n-aria="titlebar.minimize">
             <svg width="10" height="1" viewBox="0 0 10 1" aria-hidden="true"><rect width="10" height="1" fill="currentColor"/></svg>
           </button>
-          <button class="ctrl-btn maximize-btn" id="maximizeBtn" type="button" title="Maximize" aria-label="Maximize">
+          <button class="ctrl-btn maximize-btn" id="maximizeBtn" type="button" data-i18n-title="titlebar.maximize" data-i18n-aria="titlebar.maximize">
             <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect width="9" height="9" x=".5" y=".5" fill="none" stroke="currentColor"/></svg>
           </button>
-          <button class="ctrl-btn close-btn" id="closeBtn" type="button" title="Hide to notification area" aria-label="Hide to notification area">
+          <button class="ctrl-btn close-btn" id="closeBtn" type="button" data-i18n-title="titlebar.hideToTray" data-i18n-aria="titlebar.hideToTray">
             <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
           </button>
         </div>
@@ -61,6 +61,8 @@
     <!-- App body -->
     <div class="app-body" id="appBody">
 
+      <div class="sidebar-edge-opener" id="sidebarEdgeOpener" aria-hidden="true"></div>
+
       <!-- Sidebar -->
       <aside class="sidebar" id="sidebar">
         <!-- Top nav -->
@@ -69,20 +71,20 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
-            New chat
+            <span data-i18n="sidebar.newChat">New chat</span>
           </button>
           <button class="nav-item" data-action="search">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
               <path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
-            Search
+            <span data-i18n="sidebar.search">Search</span>
           </button>
           <button class="nav-item" data-action="plugins">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
-            Plugins
+            <span data-i18n="sidebar.plugins">Plugins</span>
           </button>
         </nav>
 
@@ -91,12 +93,12 @@
         <!-- Projects list -->
         <div class="projects-container" id="projectsContainer">
           <div class="projects-label">
-            <span>Projects</span>
+            <span data-i18n="sidebar.projects">Projects</span>
             <button
               class="projects-open-folder"
               type="button"
-              title="Open folder"
-              aria-label="Open folder"
+              data-i18n-title="sidebar.openFolder"
+              data-i18n-aria="sidebar.openFolder"
               data-action="open-folder"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -116,9 +118,10 @@
               <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
               <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2"/>
             </svg>
-            Settings
+            <span data-i18n="sidebar.settings">Settings</span>
           </button>
         </div>
+        <div class="sidebar-resize-handle" id="sidebarResizeHandle" aria-hidden="true"></div>
       </aside>
 
       <!-- Main content area -->
@@ -128,7 +131,7 @@
         <div class="welcome-screen" id="welcomeScreen" style="display:none">
           <div class="welcome-content">
             <h1 class="welcome-title" id="welcomeTitle">
-              <span class="welcome-title-prompt">What should we work on in<span class="project-dropdown project-dropdown--title" id="welcomeProjectDropdown"></span></span>
+              <span class="welcome-title-prompt"><span data-i18n="welcome.titlePrefix">What should we work on in</span><span class="project-dropdown project-dropdown--title" id="welcomeProjectDropdown"></span></span>
             </h1>
             <p class="welcome-subtitle" id="welcomeSubtitle"></p>
           </div>
@@ -138,12 +141,13 @@
               <textarea
                 class="message-input"
                 id="welcomeInput"
+                data-i18n-placeholder="input.tryPrefix"
                 placeholder="Try "
                 rows="1"
               ></textarea>
               <div class="input-footer">
                 <div class="input-footer-left">
-                  <button class="input-action-btn" type="button" id="welcomeAttachBtn" title="Attach image">
+                  <button class="input-action-btn" type="button" id="welcomeAttachBtn" data-i18n-title="input.attachImage">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                       <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
@@ -151,7 +155,7 @@
                 </div>
                 <div class="input-footer-right">
                   <div class="model-dropdown" id="welcomeModelDropdown"></div>
-                  <button class="send-btn" id="welcomeSendBtn" disabled title="Send message" aria-label="Send message">
+                  <button class="send-btn" id="welcomeSendBtn" disabled data-i18n-title="input.sendMessage" data-i18n-aria="input.sendMessage">
                     <span class="send-btn-icon send-icon" aria-hidden="true">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                         <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -180,7 +184,7 @@
               <span class="chat-title" id="chatTitle">New chat</span>
             </div>
             <div class="chat-header-right">
-              <button class="header-action-btn" id="chatMoreBtn" title="More options" aria-haspopup="menu" aria-expanded="false">
+              <button class="header-action-btn" id="chatMoreBtn" data-i18n-title="chat.moreOptions" data-i18n-aria="chat.moreOptions" aria-haspopup="menu" aria-expanded="false">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                   <circle cx="12" cy="5" r="1" fill="currentColor"/>
                   <circle cx="12" cy="12" r="1" fill="currentColor"/>
@@ -204,8 +208,8 @@
           <div class="chat-input-area" id="chatInputArea">
             <div class="continue-suggestion" id="continueSuggestion" hidden>
               <div class="continue-suggestion-inner">
-                <p class="continue-suggestion-text">This chat wasn't finished. Pick up where you left off.</p>
-                <button type="button" class="continue-suggestion-btn" id="continueSuggestionBtn">
+                <p class="continue-suggestion-text" data-i18n="chat.continueHint">This chat wasn't finished. Pick up where you left off.</p>
+                <button type="button" class="continue-suggestion-btn" id="continueSuggestionBtn" data-i18n="chat.continue">
                   Continue
                 </button>
               </div>
@@ -215,12 +219,13 @@
               <textarea
                 class="message-input"
                 id="chatInput"
+                data-i18n-placeholder="chat.replyPlaceholder"
                 placeholder="Reply to continue..."
                 rows="1"
               ></textarea>
               <div class="input-footer">
                 <div class="input-footer-left">
-                  <button class="input-action-btn" type="button" id="chatAttachBtn" title="Attach image">
+                  <button class="input-action-btn" type="button" id="chatAttachBtn" data-i18n-title="input.attachImage">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                       <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
@@ -228,7 +233,7 @@
                 </div>
                 <div class="input-footer-right">
                   <div class="model-dropdown" id="chatModelDropdown"></div>
-                  <button class="send-btn" id="chatSendBtn" disabled title="Send message" aria-label="Send message">
+                  <button class="send-btn" id="chatSendBtn" disabled data-i18n-title="input.sendMessage" data-i18n-aria="input.sendMessage">
                     <span class="send-btn-icon send-icon" aria-hidden="true">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                         <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -262,24 +267,26 @@
           <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
-      <h1 class="update-installer-title">Updating Code app</h1>
-      <p class="update-installer-version" id="updateInstallerVersion">Preparing download…</p>
+      <h1 class="update-installer-title" data-i18n="update.title">Updating Code app</h1>
+      <p class="update-installer-version" id="updateInstallerVersion" data-i18n="update.preparing">Preparing download…</p>
       <div class="update-installer-progress" aria-hidden="true">
         <div class="update-installer-progress-bar" id="updateInstallerProgressBar"></div>
       </div>
-      <p class="update-installer-status" id="updateInstallerStatus">Starting update…</p>
+      <p class="update-installer-status" id="updateInstallerStatus" data-i18n="update.starting">Starting update…</p>
       <p class="update-installer-detail" id="updateInstallerDetail"></p>
-      <button type="button" class="update-installer-retry" id="updateInstallerRetry" hidden>Try again</button>
+      <button type="button" class="update-installer-retry" id="updateInstallerRetry" hidden data-i18n="update.tryAgain">Try again</button>
     </div>
   </div>
 
   <script src="js/physics.js"></script>
   <script src="js/data.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/backend.js"></script>
   <script src="js/sounds.js"></script>
   <script src="js/app.js"></script>
   <script src="js/sidebar-context-menu.js"></script>
   <script src="js/settings.js"></script>
+  <script src="js/sidebar.js"></script>
   <script src="js/titlebar-menu.js"></script>
 </body>
 </html>

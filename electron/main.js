@@ -258,6 +258,7 @@ ipcMain.handle('app:get-info', () => ({
   platform: process.platform,
   arch: process.arch,
   osLabel: getOsLabel(),
+  locale: app.getLocale(),
   opencodeVersion: pkg.dependencies?.['opencode-ai']?.replace(/^\^/, '') || null,
 }));
 

@@ -841,6 +841,9 @@ async function finishStartup() {
 }
 
 async function init() {
+  if (typeof I18n !== 'undefined') await I18n.init();
+  if (typeof TitlebarMenu !== 'undefined') TitlebarMenu.init();
+
   signalShellReady();
 
   if (state.migrateChatStateToFile) {
@@ -869,6 +872,16 @@ async function init() {
   updateProjectSelection();
 
   window.addEventListener('settings-changed', refreshModelDropdowns);
+  window.addEventListener('language-changed', () => {
+    if (typeof TitlebarMenu !== 'undefined') TitlebarMenu.refresh();
+    setRandomWelcomeSubtitle();
+    animateWelcomeInputPlaceholders();
+    renderSidebar();
+    restartActiveThinkingTypewriters();
+    refreshVisibleToolActivityLabels();
+    refreshOpenToolPanel();
+    refreshInlinePermissionButtons();
+  });
   window.addEventListener('models-loading', (e) => {
     modelsLoading = Boolean(e.detail?.loading);
     syncModelDropdownLabels();
@@ -877,6 +890,7 @@ async function init() {
   bindEvents();
   if (typeof SidebarContextMenu !== 'undefined') SidebarContextMenu.bind();
   setupWindowControls();
+  if (typeof Sidebar !== 'undefined') Sidebar.init();
   setupUpdateListener();
   animateWelcomeInputPlaceholders();
   window.addEventListener('beforeunload', saveChatState);
@@ -1331,7 +1345,7 @@ function renderSidebar() {
         ${project.name[0].toUpperCase()}
       </div>
       <span class="project-name">${project.name}</span>
-      <button class="project-add-chat" title="New chat">
+      <button class="project-add-chat" title="${escapeHtml(t('sidebar.newChat'))}">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
           <path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
@@ -1634,7 +1648,10 @@ function setChatRunning(chatId, running, options = {}) {
     }
   }
 
-  if (chatId === state.selectedChatId) syncSendButtonState();
+  if (chatId === state.selectedChatId) {
+    syncSendButtonState();
+    syncRegenerateButtons(chatId);
+  }
 }
 
 function createChatItem(chat, projectId) {
@@ -2122,7 +2139,7 @@ function renderMessage(msg, animate = true, chatId = state.selectedChatId) {
   if (msg.role === 'user') {
     el.innerHTML = renderUserMessageHTML(msg);
   } else {
-    el.innerHTML = buildAssistantHTML(msg);
+    el.innerHTML = buildAssistantHTML(msg, chatId);
   }
 
   dom.messagesList.appendChild(el);
@@ -2159,7 +2176,7 @@ function buildDefaultSegments(msg) {
   return segs;
 }
 
-function buildAssistantHTML(msg) {
+function buildAssistantHTML(msg, chatId = state.selectedChatId) {
   const segments = msg.segments?.length ? msg.segments : buildDefaultSegments(msg);
 
   if (!segments.length) {
@@ -2202,7 +2219,7 @@ function buildAssistantHTML(msg) {
       ${assistantAvatarHTML()}
       <div class="assistant-body">
         ${parts.join('')}
-        ${hasActions ? renderMessageActionsHTML() : ''}
+        ${hasActions ? renderMessageActionsHTML(shouldShowRegenerateButton(msg.id, chatId)) : ''}
       </div>
     </div>
   `;
@@ -2218,8 +2235,13 @@ function assistantAvatarHTML() {
   `;
 }
 
-function formatLineCount(count, word = 'line') {
-  return `${count} ${word}${count === 1 ? '' : 's'}`;
+function formatLineCount(count) {
+  const key = count === 1 ? 'tool.line.one' : 'tool.line.other';
+  return t(key, { count });
+}
+
+function getToolDisplayName(name) {
+  return typeof I18n !== 'undefined' ? I18n.getToolDisplayName(name) : name.replace(/_/g, ' ');
 }
 
 function truncateLabel(text, max = 40) {
@@ -2278,21 +2300,21 @@ function getFileMutationRunningLabel(tc) {
 
   switch (kind) {
     case 'write':
-      if (adds > 0 && file) return `Writing ${formatLineCount(adds)} to ${file}...`;
-      return file ? `Writing ${file}...` : 'Writing file...';
+      if (adds > 0 && file) return t('tool.write.linesToFile', { lines: formatLineCount(adds), file });
+      return file ? t('tool.write.toFile', { file }) : t('tool.write.file');
     case 'create':
-      if (adds > 0 && file) return `Creating ${formatLineCount(adds)} in ${file}...`;
-      return file ? `Creating ${file}...` : 'Creating file...';
+      if (adds > 0 && file) return t('tool.create.linesInFile', { lines: formatLineCount(adds), file });
+      return file ? t('tool.create.toFile', { file }) : t('tool.create.file');
     case 'edit':
       if (file && (adds > 0 || dels > 0)) {
-        let stats = 'Editing ';
+        let stats = '';
         if (adds > 0) stats += `+${adds}`;
         if (adds > 0 && dels > 0) stats += ' ';
         if (dels > 0) stats += `-${dels}`;
-        stats += ` ${adds + dels === 1 ? 'line' : 'lines'} in ${file}...`;
-        return stats;
+        const linesLabel = t(adds + dels === 1 ? 'tool.lineNoun.one' : 'tool.lineNoun.other');
+        return t('tool.edit.statsRunning', { stats, linesLabel, file });
       }
-      return file ? `Editing ${file}...` : 'Editing file...';
+      return file ? t('tool.edit.toFile', { file }) : t('tool.edit.file');
     default:
       return null;
   }
@@ -2302,65 +2324,65 @@ function getToolActivityLabel(tc) {
   const { name, args = {} } = tc;
 
   if (isFileMutationTool(name)) {
-    return getFileMutationRunningLabel(tc) || `${name.replace(/_/g, ' ')}...`;
+    return getFileMutationRunningLabel(tc) || t('tool.genericRunning', { name: getToolDisplayName(name) });
   }
 
   switch (name) {
     case 'read':
     case 'read_file': {
       const target = getReadTarget(args);
-      return target ? `Reading ${target}...` : 'Reading file...';
+      return target ? t('tool.reading', { target }) : t('tool.readingFile');
     }
     case 'bash':
     case 'run_terminal_cmd':
       return args.command
-        ? `Running ${truncateLabel(args.command)}...`
-        : 'Running command...';
+        ? t('tool.runCommand', { command: truncateLabel(args.command) })
+        : t('tool.runCommandDefault');
     case 'grep': {
       const pattern = getGrepPattern(args);
       return pattern
-        ? `Searching file contents for "${truncateLabel(pattern, 32)}"...`
-        : 'Searching file contents...';
+        ? t('tool.grepRunning', { pattern: truncateLabel(pattern, 32) })
+        : t('tool.grepDefault');
     }
     case 'glob':
     case 'search_files': {
       const pattern = getGlobPattern(args);
       return pattern
-        ? `Finding files matching "${truncateLabel(pattern, 32)}"...`
-        : 'Finding files...';
+        ? t('tool.globRunning', { pattern: truncateLabel(pattern, 32) })
+        : t('tool.globDefault');
     }
     case 'webfetch': {
       const target = getWebFetchTarget(args);
-      return target ? `Fetching ${target}...` : 'Fetching URL...';
+      return target ? t('tool.fetchRunning', { target }) : t('tool.fetchDefault');
     }
     case 'websearch': {
       const query = getWebSearchQuery(args);
       return query
-        ? `Searching the web for "${truncateLabel(query, 32)}"...`
-        : 'Searching the web...';
+        ? t('tool.webSearchRunning', { query: truncateLabel(query, 32) })
+        : t('tool.webSearchDefault');
     }
     case 'task':
       return args.description
-        ? `Running sub-agent: ${truncateLabel(args.description, 36)}...`
-        : 'Running sub-agent...';
+        ? t('tool.subAgentRunning', { desc: truncateLabel(args.description, 36) })
+        : t('tool.subAgentRunningDefault');
     case 'skill':
       return args.name
-        ? `Loading skill "${truncateLabel(args.name, 32)}"...`
-        : 'Loading skill...';
+        ? t('tool.skillRunning', { name: truncateLabel(args.name, 32) })
+        : t('tool.skillDefault');
     case 'question':
-      return 'Waiting for your answer...';
+      return t('tool.questionRunning');
     case 'todowrite':
-      return 'Updating task list...';
+      return t('tool.todoRunning');
     case 'search_codebase': {
       const query = getWebSearchQuery(args) || getGrepPattern(args);
       return query
-        ? `Searching "${truncateLabel(query, 32)}" in codebase...`
-        : 'Searching codebase...';
+        ? t('tool.codebaseRunning', { query: truncateLabel(query, 32) })
+        : t('tool.codebaseDefault');
     }
     case 'list_directory':
-      return args.path ? `Listing ${truncateLabel(args.path, 40)}...` : 'Listing directory...';
+      return args.path ? t('tool.listRunning', { path: truncateLabel(args.path, 40) }) : t('tool.listDefault');
     default:
-      return `${name.replace(/_/g, ' ')}...`;
+      return t('tool.genericRunning', { name: getToolDisplayName(name) });
   }
 }
 
@@ -2373,64 +2395,64 @@ function getToolActivityLabelDone(tc) {
     case 'read':
     case 'read_file': {
       const target = getReadTarget(args);
-      return target ? `Read ${target}` : 'Read file';
+      return target ? t('tool.read', { target }) : t('tool.readFile');
     }
     case 'bash':
     case 'run_terminal_cmd':
       return args.command
-        ? `Ran ${truncateLabel(args.command)}`
-        : 'Ran command';
+        ? t('tool.ranCommand', { command: truncateLabel(args.command) })
+        : t('tool.ranCommandDefault');
     case 'grep': {
       const pattern = getGrepPattern(args);
       return pattern
-        ? `Searched file contents for "${truncateLabel(pattern, 32)}"`
-        : 'Searched file contents';
+        ? t('tool.grepDone', { pattern: truncateLabel(pattern, 32) })
+        : t('tool.grepDoneDefault');
     }
     case 'glob':
     case 'search_files': {
       const pattern = getGlobPattern(args);
       return pattern
-        ? `Found files matching "${truncateLabel(pattern, 32)}"`
-        : 'Found files';
+        ? t('tool.globDone', { pattern: truncateLabel(pattern, 32) })
+        : t('tool.globDoneDefault');
     }
     case 'webfetch': {
       const target = getWebFetchTarget(args);
-      return target ? `Fetched ${target}` : 'Fetched URL';
+      return target ? t('tool.fetchDone', { target }) : t('tool.fetchDoneDefault');
     }
     case 'websearch': {
       const query = getWebSearchQuery(args);
       return query
-        ? `Searched the web for "${truncateLabel(query, 32)}"`
-        : 'Searched the web';
+        ? t('tool.webSearchDone', { query: truncateLabel(query, 32) })
+        : t('tool.webSearchDoneDefault');
     }
     case 'task':
       return args.description
-        ? `Ran sub-agent: ${truncateLabel(args.description, 36)}`
-        : 'Ran sub-agent';
+        ? t('tool.subAgentDone', { desc: truncateLabel(args.description, 36) })
+        : t('tool.subAgentDoneDefault');
     case 'skill':
       return args.name
-        ? `Loaded skill "${truncateLabel(args.name, 32)}"`
-        : 'Loaded skill';
+        ? t('tool.skillDone', { name: truncateLabel(args.name, 32) })
+        : t('tool.skillDoneDefault');
     case 'question':
-      return 'Asked a question';
+      return t('tool.questionDone');
     case 'todowrite':
-      return 'Updated task list';
+      return t('tool.todoDone');
     case 'search_codebase': {
       const query = getWebSearchQuery(args) || getGrepPattern(args);
       return query
-        ? `Searched "${truncateLabel(query, 32)}" in codebase`
-        : 'Searched codebase';
+        ? t('tool.codebaseDone', { query: truncateLabel(query, 32) })
+        : t('tool.codebaseDoneDefault');
     }
     case 'write_file':
-      return getFileBasename(args.path) ? `Wrote ${getFileBasename(args.path)}` : 'Wrote file';
+      return getFileBasename(args.path) ? t('tool.wroteFile', { file: getFileBasename(args.path) }) : t('tool.wroteFileDefault');
     case 'create_file':
-      return getFileBasename(args.path) ? `Created ${getFileBasename(args.path)}` : 'Created file';
+      return getFileBasename(args.path) ? t('tool.createdFile', { file: getFileBasename(args.path) }) : t('tool.createdFileDefault');
     case 'edit_file':
-      return getFileBasename(args.path) ? `Edited ${getFileBasename(args.path)}` : 'Edited file';
+      return getFileBasename(args.path) ? t('tool.editedFile', { file: getFileBasename(args.path) }) : t('tool.editedFileDefault');
     case 'list_directory':
-      return args.path ? `Listed ${truncateLabel(args.path, 40)}` : 'Listed directory';
+      return args.path ? t('tool.listDone', { path: truncateLabel(args.path, 40) }) : t('tool.listDoneDefault');
     default:
-      return name.replace(/_/g, ' ');
+      return getToolDisplayName(name);
   }
 }
 
@@ -2464,31 +2486,31 @@ function renderFileMutationLineHTML(tc) {
 
   if (kind === 'write') {
     const text = adds > 0 && file
-      ? `Wrote ${formatLineCount(adds)} to ${file}`
-      : (file ? `Wrote ${file}` : 'Wrote file');
+      ? t('tool.wroteLinesToFile', { lines: formatLineCount(adds), file })
+      : (file ? t('tool.wroteFile', { file }) : t('tool.wroteFileDefault'));
     return `<span class="tool-activity-text">${escapeHtml(text)}</span>`;
   }
 
   if (kind === 'create') {
     const text = adds > 0 && file
-      ? `Created ${formatLineCount(adds)} in ${file}`
-      : (file ? `Created ${file}` : 'Created file');
+      ? t('tool.createdLinesInFile', { lines: formatLineCount(adds), file })
+      : (file ? t('tool.createdFile', { file }) : t('tool.createdFileDefault'));
     return `<span class="tool-activity-text">${escapeHtml(text)}</span>`;
   }
 
   if (kind === 'edit') {
     if (file && (adds > 0 || dels > 0)) {
-      let html = `<span class="tool-activity-text">Edited ${escapeHtml(file)} </span>`;
+      let html = `<span class="tool-activity-text">${escapeHtml(t('tool.editedFile', { file }))} </span>`;
       if (adds > 0) html += `<span class="tool-edit-stat tool-edit-stat-add">+${adds}</span>`;
       if (adds > 0 && dels > 0) html += '<span class="tool-activity-text"> </span>';
       if (dels > 0) html += `<span class="tool-edit-stat tool-edit-stat-del">-${dels}</span>`;
       return html;
     }
-    const text = file ? `Edited ${file}` : 'Edited file';
+    const text = file ? t('tool.editedFile', { file }) : t('tool.editedFileDefault');
     return `<span class="tool-activity-text">${escapeHtml(text)}</span>`;
   }
 
-  return `<span class="tool-activity-text">${escapeHtml(file || 'File')}</span>`;
+  return `<span class="tool-activity-text">${escapeHtml(file || t('tool.fileFallback'))}</span>`;
 }
 
 function isToolDetailClickable(tc, running = false) {
@@ -2522,16 +2544,16 @@ function getSubAgentDescription(tc) {
 }
 
 function getSubAgentActivityText(tc, running = true) {
-  if (!running) return 'Task completed';
+  if (!running) return t('tool.subAgentCompleted');
   const activity = tc?.activity ? String(tc.activity).trim() : '';
   const desc = getSubAgentDescription(tc);
   if (activity && activity !== desc) return activity;
-  return 'Starting sub-agent…';
+  return t('tool.subAgentStarting');
 }
 
 function renderSubAgentCardHTML(tc, running = false) {
   const desc = getSubAgentDescription(tc);
-  const title = desc ? truncateLabel(desc, 56) : 'Sub-agent';
+  const title = desc ? truncateLabel(desc, 56) : t('tool.subAgent');
   const activity = getSubAgentActivityText(tc, running);
   const stateClass = running ? ' is-running' : ' is-done';
   const shimmerClass = running ? ' is-shimmer' : '';
@@ -2557,7 +2579,7 @@ function applySubAgentCardState(card, tc, running) {
   if (!card) return;
 
   const desc = getSubAgentDescription(tc);
-  const title = desc ? truncateLabel(desc, 56) : 'Sub-agent';
+  const title = desc ? truncateLabel(desc, 56) : t('tool.subAgent');
   const activity = getSubAgentActivityText(tc, running);
 
   const titleEl = card.querySelector('.subagent-inline-title');
@@ -2965,23 +2987,67 @@ function completeToolActivityLine(tcId, msgId) {
   applyToolDetailClickableToElement(line, tc, false);
 }
 
-function renderMessageActionsHTML() {
+function getLastRenderableAssistantMessageId(chatId) {
+  const msgs = state.chatMessages[chatId] || [];
+  for (let i = msgs.length - 1; i >= 0; i -= 1) {
+    const msg = msgs[i];
+    if (shouldSkipMessageRender(msg)) continue;
+    if (msg.role === 'assistant') return msg.id;
+  }
+  return null;
+}
+
+function shouldShowRegenerateButton(msgId, chatId = state.selectedChatId) {
+  if (!msgId || !chatId) return false;
+  if (isChatGenerating(chatId)) return false;
+  return getLastRenderableAssistantMessageId(chatId) === msgId;
+}
+
+function syncRegenerateButtons(chatId = state.selectedChatId) {
+  if (!chatId || !dom.messagesList) return;
+
+  const lastId = getLastRenderableAssistantMessageId(chatId);
+  const generating = isChatGenerating(chatId);
+
+  dom.messagesList.querySelectorAll('.message.assistant').forEach((msgEl) => {
+    const msgId = msgEl.id.replace('msg-', '');
+    const actionsEl = msgEl.querySelector('.message-actions');
+    if (!actionsEl) return;
+
+    const shouldShow = !generating && msgId === lastId;
+    const existing = actionsEl.querySelector('[data-action="regenerate"]');
+
+    if (shouldShow && !existing) {
+      actionsEl.insertAdjacentHTML('beforeend', renderRegenerateButtonHTML());
+    } else if (!shouldShow && existing) {
+      existing.remove();
+    }
+  });
+}
+
+function renderRegenerateButtonHTML() {
+  return `
+    <button class="msg-action-btn" data-action="regenerate" type="button" onclick="regenerateResponse(this)">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+        <path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      Regenerate
+    </button>
+  `;
+}
+
+function renderMessageActionsHTML(includeRegenerate = false) {
   return `
     <div class="message-actions">
-      <button class="msg-action-btn" onclick="copyMessageContent(this)">
+      <button class="msg-action-btn" type="button" onclick="copyMessageContent(this)">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
           <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
           <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/>
         </svg>
         Copy
       </button>
-      <button class="msg-action-btn" onclick="regenerateResponse(this)">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
-          <path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        Regenerate
-      </button>
+      ${includeRegenerate ? renderRegenerateButtonHTML() : ''}
     </div>
   `;
 }
@@ -3472,12 +3538,15 @@ function finalizeAssistantMessage(run) {
     const body = contentEl.parentElement;
     if (body && !body.querySelector('.message-actions')) {
       const actionsWrapper = document.createElement('div');
-      actionsWrapper.innerHTML = renderMessageActionsHTML();
+      actionsWrapper.innerHTML = renderMessageActionsHTML(
+        shouldShowRegenerateButton(run.assistantMsgId, run.chatId),
+      );
       body.appendChild(actionsWrapper.firstElementChild);
     }
   }
 
   buildSegmentsFromDOM(run.assistantMsgId, run.chatId);
+  syncRegenerateButtons(run.chatId);
 }
 
 function markChatFinished(chatId) {
@@ -4013,7 +4082,7 @@ function sanitizeToolDisplayValue(value, key = '', maxLen = 1200) {
   if (typeof value === 'string') {
     if (value.length <= limit) return value;
     const lineCount = value.split(/\r?\n/).length;
-    return `${value.slice(0, limit)}\n… (${lineCount} lines, ${value.length.toLocaleString()} chars total)`;
+    return `${value.slice(0, limit)}\n${t('tool.panel.truncated', { lines: lineCount, chars: value.length.toLocaleString() })}`;
   }
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeToolDisplayValue(item, key, maxLen));
@@ -4043,9 +4112,9 @@ function buildToolDetailInputDisplay(tc) {
     display[k] = sanitizeToolDisplayValue(v, k);
   }
   if (omitKeys.size) {
-    display._note = 'Full before/after text is shown in the Changes section below.';
+    display._note = t('tool.panel.fullTextNote');
   }
-  if (!Object.keys(display).length) return 'No input arguments recorded.';
+  if (!Object.keys(display).length) return t('tool.panel.noInput');
   try {
     return JSON.stringify(display, null, 2);
   } catch {
@@ -4054,7 +4123,7 @@ function buildToolDetailInputDisplay(tc) {
 }
 
 function formatToolResultForDisplay(result) {
-  if (result == null || result === '') return 'No output recorded.';
+  if (result == null || result === '') return t('tool.panel.noOutput');
   if (typeof result === 'string') return sanitizeToolDisplayValue(result, 'result', 12000);
   try {
     return JSON.stringify(sanitizeToolDisplayValue(result, 'result'), null, 2);
@@ -4066,12 +4135,12 @@ function formatToolResultForDisplay(result) {
 function getToolDetailTitle(tc) {
   const done = getToolActivityLabelDone(tc);
   if (done) return done;
-  return (tc.name || 'Tool').replace(/_/g, ' ');
+  return getToolDisplayName(tc.name || 'tool');
 }
 
 function getToolDetailMeta(tc) {
   const parts = [];
-  if (tc.name) parts.push(tc.name.replace(/_/g, ' '));
+  if (tc.name) parts.push(getToolDisplayName(tc.name));
   if (tc.duration != null) parts.push(`${Math.round(tc.duration / 1000)}s`);
   if (tc.additions > 0 || tc.deletions > 0) {
     const stats = [];
@@ -4083,6 +4152,7 @@ function getToolDetailMeta(tc) {
 }
 
 let toolPanelKeyHandler = null;
+let toolPanelOpenTcId = null;
 
 function isToolPanelOpen() {
   return dom.appBody?.classList.contains('tool-panel-open');
@@ -4130,6 +4200,7 @@ function forceCloseToolPanel() {
     document.removeEventListener('keydown', toolPanelKeyHandler);
     toolPanelKeyHandler = null;
   }
+  toolPanelOpenTcId = null;
   Physics.cancel(dom.toolPanel);
   Physics.cancel(dom.toolPanelInner);
   resetToolPanelShellMotion();
@@ -4155,6 +4226,7 @@ function closeToolPanel() {
 
   Physics.toolPanelClose(dom.toolPanel, dom.toolPanelInner, () => {
     delete dom.toolPanel.dataset.closing;
+    toolPanelOpenTcId = null;
     dom.appBody?.classList.remove('tool-panel-open', 'tool-panel-diff', 'tool-panel-closing');
     resetToolPanelShellMotion();
     if (dom.toolPanel) {
@@ -4167,8 +4239,9 @@ function closeToolPanel() {
   });
 }
 
-function openToolPanel(html, { mode = 'detail', ariaLabel = 'Tool details' } = {}) {
+function openToolPanel(html, { mode = 'detail', ariaLabel = null } = {}) {
   if (!dom.toolPanel || !dom.toolPanelInner) return;
+  const resolvedAriaLabel = ariaLabel ?? t('tool.panel.ariaDetails');
 
   if (toolPanelKeyHandler) {
     document.removeEventListener('keydown', toolPanelKeyHandler);
@@ -4186,9 +4259,9 @@ function openToolPanel(html, { mode = 'detail', ariaLabel = 'Tool details' } = {
       dom.appBody?.classList.toggle('tool-panel-diff', mode === 'diff');
       Physics.toolPanelStaggerIn(shell);
       if (modeChanged) {
-        Physics.toolPanelResize(dom.toolPanel, mode, () => finishToolPanelOpen(ariaLabel));
+        Physics.toolPanelResize(dom.toolPanel, mode, () => finishToolPanelOpen(resolvedAriaLabel));
       } else {
-        finishToolPanelOpen(ariaLabel);
+        finishToolPanelOpen(resolvedAriaLabel);
       }
     });
     return;
@@ -4203,7 +4276,7 @@ function openToolPanel(html, { mode = 'detail', ariaLabel = 'Tool details' } = {
   dom.appBody?.classList.toggle('tool-panel-diff', mode === 'diff');
 
   Physics.toolPanelStaggerIn(shell);
-  Physics.toolPanelOpen(dom.toolPanel, dom.toolPanelInner, mode, () => finishToolPanelOpen(ariaLabel));
+  Physics.toolPanelOpen(dom.toolPanel, dom.toolPanelInner, mode, () => finishToolPanelOpen(resolvedAriaLabel));
 }
 
 function forceCloseToolDetailPopup() {
@@ -4223,6 +4296,7 @@ function closeEditDiffPopup() {
 }
 
 function openToolDetailPopup(tc) {
+  toolPanelOpenTcId = tc.id;
   const title = getToolDetailTitle(tc);
   const meta = getToolDetailMeta(tc);
   const inputText = buildToolDetailInputDisplay(tc);
@@ -4238,12 +4312,12 @@ function openToolDetailPopup(tc) {
         </div>
         <div class="diff-header-text">
           <div class="diff-header-title-row">
-            <span class="diff-header-label">Tool</span>
+            <span class="diff-header-label">${escapeHtml(t('tool.panel.tool'))}</span>
             <span class="diff-header-file">${escapeHtml(title)}</span>
           </div>
           ${meta ? `<div class="diff-header-path">${escapeHtml(meta)}</div>` : ''}
         </div>
-        <button type="button" class="diff-close-btn tool-panel-close-btn" aria-label="Close panel">
+        <button type="button" class="diff-close-btn tool-panel-close-btn" aria-label="${escapeHtml(t('tool.panel.close'))}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>
@@ -4251,22 +4325,23 @@ function openToolDetailPopup(tc) {
       </div>
       <div class="diff-body tool-detail-body">
         <section class="tool-detail-section">
-          <h3 class="tool-detail-section-label">Input</h3>
+          <h3 class="tool-detail-section-label">${escapeHtml(t('tool.panel.input'))}</h3>
           <pre class="tool-detail-code">${escapeHtml(inputText)}</pre>
         </section>
         <section class="tool-detail-section">
-          <h3 class="tool-detail-section-label">Output</h3>
+          <h3 class="tool-detail-section-label">${escapeHtml(t('tool.panel.output'))}</h3>
           <pre class="tool-detail-code">${escapeHtml(outputText)}</pre>
         </section>
       </div>
       <div class="diff-footer">
-        <span class="diff-footer-hint"><kbd>Esc</kbd> to close</span>
+        <span class="diff-footer-hint"><kbd>Esc</kbd> ${escapeHtml(t('tool.panel.escClose'))}</span>
       </div>
     </div>
-  `, { mode: 'detail', ariaLabel: `Tool details for ${title}` });
+  `, { mode: 'detail', ariaLabel: t('tool.panel.detailsFor', { title }) });
 }
 
 function openEditDiffPopup(tc) {
+  toolPanelOpenTcId = tc.id;
   const diff = getEditDiffForTool(tc);
   const fullPath = normalizeDiffPathHint(tc.args?.path || diff.path || '');
   const file = getFileBasename(fullPath);
@@ -4286,7 +4361,7 @@ function openEditDiffPopup(tc) {
 
   const changedLines = adds + dels;
   const footerMeta = changedLines > 0
-    ? `${changedLines} line${changedLines === 1 ? '' : 's'} changed`
+    ? t(changedLines === 1 ? 'tool.panel.linesChanged.one' : 'tool.panel.linesChanged.other', { count: changedLines })
     : '';
 
   openToolPanel(`
@@ -4300,13 +4375,13 @@ function openEditDiffPopup(tc) {
         </div>
         <div class="diff-header-text">
           <div class="diff-header-title-row">
-            <span class="diff-header-label">Edited</span>
+            <span class="diff-header-label">${escapeHtml(t('tool.panel.edited'))}</span>
             <span class="diff-header-file">${escapeHtml(file)}</span>
             ${badgesHtml}
           </div>
           ${showPath ? `<div class="diff-header-path">${escapeHtml(fullPath)}</div>` : ''}
         </div>
-        <button type="button" class="diff-close-btn tool-panel-close-btn" aria-label="Close panel">
+        <button type="button" class="diff-close-btn tool-panel-close-btn" aria-label="${escapeHtml(t('tool.panel.close'))}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>
@@ -4316,11 +4391,11 @@ function openEditDiffPopup(tc) {
         <div class="diff-code">${renderDiffHTML(diff)}</div>
       </div>
       <div class="diff-footer">
-        <span class="diff-footer-hint"><kbd>Esc</kbd> to close</span>
+        <span class="diff-footer-hint"><kbd>Esc</kbd> ${escapeHtml(t('tool.panel.escClose'))}</span>
         ${footerMeta ? `<span class="diff-footer-meta">${escapeHtml(footerMeta)}</span>` : ''}
       </div>
     </div>
-  `, { mode: 'diff', ariaLabel: `Edit diff for ${file}` });
+  `, { mode: 'diff', ariaLabel: t('tool.panel.editDiffFor', { file }) });
 }
 
 function renderDiffHTML(diff) {
@@ -4334,7 +4409,7 @@ function renderDiffHTML(diff) {
             <path d="M10 13h4M10 17h4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
           </svg>
         </div>
-        <span>No diff available</span>
+        <span>${escapeHtml(t('tool.panel.noDiff'))}</span>
       </div>
     `;
   }
@@ -4572,9 +4647,12 @@ function streamText(fullText, msgId, chatId, onDone, options = {}) {
     }
     if (showActions && !body.querySelector('.message-actions')) {
       const actionsWrapper = document.createElement('div');
-      actionsWrapper.innerHTML = renderMessageActionsHTML();
+      actionsWrapper.innerHTML = renderMessageActionsHTML(
+        shouldShowRegenerateButton(msgId, chatId),
+      );
       body.appendChild(actionsWrapper.firstElementChild);
     }
+    syncRegenerateButtons(chatId);
     onDone();
   }
 
@@ -4617,22 +4695,78 @@ function stopThinkingIndicator(el) {
   el.remove();
 }
 
+function getThinkingMessagesList() {
+  if (typeof I18n !== 'undefined') return I18n.getThinkingMessages();
+  return [];
+}
+
+function restartActiveThinkingTypewriters() {
+  const seen = new Set();
+  document.querySelectorAll('.thinking-typewriter-text').forEach((textEl) => {
+    const container = textEl.closest('#startupLoaderText')
+      || textEl.closest('.thinking-indicator')
+      || textEl.closest('[id^="thinking-"]');
+    if (!container || seen.has(container)) return;
+    seen.add(container);
+    container._stopThinkingTypewriter?.();
+    startThinkingTypewriter(container);
+  });
+}
+
+function refreshVisibleToolActivityLabels() {
+  document.querySelectorAll('.tool-activity-line[id^="tc-"]').forEach((line) => {
+    const tcId = line.id.replace(/^tc-/, '');
+    const tc = findToolCallById(tcId);
+    if (!tc) return;
+    const running = line.classList.contains('running');
+    if (isFileMutationTool(tc.name) && !running) {
+      line.innerHTML = renderFileMutationLineHTML(tc);
+    } else {
+      const label = running
+        ? getToolActivityLabel(tc)
+        : (getToolActivityLabelDone(tc) || getToolActivityLabel(tc));
+      line.innerHTML = `<span class="tool-activity-text">${escapeHtml(label)}</span>`;
+    }
+  });
+
+  document.querySelectorAll('[id^="subagent-"]').forEach((card) => {
+    const tcId = card.dataset.toolId || card.id.replace(/^subagent-/, '');
+    const tc = findToolCallById(tcId);
+    if (tc) applySubAgentCardState(card, tc, card.classList.contains('is-running'));
+  });
+}
+
+function refreshOpenToolPanel() {
+  if (!toolPanelOpenTcId || !isToolPanelOpen()) return;
+  const tc = findToolCallById(toolPanelOpenTcId);
+  if (!tc) return;
+  if (tc.name === 'edit' || tc.name === 'edit_file') openEditDiffPopup(tc);
+  else openToolDetailPopup(tc);
+}
+
+function refreshInlinePermissionButtons() {
+  for (const msgId of permissionRequests.keys()) {
+    mountInlinePermissionUI(msgId);
+  }
+}
+
 function startThinkingTypewriter(el) {
   const textEl = el.querySelector('.thinking-typewriter-text');
-  if (!textEl || !THINKING_MESSAGES?.length) return;
+  const messages = getThinkingMessagesList();
+  if (!textEl || !messages.length) return;
 
   let timer = null;
-  let messageIdx = Math.floor(Math.random() * THINKING_MESSAGES.length);
+  let messageIdx = Math.floor(Math.random() * messages.length);
   let charIdx = 0;
   let deleting = false;
 
   const rand = (min, max) => min + Math.random() * (max - min);
 
   function pickNextMessage() {
-    if (THINKING_MESSAGES.length <= 1) return 0;
+    if (messages.length <= 1) return 0;
     let next = messageIdx;
     while (next === messageIdx) {
-      next = Math.floor(Math.random() * THINKING_MESSAGES.length);
+      next = Math.floor(Math.random() * messages.length);
     }
     return next;
   }
@@ -4656,7 +4790,7 @@ function startThinkingTypewriter(el) {
       return;
     }
 
-    const message = THINKING_MESSAGES[messageIdx];
+    const message = messages[messageIdx];
 
     if (!deleting) {
       charIdx += 1;
@@ -5199,26 +5333,41 @@ function regenerateResponse(btn) {
    ============================================================ */
 
 function setRandomWelcomeSubtitle() {
-  const idx = Math.floor(Math.random() * WELCOME_SUBTITLES.length);
-  dom.welcomeSubtitle.textContent = WELCOME_SUBTITLES[idx];
+  const subtitles = typeof I18n !== 'undefined'
+    ? I18n.getWelcomeSubtitles()
+    : WELCOME_SUBTITLES;
+  const idx = Math.floor(Math.random() * subtitles.length);
+  dom.welcomeSubtitle.textContent = subtitles[idx];
+}
+
+let welcomePlaceholderTimer = null;
+
+function stopWelcomeInputPlaceholders() {
+  clearTimeout(welcomePlaceholderTimer);
+  welcomePlaceholderTimer = null;
 }
 
 function animateWelcomeInputPlaceholders() {
-  const prefix = 'Try ';
-  const suffixes = [
-    'anything new...',
-    'refactor my authentication module...',
-    'debug this TypeScript error...',
-    'write tests for my API endpoints...',
-    'explain how this code works...',
-    'create a React component for...',
-    'optimize my database queries...',
-  ];
+  stopWelcomeInputPlaceholders();
+
+  const prefix = typeof I18n !== 'undefined'
+    ? I18n.getWelcomePlaceholderPrefix()
+    : 'Try ';
+  const suffixes = typeof I18n !== 'undefined'
+    ? I18n.getWelcomePlaceholderSuffixes()
+    : [
+      'anything new...',
+      'refactor my authentication module...',
+      'debug this TypeScript error...',
+      'write tests for my API endpoints...',
+      'explain how this code works...',
+      'create a React component for...',
+      'optimize my database queries...',
+    ];
 
   let suffixIdx = 0;
   let charIdx = 0;
   let deleting = false;
-  let timer = null;
 
   const rand = (min, max) => min + Math.random() * (max - min);
 
@@ -5259,8 +5408,8 @@ function animateWelcomeInputPlaceholders() {
   }
 
   function schedule(ms) {
-    clearTimeout(timer);
-    timer = setTimeout(step, ms);
+    clearTimeout(welcomePlaceholderTimer);
+    welcomePlaceholderTimer = setTimeout(step, ms);
   }
 
   function step() {
@@ -5578,7 +5727,7 @@ function resolvePermissionMsgId(event) {
 }
 
 function formatPermissionLabel(permission) {
-  const title = permission?.title || permission?.type || 'Permission required';
+  const title = permission?.title || permission?.type || t('permission.required');
   const filePath = permission?.metadata?.path || permission?.metadata?.file;
   if (filePath) return `${title}: ${filePath}`;
   const patterns = [].concat(permission?.pattern || permission?.patterns || []);
@@ -5637,9 +5786,9 @@ function mountInlinePermissionUI(msgId) {
   card.innerHTML = `
     <p class="permission-inline-prompt">${escapeHtml(req.label)}</p>
     <div class="permission-inline-footer">
-      <button type="button" class="permission-action-btn" data-permission-action="reject">Deny</button>
-      <button type="button" class="permission-action-btn permission-action-btn--primary" data-permission-action="once">Allow once</button>
-      <button type="button" class="permission-action-btn permission-action-btn--primary" data-permission-action="always">Always allow</button>
+      <button type="button" class="permission-action-btn" data-permission-action="reject">${escapeHtml(t('permission.deny'))}</button>
+      <button type="button" class="permission-action-btn permission-action-btn--primary" data-permission-action="once">${escapeHtml(t('permission.allowOnce'))}</button>
+      <button type="button" class="permission-action-btn permission-action-btn--primary" data-permission-action="always">${escapeHtml(t('permission.alwaysAllow'))}</button>
     </div>
   `;
   Physics.messageIn(card, { soft: true });
@@ -6456,8 +6605,8 @@ function showUpdateInstallScreen() {
   const barEl = document.getElementById('updateInstallerProgressBar');
   const retryBtn = document.getElementById('updateInstallerRetry');
 
-  if (versionEl) versionEl.textContent = 'Preparing download…';
-  if (statusEl) statusEl.textContent = 'Starting update…';
+  if (versionEl) versionEl.textContent = t('update.preparing');
+  if (statusEl) statusEl.textContent = t('update.starting');
   if (detailEl) detailEl.textContent = '';
   if (barEl) barEl.style.width = '0%';
   retryBtn?.setAttribute('hidden', '');

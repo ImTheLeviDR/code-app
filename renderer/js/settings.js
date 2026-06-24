@@ -234,6 +234,12 @@ function getThemeAccent(themeId) {
    SETTINGS STORE
    ============================================================ */
 
+function normalizeSidebarWidth(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 240;
+  return Math.min(560, Math.max(120, Math.round(n)));
+}
+
 const SettingsStore = (() => {
   let settings = loadSettingsFromStorage();
   let pageEl = null;
@@ -249,13 +255,26 @@ const SettingsStore = (() => {
   function loadSettingsFromStorage() {
     try {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.providers?.length) {
-          parsed.providers = parsed.providers.map(({ models, imageModels, ...provider }) => provider);
-          return migrateSettings(parsed);
-        }
+      if (!raw) return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
       }
+
+      if (!Array.isArray(parsed.providers)) {
+        parsed.providers = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.providers));
+      }
+
+      parsed.providers = parsed.providers.map(({ models, imageModels, ...provider }) => provider);
+      const migrated = migrateSettings(parsed);
+      const rawAppe = parsed.appearance || {};
+      if (rawAppe.sidebarWidth === undefined || rawAppe.sidebarHidden === undefined || rawAppe.language === undefined) {
+        try {
+          localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(migrated));
+        } catch (_) { /* ignore quota errors */ }
+      }
+      return migrated;
     } catch (_) { /* use defaults */ }
     return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   }
@@ -285,28 +304,31 @@ const SettingsStore = (() => {
     next.appearance = {
       themeId: next.appearance?.themeId || 'default',
       fontSize: next.appearance?.fontSize || 13,
+      sidebarWidth: normalizeSidebarWidth(next.appearance?.sidebarWidth),
+      sidebarHidden: next.appearance?.sidebarHidden === true,
+      language: typeof I18n !== 'undefined' && I18n.isValidPreference(next.appearance?.language)
+        ? next.appearance.language
+        : (next.appearance?.language === 'en' || next.appearance?.language === 'hu'
+          ? next.appearance.language
+          : 'system'),
     };
     next.personalization = normalizePersonalization(next.personalization);
     return next;
   }
 
   const RESPONSE_STYLES = {
-    concise: {
-      id: 'concise',
-      label: 'Concise',
-      description: 'Short, direct answers',
-    },
-    balanced: {
-      id: 'balanced',
-      label: 'Balanced',
-      description: 'Clear without extra fluff',
-    },
-    detailed: {
-      id: 'detailed',
-      label: 'Detailed',
-      description: 'Thorough explanations',
-    },
+    concise: { id: 'concise' },
+    balanced: { id: 'balanced' },
+    detailed: { id: 'detailed' },
   };
+
+  function getLocalizedResponseStyles() {
+    return Object.keys(RESPONSE_STYLES).map((id) => ({
+      id,
+      label: t(`settings.personalization.style.${id}.label`),
+      description: t(`settings.personalization.style.${id}.description`),
+    }));
+  }
 
   function normalizePersonalization(value) {
     const style = value?.responseStyle;
@@ -366,6 +388,40 @@ const SettingsStore = (() => {
     return normalizeNotificationVolume(settings.notifications?.volume);
   }
 
+  function getSidebarLayout() {
+    settings = loadSettingsFromStorage();
+    return {
+      width: normalizeSidebarWidth(settings.appearance?.sidebarWidth),
+      hidden: settings.appearance?.sidebarHidden === true,
+    };
+  }
+
+  function setSidebarLayout({ width, hidden } = {}) {
+    if (width == null && hidden == null) return;
+
+    settings = loadSettingsFromStorage();
+
+    if (!settings.appearance) {
+      settings.appearance = {
+        themeId: 'default',
+        fontSize: 13,
+        sidebarWidth: 240,
+        sidebarHidden: false,
+        language: 'system',
+      };
+    }
+
+    if (width != null) {
+      settings.appearance.sidebarWidth = normalizeSidebarWidth(width);
+    }
+
+    if (hidden != null) {
+      settings.appearance.sidebarHidden = hidden === true;
+    }
+
+    persistSettings();
+  }
+
   function playNotificationSound(soundId = settings.notifications.taskCompleteSoundId) {
     TaskSounds.play(soundId, getNotificationVolume());
   }
@@ -417,7 +473,7 @@ const SettingsStore = (() => {
     try {
       const ready = await Backend.ensureReady();
       if (!ready?.running) {
-        showToast(ready?.error || 'AI backend is not running');
+        showToast(ready?.error || t('toast.backendNotRunning'));
         if (isOpen && activeCategory === 'providers') renderContent();
         return;
       }
@@ -442,7 +498,7 @@ const SettingsStore = (() => {
         });
         if (showFeedback && keyed.length > 0) {
           const connected = keyed.filter((r) => r.ok).length;
-          showToast(`Synced ${connected}/${keyed.length} provider${keyed.length === 1 ? '' : 's'}`);
+          showToast(t('toast.syncProvidersResult', { connected, total: keyed.length }));
         }
       }
 
@@ -450,7 +506,7 @@ const SettingsStore = (() => {
       if (isOpen && activeCategory === 'providers') renderContent();
     } catch (err) {
       console.error('Failed to sync providers:', err);
-      showToast('Failed to sync providers');
+      showToast(t('toast.syncProvidersFailed'));
     }
   }
 
@@ -545,20 +601,20 @@ const SettingsStore = (() => {
 
   function renderRowStatus(provider) {
     if (!provider.enabled) {
-      return '<span class="prov-row-status">Disabled</span>';
+      return `<span class="prov-row-status">${t('settings.providers.status.disabled')}</span>`;
     }
     if (!provider.apiKey?.trim()) {
-      return '<span class="prov-row-status is-missing">No key</span>';
+      return `<span class="prov-row-status is-missing">${t('settings.providers.status.noKey')}</span>`;
     }
 
     const sync = providerSyncState[provider.id];
     if (sync?.ok) {
-      return '<span class="prov-row-status is-set">Connected</span>';
+      return `<span class="prov-row-status is-set">${t('settings.providers.status.connected')}</span>`;
     }
     if (sync && !sync.ok && !sync.skipped) {
-      return '<span class="prov-row-status is-error">Not connected</span>';
+      return `<span class="prov-row-status is-error">${t('settings.providers.status.notConnected')}</span>`;
     }
-    return '<span class="prov-row-status is-missing">Not synced</span>';
+    return `<span class="prov-row-status is-missing">${t('settings.providers.status.notSynced')}</span>`;
   }
 
   function patchProviderRow(row, provider) {
@@ -694,7 +750,7 @@ const SettingsStore = (() => {
             <span class="prov-row-type">${escapeHtml(provider.type)}</span>
           </span>
           ${renderRowStatus(provider)}
-          <label class="settings-toggle prov-row-toggle" title="${provider.enabled ? 'Disable' : 'Enable'} provider" data-action="stop-propagation">
+          <label class="settings-toggle prov-row-toggle" title="${provider.enabled ? t('settings.providers.toggle.disable') : t('settings.providers.toggle.enable')}" data-action="stop-propagation">
             <input type="checkbox" class="settings-toggle-input" data-field="enabled" ${provider.enabled ? 'checked' : ''} />
             <span class="settings-toggle-track"></span>
           </label>
@@ -703,51 +759,51 @@ const SettingsStore = (() => {
         <div class="prov-row-body ${detailsClass}">
           <div class="prov-row-fields">
             <div class="prov-form-row">
-              <span class="prov-form-label">Name</span>
+              <span class="prov-form-label">${t('settings.providers.field.name')}</span>
               <div class="prov-form-control">
                 <input
                   class="settings-input"
                   type="text"
                   value="${escapeHtml(provider.name)}"
                   data-field="name"
-                  placeholder="Provider name"
+                  placeholder="${t('settings.providers.placeholder.name')}"
                   spellcheck="false"
                 />
               </div>
             </div>
 
             <div class="prov-form-row">
-              <span class="prov-form-label">API key</span>
+              <span class="prov-form-label">${t('settings.providers.field.apiKey')}</span>
               <div class="prov-form-control">
                 <input
                   class="settings-input settings-api-key-input"
                   type="password"
                   value="${escapeHtml(provider.apiKey)}"
                   data-field="apiKey"
-                  placeholder="Paste API key"
+                  placeholder="${t('settings.providers.placeholder.apiKey')}"
                   autocomplete="off"
                   spellcheck="false"
                 />
-                <button class="settings-icon-btn" type="button" data-action="toggle-key" title="Show/hide key">
+                <button class="settings-icon-btn" type="button" data-action="toggle-key" title="${t('settings.providers.toggle.showKey')}">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2"/>
                     <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
                   </svg>
                 </button>
-                <button class="prov-text-btn prov-test-btn" type="button" data-action="test-provider">Test</button>
+                <button class="prov-text-btn prov-test-btn" type="button" data-action="test-provider">${t('settings.providers.test')}</button>
               </div>
             </div>
 
             ${provider.type === 'custom' ? `
             <div class="prov-form-row">
-              <span class="prov-form-label">Base URL</span>
+              <span class="prov-form-label">${t('settings.providers.field.baseUrl')}</span>
               <div class="prov-form-control">
                 <input
                   class="settings-input"
                   type="url"
                   value="${escapeHtml(provider.baseUrl)}"
                   data-field="baseUrl"
-                  placeholder="https://api.example.com/v1"
+                  placeholder="${t('settings.providers.placeholder.baseUrl')}"
                   spellcheck="false"
                 />
               </div>
@@ -756,7 +812,7 @@ const SettingsStore = (() => {
           </div>
 
           <div class="prov-row-actions">
-            <button class="prov-text-btn" type="button" data-action="remove-provider">Remove</button>
+            <button class="prov-text-btn" type="button" data-action="remove-provider">${t('settings.providers.remove')}</button>
           </div>
         </div>
       </article>
@@ -776,7 +832,7 @@ const SettingsStore = (() => {
       <div class="prov-panel-row${isAdded ? ' is-added' : ''}">
         <span class="prov-panel-row-label">${escapeHtml(provider.name)}</span>
         <button class="prov-panel-action" type="button" data-action="add-preset" data-type="${provider.type}" ${isAdded ? 'disabled' : ''}>
-          ${isAdded ? 'Added' : 'Add'}
+          ${isAdded ? t('settings.providers.added') : t('settings.providers.add')}
         </button>
       </div>
     `;
@@ -811,14 +867,14 @@ const SettingsStore = (() => {
     const enabled = isImageProcessingEnabled();
     return `
       <div class="prov-group">
-        <div class="prov-group-label">Options</div>
+        <div class="prov-group-label">${t('settings.providers.group.options')}</div>
         <div class="prov-group-panel">
           <div class="prov-option-row">
             <div class="prov-option-copy">
-              <span class="prov-row-name">Image processing</span>
-              <span class="prov-option-note">Describe attached images with ${escapeHtml(IMAGE_DESCRIPTION_MODEL)} for models without vision</span>
+              <span class="prov-row-name">${t('settings.providers.imageProcessing')}</span>
+              <span class="prov-option-note">${t('settings.providers.imageProcessingNote', { model: escapeHtml(IMAGE_DESCRIPTION_MODEL) })}</span>
             </div>
-            <label class="settings-toggle prov-row-toggle" title="${enabled ? 'Disable' : 'Enable'} image processing">
+            <label class="settings-toggle prov-row-toggle" title="${enabled ? t('settings.providers.toggle.disableImage') : t('settings.providers.toggle.enableImage')}">
               <input
                 type="checkbox"
                 class="settings-toggle-input"
@@ -838,36 +894,36 @@ const SettingsStore = (() => {
     return `
       <div class="settings-section">
         <div class="settings-section-header">
-          <h2>Providers</h2>
-          <p>Add your API keys below. Keys stay on this device and are sent to the local OpenCode agent when you sync. Get an <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">OpenRouter API key</a> for hundreds of models through one key.</p>
+          <h2>${t('settings.providers.title')}</h2>
+          <p>${t('settings.providers.subtitleBefore')} <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">${t('settings.providers.openRouterLink')}</a> ${t('settings.providers.subtitleAfter')}</p>
           <div class="prov-sync-row">
-            <button class="prov-sync-btn" type="button" data-action="sync-providers">Sync providers</button>
-            <span class="prov-sync-meta">${connectedCount} connected · Free OpenCode models work without a key</span>
+            <button class="prov-sync-btn" type="button" data-action="sync-providers">${t('settings.providers.syncButton')}</button>
+            <span class="prov-sync-meta">${t('settings.providers.syncMeta', { connected: connectedCount })}</span>
           </div>
         </div>
 
         ${renderImageProcessingSection()}
 
         <div class="prov-group">
-          <div class="prov-group-label">Configured</div>
+          <div class="prov-group-label">${t('settings.providers.group.configured')}</div>
           <div class="prov-group-panel" id="settingsProvidersList">
             ${settings.providers.map(renderProviderRow).join('')}
           </div>
         </div>
 
         <div class="prov-group">
-          <div class="prov-group-label">Add</div>
+          <div class="prov-group-label">${t('settings.providers.group.add')}</div>
           <div class="prov-group-panel prov-add-panel">
             ${POPULAR_PROVIDERS.map(renderPresetRow).join('')}
           </div>
         </div>
 
         <div class="prov-group">
-          <div class="prov-group-label">Custom</div>
+          <div class="prov-group-label">${t('settings.providers.group.custom')}</div>
           <div class="prov-group-panel prov-custom-panel">
             <div class="prov-panel-row">
-              <span class="prov-panel-row-label">Custom endpoint</span>
-              <button class="prov-panel-action" type="button" data-action="add-custom">Add</button>
+              <span class="prov-panel-row-label">${t('settings.providers.customEndpoint')}</span>
+              <button class="prov-panel-action" type="button" data-action="add-custom">${t('settings.providers.add')}</button>
             </div>
           </div>
         </div>
@@ -882,16 +938,16 @@ const SettingsStore = (() => {
     return `
       <div class="settings-section">
         <div class="settings-section-header">
-          <h2>Personalization</h2>
-          <p>Tell the assistant about yourself and how you want it to respond. These preferences apply to every chat.</p>
+          <h2>${t('settings.personalization.title')}</h2>
+          <p>${t('settings.personalization.subtitle')}</p>
         </div>
 
         <div class="settings-notif-toggle-row">
           <div class="settings-notif-toggle-copy">
-            <div class="settings-label">Use personalization</div>
-            <div class="settings-label-note">Include your preferences in every AI request</div>
+            <div class="settings-label">${t('settings.personalization.useToggle')}</div>
+            <div class="settings-label-note">${t('settings.personalization.useToggleNote')}</div>
           </div>
-          <label class="settings-toggle" title="${prefs.enabled ? 'Disable' : 'Enable'} personalization">
+          <label class="settings-toggle" title="${prefs.enabled ? t('settings.personalization.toggleDisable') : t('settings.personalization.toggleEnable')}">
             <input
               type="checkbox"
               class="settings-toggle-input"
@@ -905,48 +961,48 @@ const SettingsStore = (() => {
         <div class="settings-pers-body${disabledClass}">
           <div class="settings-field-row">
             <div class="settings-field">
-              <label class="settings-label" for="pers-preferred-name">What should the AI call you?</label>
+              <label class="settings-label" for="pers-preferred-name">${t('settings.personalization.preferredName')}</label>
               <input
                 id="pers-preferred-name"
                 type="text"
                 class="settings-input"
                 data-pers-field="preferredName"
                 value="${escapeHtml(prefs.preferredName)}"
-                placeholder="e.g. Alex"
+                placeholder="${t('settings.personalization.placeholder.name')}"
                 autocomplete="off"
               />
             </div>
             <div class="settings-field">
-              <label class="settings-label" for="pers-role">Your role or background</label>
+              <label class="settings-label" for="pers-role">${t('settings.personalization.role')}</label>
               <input
                 id="pers-role"
                 type="text"
                 class="settings-input"
                 data-pers-field="role"
                 value="${escapeHtml(prefs.role)}"
-                placeholder="e.g. Full-stack developer"
+                placeholder="${t('settings.personalization.placeholder.role')}"
                 autocomplete="off"
               />
             </div>
           </div>
 
           <div class="settings-field">
-            <label class="settings-label" for="pers-language">Preferred language</label>
+            <label class="settings-label" for="pers-language">${t('settings.personalization.language')}</label>
             <input
               id="pers-language"
               type="text"
               class="settings-input"
               data-pers-field="preferredLanguage"
               value="${escapeHtml(prefs.preferredLanguage)}"
-              placeholder="e.g. English"
+              placeholder="${t('settings.personalization.placeholder.language')}"
               autocomplete="off"
             />
           </div>
 
           <div class="sett-appe-group">
-            <div class="sett-appe-group-label">Response style</div>
+            <div class="sett-appe-group-label">${t('settings.personalization.responseStyle')}</div>
             <div class="settings-pers-style-list">
-              ${Object.values(RESPONSE_STYLES).map((style) => `
+              ${getLocalizedResponseStyles().map((style) => `
                 <button
                   class="settings-pers-style-option${style.id === prefs.responseStyle ? ' active' : ''}"
                   type="button"
@@ -960,15 +1016,15 @@ const SettingsStore = (() => {
           </div>
 
           <div class="settings-field settings-pers-instructions-field">
-            <label class="settings-label" for="pers-custom-instructions">Custom instructions</label>
+            <label class="settings-label" for="pers-custom-instructions">${t('settings.personalization.customInstructions')}</label>
             <div class="settings-label-note settings-pers-instructions-note">
-              Rules, preferences, or context the assistant should always follow
+              ${t('settings.personalization.customInstructionsNote')}
             </div>
             <textarea
               id="pers-custom-instructions"
               class="settings-input settings-pers-textarea"
               data-pers-field="customInstructions"
-              placeholder="e.g. Always use TypeScript. Prefer functional patterns. Explain trade-offs when suggesting architecture changes."
+              placeholder="${t('settings.personalization.placeholder.instructions')}"
               rows="8"
             >${escapeHtml(prefs.customInstructions)}</textarea>
           </div>
@@ -984,16 +1040,16 @@ const SettingsStore = (() => {
     return `
       <div class="settings-section">
         <div class="settings-section-header">
-          <h2>Notifications</h2>
-          <p>Choose how you're alerted when a chat task finishes.</p>
+          <h2>${t('settings.notifications.title')}</h2>
+          <p>${t('settings.notifications.subtitle')}</p>
         </div>
 
         <div class="settings-notif-toggle-row">
           <div class="settings-notif-toggle-copy">
-            <div class="settings-label">Task complete sound</div>
-            <div class="settings-label-note">Play a sound when any chat finishes running</div>
+            <div class="settings-label">${t('settings.notifications.taskComplete')}</div>
+            <div class="settings-label-note">${t('settings.notifications.taskCompleteNote')}</div>
           </div>
-          <label class="settings-toggle" title="${taskCompleteEnabled ? 'Disable' : 'Enable'} task complete sound">
+          <label class="settings-toggle" title="${taskCompleteEnabled ? t('settings.notifications.toggleDisable') : t('settings.notifications.toggleEnable')}">
             <input
               type="checkbox"
               class="settings-toggle-input"
@@ -1006,8 +1062,8 @@ const SettingsStore = (() => {
 
         <div class="settings-notif-volume-row${taskCompleteEnabled ? '' : ' is-disabled'}">
           <div class="settings-notif-volume-copy">
-            <div class="settings-label">Volume</div>
-            <div class="settings-label-note">How loud notification sounds play</div>
+            <div class="settings-label">${t('settings.notifications.volume')}</div>
+            <div class="settings-label-note">${t('settings.notifications.volumeNote')}</div>
           </div>
           <div class="settings-volume-control">
             <input
@@ -1021,7 +1077,7 @@ const SettingsStore = (() => {
               aria-valuemin="0"
               aria-valuemax="100"
               aria-valuenow="${volume}"
-              aria-label="Notification volume"
+              aria-label="${t('settings.notifications.volumeAria')}"
             />
             <span class="settings-volume-value" data-notif-volume-label>${volume}%</span>
           </div>
@@ -1044,7 +1100,7 @@ const SettingsStore = (() => {
                 type="button"
                 data-action="preview-sound"
                 data-sound-id="${sound.id}"
-              >Preview</button>
+              >${t('settings.notifications.preview')}</button>
             </div>
           `).join('')}
         </div>
@@ -1055,30 +1111,30 @@ const SettingsStore = (() => {
   function renderShortcutsContent() {
     const groups = [
       {
-        label: "General",
+        labelKey: 'settings.shortcuts.group.general',
         shortcuts: [
-          { keys: "Ctrl+N", action: "New Chat" },
-          { keys: "Ctrl+O", action: "Open Folder" },
-          { keys: "Ctrl+K", action: "Search Chats" },
-          { keys: "Ctrl+B", action: "Toggle Sidebar" },
-          { keys: "Ctrl+,", action: "Settings" },
+          { keys: 'Ctrl+N', actionKey: 'menu.newChat' },
+          { keys: 'Ctrl+O', actionKey: 'menu.openFolder' },
+          { keys: 'Ctrl+K', actionKey: 'menu.searchChats' },
+          { keys: 'Ctrl+B', actionKey: 'menu.toggleSidebar' },
+          { keys: 'Ctrl+,', actionKey: 'menu.settings' },
         ],
       },
       {
-        label: "Editing",
+        labelKey: 'settings.shortcuts.group.editing',
         shortcuts: [
-          { keys: "Ctrl+Z", action: "Undo" },
-          { keys: "Ctrl+Y", action: "Redo" },
-          { keys: "Ctrl+X", action: "Cut" },
-          { keys: "Ctrl+C", action: "Copy" },
-          { keys: "Ctrl+V", action: "Paste" },
-          { keys: "Ctrl+A", action: "Select All" },
+          { keys: 'Ctrl+Z', actionKey: 'menu.undo' },
+          { keys: 'Ctrl+Y', actionKey: 'menu.redo' },
+          { keys: 'Ctrl+X', actionKey: 'menu.cut' },
+          { keys: 'Ctrl+C', actionKey: 'menu.copy' },
+          { keys: 'Ctrl+V', actionKey: 'menu.paste' },
+          { keys: 'Ctrl+A', actionKey: 'menu.selectAll' },
         ],
       },
       {
-        label: "Navigation",
+        labelKey: 'settings.shortcuts.group.navigation',
         shortcuts: [
-          { keys: "Escape", action: "Close menus / Go back" },
+          { keys: 'Escape', actionKey: 'settings.shortcuts.closeMenus' },
         ],
       },
     ];
@@ -1086,24 +1142,24 @@ const SettingsStore = (() => {
     return `
       <div class="settings-section">
         <div class="settings-section-header">
-          <h2>Shortcuts</h2>
-          <p>Keyboard shortcuts to help you navigate and work faster.</p>
+          <h2>${t('settings.shortcuts.title')}</h2>
+          <p>${t('settings.shortcuts.subtitle')}</p>
         </div>
         ${groups.map((group) => `
           <div class="sett-shortcuts-group">
-            <div class="sett-shortcuts-group-label">${group.label}</div>
+            <div class="sett-shortcuts-group-label">${t(group.labelKey)}</div>
             <div class="sett-shortcuts-list">
               ${group.shortcuts.map((s) => `
                 <div class="sett-shortcut-row">
-                  <span class="sett-shortcut-action">${s.action}</span>
+                  <span class="sett-shortcut-action">${t(s.actionKey)}</span>
                   <span class="sett-shortcut-keys">
-                    ${s.keys.split("+").map((k) => `<kbd>${k}</kbd>`).join("<span class=\"sett-shortcut-plus\">+</span>")}
+                    ${s.keys.split('+').map((k) => `<kbd>${k}</kbd>`).join('<span class="sett-shortcut-plus">+</span>')}
                   </span>
                 </div>
-              `).join("")}
+              `).join('')}
             </div>
           </div>
-        `).join("")}
+        `).join('')}
       </div>
     `;
   }
@@ -1111,14 +1167,16 @@ const SettingsStore = (() => {
   function renderComingSoon(label) {
     const icon =
       `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`;
-    const title = label.charAt(0).toUpperCase() + label.slice(1);
+    const navKey = `settings.nav.${label}`;
+    const localized = t(navKey);
+    const title = localized !== navKey ? localized : label.charAt(0).toUpperCase() + label.slice(1);
     return `
       <div class="settings-coming-soon">
         <div class="settings-coming-soon-icon">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">${icon}</svg>
         </div>
         <h3>${title}</h3>
-        <p>This section is under construction and will be available in a future update.</p>
+        <p>${t('settings.comingSoon.message')}</p>
       </div>
     `;
   }
@@ -1126,16 +1184,37 @@ const SettingsStore = (() => {
   function renderAppearanceContent() {
     const currentThemeId = settings.appearance?.themeId || 'default';
     const currentFontSize = settings.appearance?.fontSize || 13;
+    const currentLanguage = settings.appearance?.language || 'system';
+    const resolvedFromOs = typeof I18n !== 'undefined'
+      ? I18n.normalizeOsLocale(I18n.getOsLocale())
+      : 'en';
+    const languageHint = currentLanguage === 'system'
+      ? t('settings.language.systemHint', {
+          locale: typeof I18n !== 'undefined'
+            ? I18n.getLocaleLabel(resolvedFromOs)
+            : 'English',
+        })
+      : t('settings.language.manualHint');
 
     return `
       <div class="settings-section">
         <div class="settings-section-header">
-          <h2>Appearance</h2>
-          <p>Customize the look and feel of the app.</p>
+          <h2>${t('settings.appearance.title')}</h2>
+          <p>${t('settings.appearance.subtitle')}</p>
         </div>
 
         <div class="sett-appe-group">
-          <div class="sett-appe-group-label">Theme</div>
+          <div class="sett-appe-group-label">${t('settings.appearance.language')}</div>
+          <select class="settings-select" data-appe-field="language" aria-label="${t('settings.appearance.language')}">
+            <option value="system"${currentLanguage === 'system' ? ' selected' : ''}>${t('settings.language.system')}</option>
+            <option value="en"${currentLanguage === 'en' ? ' selected' : ''}>English</option>
+            <option value="hu"${currentLanguage === 'hu' ? ' selected' : ''}>Magyar</option>
+          </select>
+          <div class="settings-label-note">${languageHint}</div>
+        </div>
+
+        <div class="sett-appe-group">
+          <div class="sett-appe-group-label">${t('settings.appearance.theme')}</div>
           <div class="sett-appe-grid">
             ${THEMES.map((theme) => {
               const isActive = theme.id === currentThemeId;
@@ -1165,7 +1244,7 @@ const SettingsStore = (() => {
         </div>
 
         <div class="sett-appe-group">
-          <div class="sett-appe-group-label">Text size</div>
+          <div class="sett-appe-group-label">${t('settings.appearance.textSize')}</div>
           <div class="sett-appe-size-row">
             <span class="sett-appe-size-label">A</span>
             <input
@@ -1179,7 +1258,7 @@ const SettingsStore = (() => {
               aria-valuemin="11"
               aria-valuemax="16"
               aria-valuenow="${currentFontSize}"
-              aria-label="Text size"
+              aria-label="${t('settings.appearance.textSizeAria')}"
             />
             <span class="sett-appe-size-label is-lg">A</span>
             <span class="sett-appe-size-value" data-appe-size-label>${currentFontSize}px</span>
@@ -1229,6 +1308,15 @@ const SettingsStore = (() => {
       persistSettings();
       document.documentElement.style.setProperty('--font-size', `${val}px`);
     });
+
+    const langSelect = container.querySelector('[data-appe-field="language"]');
+    langSelect?.addEventListener('change', () => {
+      const next = langSelect.value;
+      if (!I18n.isValidPreference(next) || next === settings.appearance.language) return;
+      settings.appearance.language = next;
+      persistSettings();
+      if (isOpen && activeCategory === 'appearance') renderContent();
+    });
   }
 
   const APP_LOGO_SVG = `
@@ -1241,12 +1329,12 @@ const SettingsStore = (() => {
   let cachedUpdateStatus = null;
 
   function formatUpdateStatusLabel(status) {
-    if (!status || status.checking) return 'Checking for updates…';
-    if (status.error) return 'Could not check for updates';
-    if (status.downloading) return `Downloading v${status.latestVersion}…`;
-    if (status.upToDate) return 'Up to date';
-    const label = `Update available · v${status.latestVersion}`;
-    return status.isPrerelease ? `${label} (pre-release)` : label;
+    if (!status || status.checking) return t('settings.update.checking');
+    if (status.error) return t('settings.update.couldNotCheck');
+    if (status.downloading) return t('settings.update.downloading', { version: status.latestVersion });
+    if (status.upToDate) return t('settings.update.upToDate');
+    const key = status.isPrerelease ? 'settings.update.availablePrerelease' : 'settings.update.available';
+    return t(key, { version: status.latestVersion });
   }
 
   function applyUpdateStatusToAbout(container, status) {
@@ -1271,8 +1359,8 @@ const SettingsStore = (() => {
       installBtn.hidden = !showInstall;
       if (showInstall) {
         installBtn.textContent = status.isPrerelease
-          ? `Install v${status.latestVersion} (pre-release)`
-          : `Install v${status.latestVersion}`;
+          ? t('settings.about.installPrerelease', { version: status.latestVersion })
+          : t('settings.about.installVersion', { version: status.latestVersion });
       }
     }
   }
@@ -1334,35 +1422,35 @@ const SettingsStore = (() => {
           <div class="settings-about-logo settings-about-logo--hero">
             ${APP_LOGO_SVG}
           </div>
-          <h2 class="settings-about-name">Code app</h2>
-          <div class="settings-about-version" data-about-field="versionHeadline">Version …</div>
-          <div class="settings-about-update-status is-checking" data-about-field="updateStatus">Checking for updates…</div>
-          <p class="settings-about-tagline">Local AI coding workspace powered by OpenCode</p>
+          <h2 class="settings-about-name">${t('settings.about.appName')}</h2>
+          <div class="settings-about-version" data-about-field="versionHeadline">${t('settings.about.versionHeadline', { version: '…' })}</div>
+          <div class="settings-about-update-status is-checking" data-about-field="updateStatus">${t('settings.update.checking')}</div>
+          <p class="settings-about-tagline">${t('settings.about.tagline')}</p>
         </div>
 
         <div class="settings-about-actions">
-          <button class="settings-about-btn" type="button" data-action="install-update" hidden>Install update</button>
-          <button class="settings-about-btn settings-about-btn--secondary" type="button" data-action="copy-diagnostics">Copy system info</button>
+          <button class="settings-about-btn" type="button" data-action="install-update" hidden>${t('settings.about.installUpdate')}</button>
+          <button class="settings-about-btn settings-about-btn--secondary" type="button" data-action="copy-diagnostics">${t('settings.about.copyDiagnostics')}</button>
         </div>
 
         <div class="prov-group">
-          <div class="prov-group-label">System</div>
+          <div class="prov-group-label">${t('settings.about.system')}</div>
           <div class="prov-group-panel settings-about-system-panel">
-            ${renderAboutSystemRow('Version', 'version')}
-            ${renderAboutSystemRow('OpenCode engine', 'opencodeVersion')}
-            ${renderAboutSystemRow('Electron', 'electron')}
-            ${renderAboutSystemRow('Operating system', 'osLabel')}
-            ${renderAboutSystemRow('Architecture', 'arch')}
+            ${renderAboutSystemRow(t('settings.about.field.version'), 'version')}
+            ${renderAboutSystemRow(t('settings.about.field.opencode'), 'opencodeVersion')}
+            ${renderAboutSystemRow(t('settings.about.field.electron'), 'electron')}
+            ${renderAboutSystemRow(t('settings.about.field.os'), 'osLabel')}
+            ${renderAboutSystemRow(t('settings.about.field.arch'), 'arch')}
           </div>
         </div>
 
-        <p class="settings-about-copyright">© ${new Date().getFullYear()} Code app</p>
+        <p class="settings-about-copyright">${t('settings.about.copyright', { year: new Date().getFullYear() })}</p>
 
         <div class="prov-group settings-reset-group">
-          <div class="prov-group-label">Reset</div>
+          <div class="prov-group-label">${t('settings.about.reset')}</div>
           <div class="prov-group-panel settings-reset-panel">
-            <p class="settings-reset-desc">Remove all projects, chats, and settings. This cannot be undone.</p>
-            <button class="settings-about-btn settings-about-btn--danger" type="button" data-action="reset-app">Reset app</button>
+            <p class="settings-reset-desc">${t('settings.about.resetDesc')}</p>
+            <button class="settings-about-btn settings-about-btn--danger" type="button" data-action="reset-app">${t('settings.about.resetButton')}</button>
           </div>
         </div>
       </div>
@@ -1371,13 +1459,13 @@ const SettingsStore = (() => {
 
   async function initAboutSection(container) {
     const info = await loadAppInfo();
-    const versionLabel = `Version ${info.version}`;
+    const versionLabel = t('settings.about.versionHeadline', { version: info.version });
 
     container.querySelector('[data-about-field="versionHeadline"]').textContent = versionLabel;
     container.querySelector('[data-about-field="version"]').textContent = info.version;
-    container.querySelector('[data-about-field="opencodeVersion"]').textContent = info.opencodeVersion || 'Unknown';
+    container.querySelector('[data-about-field="opencodeVersion"]').textContent = info.opencodeVersion || t('settings.about.unknown');
     container.querySelector('[data-about-field="electron"]').textContent = info.electron;
-    container.querySelector('[data-about-field="osLabel"]').textContent = info.osLabel || 'Unknown';
+    container.querySelector('[data-about-field="osLabel"]').textContent = info.osLabel || t('settings.about.unknown');
     container.querySelector('[data-about-field="arch"]').textContent = info.arch;
     container.dataset.aboutVersion = info.version;
 
@@ -1404,7 +1492,7 @@ const SettingsStore = (() => {
         window.installAppUpdate();
         return;
       }
-      showToast('Could not start update');
+      showToast(t('toast.couldNotStartUpdate'));
     });
 
     container.querySelector('[data-action="copy-diagnostics"]')?.addEventListener('click', async () => {
@@ -1412,16 +1500,16 @@ const SettingsStore = (() => {
       const text = buildDiagnosticsText(info);
       try {
         await navigator.clipboard.writeText(text);
-        showToast('System info copied');
+        showToast(t('toast.systemInfoCopied'));
       } catch (_) {
-        showToast('Could not copy to clipboard');
+        showToast(t('toast.couldNotCopyClipboard'));
       }
     });
 
     container.querySelector('[data-action="reset-app"]')?.addEventListener('click', () => {
       showActionToast({
-        message: 'Erase all projects, chats, and settings?',
-        actionLabel: 'Reset',
+        message: t('toast.resetConfirm'),
+        actionLabel: t('toast.actionReset'),
         onAction: () => {
           if (typeof window.resetApp === 'function') window.resetApp();
         },
@@ -1431,41 +1519,41 @@ const SettingsStore = (() => {
 
   const CATEGORIES = [
     {
-      section: "Configuration",
+      sectionKey: 'settings.section.configuration',
       items: [
         {
           id: "providers",
-          label: "Providers",
+          labelKey: "settings.nav.providers",
           icon: `<path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
         },
         {
           id: "notifications",
-          label: "Notifications",
+          labelKey: "settings.nav.notifications",
           icon: `<path d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-5-5.9V4a2 2 0 10-4 0v1.1A6 6 0 004 11v3.2c0 .5-.2 1-.6 1.4L2 17h5m8 0a3 3 0 01-6 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
         },
         {
           id: "personalization",
-          label: "Personalization",
+          labelKey: "settings.nav.personalization",
           icon: `<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="2"/>`,
         },
         {
           id: "appearance",
-          label: "Appearance",
+          labelKey: "settings.nav.appearance",
           icon: `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`,
         },
         {
           id: "shortcuts",
-          label: "Shortcuts",
+          labelKey: "settings.nav.shortcuts",
           icon: `<rect x="2" y="7" width="20" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 12h.01M12 12h.01M16 12h.01M8 16h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
         },
       ],
     },
     {
-      section: "App",
+      sectionKey: 'settings.section.app',
       items: [
         {
           id: "about",
-          label: "About",
+          labelKey: "settings.nav.about",
           icon: `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
         },
       ],
@@ -1476,7 +1564,7 @@ const SettingsStore = (() => {
     return CATEGORIES.map(
       (group) => `
       <div class="settings-nav-group">
-        <div class="settings-nav-section-label">${group.section}</div>
+        <div class="settings-nav-section-label">${t(group.sectionKey)}</div>
         ${group.items
           .map(
             (item) => `
@@ -1486,8 +1574,8 @@ const SettingsStore = (() => {
             data-category="${item.id}"
           >
             <svg class="settings-nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none">${item.icon}</svg>
-            <span>${item.label}</span>
-            ${item.soon ? '<span class="settings-nav-soon">Soon</span>' : ""}
+            <span>${t(item.labelKey)}</span>
+            ${item.soon ? `<span class="settings-nav-soon">${t('settings.nav.soon')}</span>` : ""}
           </button>
         `,
           )
@@ -1608,11 +1696,11 @@ const SettingsStore = (() => {
       row.querySelector('[data-action="remove-provider"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
         if (settings.providers.length <= 1) {
-          showToast('Keep at least one provider');
+          showToast(t('toast.keepOneProvider'));
           return;
         }
         removeProvider(id);
-        showToast('Provider removed');
+        showToast(t('toast.providerRemoved'));
       });
 
       row.querySelector('[data-action="toggle-key"]')?.addEventListener('click', (e) => {
@@ -1625,16 +1713,16 @@ const SettingsStore = (() => {
         e.stopPropagation();
         const provider = getProvider(id);
         if (!provider?.apiKey?.trim()) {
-          showToast('Add an API key first');
+          showToast(t('toast.addApiKeyFirst'));
           return;
         }
         if (provider.type === 'custom' && !provider.baseUrl?.trim()) {
-          showToast('Add a base URL first');
+          showToast(t('toast.addBaseUrlFirst'));
           return;
         }
         const btn = e.currentTarget;
         btn.disabled = true;
-        btn.textContent = 'Testing…';
+        btn.textContent = t('settings.providers.testing');
         try {
           const result = await Backend.testProvider(provider);
           providerSyncState[id] = {
@@ -1643,13 +1731,15 @@ const SettingsStore = (() => {
             providerId: result.providerId,
           };
           patchProviderRow(row, provider);
-          showToast(result.ok ? `${provider.name} connected` : `Could not connect to ${provider.name}`);
+          showToast(result.ok
+            ? t('toast.providerConnected', { name: provider.name })
+            : t('toast.providerConnectFailed', { name: provider.name }));
           if (result.ok) await refreshModelsFromBackend();
         } catch (err) {
-          showToast(`Test failed: ${err.message || 'Unknown error'}`);
+          showToast(t('toast.testFailed', { error: err.message || t('toast.unknownError') }));
         } finally {
           btn.disabled = false;
-          btn.textContent = 'Test';
+          btn.textContent = t('settings.providers.test');
         }
       });
     });
@@ -1658,17 +1748,17 @@ const SettingsStore = (() => {
       btn.addEventListener('click', () => {
         const type = btn.dataset.type;
         if (settings.providers.some((p) => p.type === type)) {
-          showToast('Provider already added');
+          showToast(t('toast.providerAlreadyAdded'));
           return;
         }
         addProvider(type, { expand: true, focusKey: true });
-        showToast('Provider added - paste your API key');
+        showToast(t('toast.providerAddedPasteKey'));
       });
     });
 
     container.querySelector('[data-action="add-custom"]')?.addEventListener('click', () => {
       addProvider('custom', { expand: true, focusBaseUrl: true });
-      showToast('Custom provider added');
+      showToast(t('toast.customProviderAdded'));
     });
 
     container.querySelector('[data-action="sync-providers"]')?.addEventListener('click', () => {
@@ -1791,9 +1881,9 @@ const SettingsStore = (() => {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
             <path d="M19 12H5M12 5l-7 7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          Back
+          ${t('settings.back')}
         </button>
-        <span class="settings-page-title">Settings</span>
+        <span class="settings-page-title">${t('settings.title')}</span>
         <div></div>
       </div>
       <div class="settings-page-layout">
@@ -1809,7 +1899,7 @@ const SettingsStore = (() => {
         const category = btn.dataset.category;
         if (category === activeCategory) return;
         if (btn.querySelector(".settings-nav-soon")) {
-          showToast("Coming soon");
+          showToast(t('toast.comingSoon'));
           return;
         }
         activeCategory = category;
@@ -1853,6 +1943,23 @@ const SettingsStore = (() => {
     return buildPersonalizationSystemPrompt(settings.personalization);
   }
 
+  function applyStartupAppearance() {
+    settings = loadSettingsFromStorage();
+    const appe = settings.appearance || {};
+    applyTheme(appe.themeId || 'default');
+    const fs = parseFloat(appe.fontSize);
+    if (fs > 0) document.documentElement.style.setProperty('--font-size', `${fs}px`);
+    document.documentElement.style.setProperty(
+      '--sidebar-width',
+      `${normalizeSidebarWidth(appe.sidebarWidth)}px`,
+    );
+  }
+
+  window.addEventListener('language-changed', () => {
+    if (!isOpen || !pageEl) return;
+    render();
+  });
+
   return {
     open,
     close,
@@ -1868,6 +1975,9 @@ const SettingsStore = (() => {
     canProcessImages,
     getOpenRouterApiKey,
     refreshAboutUpdateStatus,
+    getSidebarLayout,
+    setSidebarLayout,
+    applyStartupAppearance,
   };
 })();
 
@@ -1875,17 +1985,4 @@ function openSettings()  { SettingsStore.open(); }
 function closeSettings() { SettingsStore.close(); }
 
 /* Apply saved appearance on startup */
-(function initAppearance() {
-  try {
-    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const appe = parsed?.appearance;
-      if (appe) {
-        applyTheme(appe.themeId || 'default');
-        const fs = parseFloat(appe.fontSize);
-        if (fs > 0) document.documentElement.style.setProperty('--font-size', `${fs}px`);
-      }
-    }
-  } catch (_) { /* ignore */ }
-})();
+SettingsStore.applyStartupAppearance();

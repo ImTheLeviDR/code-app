@@ -310,6 +310,7 @@ textarea {
   display: flex;
   flex: 1;
   overflow: hidden;
+  position: relative;
 }
 
 /* ============================================================
@@ -518,6 +519,64 @@ textarea {
   flex-direction: column;
   flex-shrink: 0;
   overflow: hidden;
+  position: relative;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+  touch-action: none;
+}
+
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
+.sidebar-resize-handle:hover::after,
+body.sidebar-resizing .sidebar-resize-handle::after {
+  background: var(--accent);
+}
+
+.sidebar-edge-opener {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  z-index: 40;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.app-body:not(.sidebar-hidden) .sidebar-edge-opener,
+.app-body.settings-open .sidebar-edge-opener {
+  pointer-events: none;
+}
+
+.app-body.sidebar-hidden:not(.settings-open) .sidebar-edge-opener {
+  pointer-events: auto;
+}
+
+body.sidebar-resizing .sidebar,
+body.sidebar-resizing .sidebar-edge-opener {
+  transition: none !important;
+}
+
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .app-body.settings-open .sidebar {
@@ -591,14 +650,15 @@ textarea {
   padding: 8px 12px 4px;
 }
 
-.projects-open-folder {
+.projects-open-folder,
+.project-add-chat {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 18px;
   height: 18px;
   border-radius: 3px;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
   color: var(--text-muted);
   flex-shrink: 0;
   background: none;
@@ -607,9 +667,14 @@ textarea {
   cursor: pointer;
 }
 
-.projects-open-folder:hover {
+.projects-open-folder:hover,
+.project-add-chat:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.project-header:hover .project-add-chat:hover {
+  background: var(--bg-active);
 }
 
 .projects-empty {
@@ -708,30 +773,12 @@ textarea {
 }
 
 .project-add-chat {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 3px;
   opacity: 0;
-  transition: opacity var(--transition-fast), background var(--transition-fast);
-  color: var(--text-muted);
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
 }
 
 .project-header.expanded .project-add-chat,
 .project-header:hover .project-add-chat {
   opacity: 1;
-}
-
-.project-add-chat:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
 }
 
 .project-chats {
@@ -3151,7 +3198,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 16px 0 0;
   flex-shrink: 0;
   background: var(--bg-main);
   position: relative;
@@ -3160,10 +3207,13 @@ textarea {
 .settings-back-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
+  gap: 8px;
+  align-self: stretch;
+  min-width: 44px;
+  padding: 0 16px;
+  margin: 0;
+  border-radius: 0;
+  font-size: 13px;
   color: var(--text-secondary);
   transition: background var(--transition-fast), color var(--transition-fast);
   -webkit-app-region: no-drag;
@@ -3173,6 +3223,10 @@ textarea {
 .settings-back-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.settings-back-btn:active {
+  background: var(--bg-active);
 }
 
 .settings-page-title {
