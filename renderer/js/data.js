@@ -127,6 +127,14 @@ const DEFAULT_SETTINGS = {
     themeId: 'default',
     fontSize: 13,
   },
+  personalization: {
+    enabled: true,
+    preferredName: '',
+    role: '',
+    responseStyle: 'balanced',
+    preferredLanguage: '',
+    customInstructions: '',
+  },
 };
 
 /* AI response templates, keyed by detected intent */

@@ -3188,6 +3188,7 @@ async function runAIResponse(chatId, userMsg, options = {}) {
 
     interruptGuard.delete(chatId);
 
+    const systemPrompt = SettingsStore.getPersonalizationSystemPrompt();
     const result = await Backend.sendMessage({
       chatId,
       text: modelText,
@@ -3197,6 +3198,7 @@ async function runAIResponse(chatId, userMsg, options = {}) {
       history: buildHistoryForBackend(chatId, userMsg.id),
       workspace: getChatWorkspace(chatId),
       forceHistory: chatsNeedingContextSync.has(chatId),
+      ...(systemPrompt ? { system: systemPrompt } : {}),
     });
     if (abortedChatIds.has(chatId)) {
       interruptGuard.delete(chatId);

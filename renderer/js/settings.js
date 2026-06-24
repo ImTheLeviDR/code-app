@@ -286,7 +286,74 @@ const SettingsStore = (() => {
       themeId: next.appearance?.themeId || 'default',
       fontSize: next.appearance?.fontSize || 13,
     };
+    next.personalization = normalizePersonalization(next.personalization);
     return next;
+  }
+
+  const RESPONSE_STYLES = {
+    concise: {
+      id: 'concise',
+      label: 'Concise',
+      description: 'Short, direct answers',
+    },
+    balanced: {
+      id: 'balanced',
+      label: 'Balanced',
+      description: 'Clear without extra fluff',
+    },
+    detailed: {
+      id: 'detailed',
+      label: 'Detailed',
+      description: 'Thorough explanations',
+    },
+  };
+
+  function normalizePersonalization(value) {
+    const style = value?.responseStyle;
+    return {
+      enabled: value?.enabled !== false,
+      preferredName: typeof value?.preferredName === 'string' ? value.preferredName : '',
+      role: typeof value?.role === 'string' ? value.role : '',
+      responseStyle: RESPONSE_STYLES[style] ? style : 'balanced',
+      preferredLanguage: typeof value?.preferredLanguage === 'string' ? value.preferredLanguage : '',
+      customInstructions: typeof value?.customInstructions === 'string' ? value.customInstructions : '',
+    };
+  }
+
+  function buildPersonalizationSystemPrompt(personalization = settings.personalization) {
+    const prefs = normalizePersonalization(personalization);
+    if (!prefs.enabled) return '';
+
+    const parts = [];
+
+    const name = prefs.preferredName.trim();
+    const role = prefs.role.trim();
+    const language = prefs.preferredLanguage.trim();
+
+    const stylePrompts = {
+      concise: 'Keep responses concise and to the point. Prefer short paragraphs and bullet points when helpful.',
+      balanced: 'Use a balanced response style — clear and thorough without unnecessary verbosity.',
+      detailed: 'Provide detailed, thorough explanations. Include context and reasoning when helpful.',
+    };
+
+    const custom = prefs.customInstructions.trim();
+    const hasIdentity = name || role || language;
+
+    if (name) {
+      parts.push(`The user's preferred name is ${name}. Address them by this name when appropriate.`);
+    }
+    if (role) {
+      parts.push(`The user's background or role: ${role}. Tailor explanations to this context.`);
+    }
+    if (language) {
+      parts.push(`Respond in ${language} unless the user writes in a different language.`);
+    }
+    if (prefs.responseStyle !== 'balanced' || hasIdentity || custom) {
+      parts.push(stylePrompts[prefs.responseStyle] || stylePrompts.balanced);
+    }
+    if (custom) parts.push(custom);
+
+    return parts.join('\n\n');
   }
 
   function normalizeNotificationVolume(value) {
@@ -808,6 +875,108 @@ const SettingsStore = (() => {
     `;
   }
 
+  function renderPersonalizationContent() {
+    const prefs = normalizePersonalization(settings.personalization);
+    const disabledClass = prefs.enabled ? '' : ' is-disabled';
+
+    return `
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <h2>Personalization</h2>
+          <p>Tell the assistant about yourself and how you want it to respond. These preferences apply to every chat.</p>
+        </div>
+
+        <div class="settings-notif-toggle-row">
+          <div class="settings-notif-toggle-copy">
+            <div class="settings-label">Use personalization</div>
+            <div class="settings-label-note">Include your preferences in every AI request</div>
+          </div>
+          <label class="settings-toggle" title="${prefs.enabled ? 'Disable' : 'Enable'} personalization">
+            <input
+              type="checkbox"
+              class="settings-toggle-input"
+              data-pers-field="enabled"
+              ${prefs.enabled ? 'checked' : ''}
+            />
+            <span class="settings-toggle-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-pers-body${disabledClass}">
+          <div class="settings-field-row">
+            <div class="settings-field">
+              <label class="settings-label" for="pers-preferred-name">What should the AI call you?</label>
+              <input
+                id="pers-preferred-name"
+                type="text"
+                class="settings-input"
+                data-pers-field="preferredName"
+                value="${escapeHtml(prefs.preferredName)}"
+                placeholder="e.g. Alex"
+                autocomplete="off"
+              />
+            </div>
+            <div class="settings-field">
+              <label class="settings-label" for="pers-role">Your role or background</label>
+              <input
+                id="pers-role"
+                type="text"
+                class="settings-input"
+                data-pers-field="role"
+                value="${escapeHtml(prefs.role)}"
+                placeholder="e.g. Full-stack developer"
+                autocomplete="off"
+              />
+            </div>
+          </div>
+
+          <div class="settings-field">
+            <label class="settings-label" for="pers-language">Preferred language</label>
+            <input
+              id="pers-language"
+              type="text"
+              class="settings-input"
+              data-pers-field="preferredLanguage"
+              value="${escapeHtml(prefs.preferredLanguage)}"
+              placeholder="e.g. English"
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="sett-appe-group">
+            <div class="sett-appe-group-label">Response style</div>
+            <div class="settings-pers-style-list">
+              ${Object.values(RESPONSE_STYLES).map((style) => `
+                <button
+                  class="settings-pers-style-option${style.id === prefs.responseStyle ? ' active' : ''}"
+                  type="button"
+                  data-pers-style="${style.id}"
+                >
+                  <span class="settings-pers-style-label">${escapeHtml(style.label)}</span>
+                  <span class="settings-pers-style-desc">${escapeHtml(style.description)}</span>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
+          <div class="settings-field settings-pers-instructions-field">
+            <label class="settings-label" for="pers-custom-instructions">Custom instructions</label>
+            <div class="settings-label-note settings-pers-instructions-note">
+              Rules, preferences, or context the assistant should always follow
+            </div>
+            <textarea
+              id="pers-custom-instructions"
+              class="settings-input settings-pers-textarea"
+              data-pers-field="customInstructions"
+              placeholder="e.g. Always use TypeScript. Prefer functional patterns. Explain trade-offs when suggesting architecture changes."
+              rows="8"
+            >${escapeHtml(prefs.customInstructions)}</textarea>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderNotificationsContent() {
     const { taskCompleteEnabled, taskCompleteSoundId, volume } = settings.notifications;
     const sounds = TaskSounds.list();
@@ -1275,6 +1444,11 @@ const SettingsStore = (() => {
           icon: `<path d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-5-5.9V4a2 2 0 10-4 0v1.1A6 6 0 004 11v3.2c0 .5-.2 1-.6 1.4L2 17h5m8 0a3 3 0 01-6 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
         },
         {
+          id: "personalization",
+          label: "Personalization",
+          icon: `<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="2"/>`,
+        },
+        {
           id: "appearance",
           label: "Appearance",
           icon: `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`,
@@ -1329,6 +1503,8 @@ const SettingsStore = (() => {
         return renderProvidersContent();
       case "notifications":
         return renderNotificationsContent();
+      case "personalization":
+        return renderPersonalizationContent();
       case "appearance":
         return renderAppearanceContent();
       case "shortcuts":
@@ -1363,6 +1539,11 @@ const SettingsStore = (() => {
 
     if (activeCategory === "appearance") {
       bindAppearanceEvents(contentEl);
+      Physics.bindPressTargets(contentEl);
+    }
+
+    if (activeCategory === "personalization") {
+      bindPersonalizationEvents(contentEl);
       Physics.bindPressTargets(contentEl);
     }
 
@@ -1502,6 +1683,38 @@ const SettingsStore = (() => {
     bindNotificationsEvents(container);
   }
 
+  function bindPersonalizationEvents(container) {
+    const body = container.querySelector('.settings-pers-body');
+    if (!body) return;
+
+    const toggle = container.querySelector('[data-pers-field="enabled"]');
+    toggle?.addEventListener('change', () => {
+      settings.personalization.enabled = toggle.checked;
+      body.classList.toggle('is-disabled', !toggle.checked);
+      persistSettings();
+    });
+
+    body.querySelectorAll('[data-pers-field]').forEach((input) => {
+      if (input.dataset.persField === 'enabled') return;
+      input.addEventListener('input', () => {
+        settings.personalization[input.dataset.persField] = input.value;
+        persistSettings();
+      });
+    });
+
+    body.querySelectorAll('[data-pers-style]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const styleId = btn.dataset.persStyle;
+        if (!RESPONSE_STYLES[styleId] || styleId === settings.personalization.responseStyle) return;
+        settings.personalization.responseStyle = styleId;
+        persistSettings();
+        body.querySelectorAll('[data-pers-style]').forEach((el) => {
+          el.classList.toggle('active', el.dataset.persStyle === styleId);
+        });
+      });
+    });
+  }
+
   function bindNotificationsEvents(container) {
     const soundList = container.querySelector('.settings-sound-list');
     if (!soundList) return;
@@ -1636,11 +1849,16 @@ const SettingsStore = (() => {
     };
   }
 
+  function getPersonalizationSystemPrompt() {
+    return buildPersonalizationSystemPrompt(settings.personalization);
+  }
+
   return {
     open,
     close,
     getIsOpen,
     getNotificationSettings,
+    getPersonalizationSystemPrompt,
     getChatModels,
     getProviders,
     refreshModelsFromBackend,

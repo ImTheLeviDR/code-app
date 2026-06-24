@@ -1511,7 +1511,7 @@ export async function restoreChatSessions(mappings = []) {
   return { restored, failed };
 }
 
-export async function sendChatMessage({ chatId, text, modelId, title, sessionId, history, workspace, forceHistory }) {
+export async function sendChatMessage({ chatId, text, modelId, title, sessionId, history, workspace, forceHistory, system }) {
   if (!client) throw new Error('OpenCode server is not running');
   if (!text?.trim()) throw new Error('Message is required');
   if (!modelId) throw new Error('Model is required');
@@ -1545,12 +1545,15 @@ export async function sendChatMessage({ chatId, text, modelId, title, sessionId,
   const knownAssistantIds = await getAssistantMessageIds(resolvedSessionId, workspace);
   activeRuns.set(chatId, { sessionId: resolvedSessionId, modelId, knownAssistantIds });
 
+  const promptBody = {
+    model: { providerID, modelID },
+    parts: [{ type: 'text', text: messageText }],
+  };
+  if (system?.trim()) promptBody.system = system.trim();
+
   await client.session.promptAsync({
     path: { id: resolvedSessionId },
-    body: {
-      model: { providerID, modelID },
-      parts: [{ type: 'text', text: messageText }],
-    },
+    body: promptBody,
     ...directoryOptions(workspace),
   });
 
