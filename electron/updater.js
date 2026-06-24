@@ -209,22 +209,33 @@ async function downloadReleaseAsset(asset, onProgress) {
 }
 
 function runInstaller(installerPath) {
-  if (process.platform === 'win32') {
-    spawn(installerPath, [], { detached: true, stdio: 'ignore', shell: true }).unref();
-    return;
-  }
+  return new Promise((resolve, reject) => {
+    if (process.platform === 'win32') {
+      const child = spawn(installerPath, [], { detached: true, stdio: 'ignore', shell: true });
+      child.on('error', reject);
+      child.unref();
+      resolve();
+      return;
+    }
 
-  if (process.platform === 'darwin') {
-    shell.openPath(installerPath);
-    return;
-  }
+    if (process.platform === 'darwin') {
+      shell.openPath(installerPath).then((result) => {
+        if (result) reject(new Error(result));
+        else resolve();
+      });
+      return;
+    }
 
-  try {
-    fs.chmodSync(installerPath, 0o755);
-  } catch {
-    /* ignore */
-  }
-  spawn(installerPath, [], { detached: true, stdio: 'ignore' }).unref();
+    try {
+      fs.chmodSync(installerPath, 0o755);
+    } catch {
+      /* ignore */
+    }
+    const child = spawn(installerPath, [], { detached: true, stdio: 'ignore' });
+    child.on('error', reject);
+    child.unref();
+    resolve();
+  });
 }
 
 function cleanupInstaller(installerPath) {
@@ -408,15 +419,14 @@ async function downloadAndInstall(getMainWindow, helpers = {}) {
     saveRendererState(getMainWindow);
     helpers.prepareForQuit?.();
     helpers.destroyTray?.();
-    runInstaller(installerPath);
-    cleanupInstaller(installerPath);
+    await runInstaller(installerPath);
 
     state.installPhase = 'done';
     notifyRenderer(getMainWindow);
 
-    setTimeout(() => {
-      app.exit(0);
-    }, 400);
+    await new Promise((r) => setTimeout(r, 3000));
+    cleanupInstaller(installerPath);
+    app.exit(0);
 
     return { ok: true, path: installerPath };
   } catch (err) {
