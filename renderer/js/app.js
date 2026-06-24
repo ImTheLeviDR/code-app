@@ -765,6 +765,8 @@ const dom = {
   chatTitle:        $('chatTitle'),
   chatMoreBtn:      $('chatMoreBtn'),
   messagesList:     $('messagesList'),
+  toolPanel:        $('toolPanel'),
+  toolPanelInner:   $('toolPanelInner'),
   scrollToBottom:   $('scrollToBottom'),
   minimizeBtn:      $('minimizeBtn'),
   maximizeBtn:      $('maximizeBtn'),
@@ -2489,8 +2491,21 @@ function renderFileMutationLineHTML(tc) {
   return `<span class="tool-activity-text">${escapeHtml(file || 'File')}</span>`;
 }
 
-function isEditToolClickable(tc, running = false) {
-  return !running && (tc.name === 'edit' || tc.name === 'edit_file') && tc.id;
+function isToolDetailClickable(tc, running = false) {
+  return Boolean(!running && tc?.id && (tc.status || 'complete') === 'complete');
+}
+
+function applyToolDetailClickableToElement(el, tc, running = false) {
+  if (!el) return;
+  const clickable = isToolDetailClickable(tc, running);
+  el.classList.toggle('tool-detail-clickable', clickable);
+  if (clickable) {
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+  } else {
+    el.removeAttribute('role');
+    el.removeAttribute('tabindex');
+  }
 }
 
 function isSubAgentTool(tc) {
@@ -2520,9 +2535,11 @@ function renderSubAgentCardHTML(tc, running = false) {
   const activity = getSubAgentActivityText(tc, running);
   const stateClass = running ? ' is-running' : ' is-done';
   const shimmerClass = running ? ' is-shimmer' : '';
+  const clickClass = isToolDetailClickable(tc, running) ? ' tool-detail-clickable' : '';
+  const clickAttrs = isToolDetailClickable(tc, running) ? ' role="button" tabindex="0"' : '';
 
   return `
-    <div class="subagent-inline${stateClass}" id="subagent-${tc.id}" data-tool-id="${escapeHtml(tc.id)}">
+    <div class="subagent-inline${stateClass}${clickClass}" id="subagent-${tc.id}" data-tool-id="${escapeHtml(tc.id)}"${clickAttrs}>
       <div class="subagent-inline-header">
         ${running
     ? '<span class="subagent-inline-spinner" aria-hidden="true"></span>'
@@ -2552,6 +2569,7 @@ function applySubAgentCardState(card, tc, running) {
   card.querySelector('.subagent-inline-activity')?.classList.toggle('is-shimmer', running);
   card.classList.toggle('is-running', running);
   card.classList.toggle('is-done', !running);
+  applyToolDetailClickableToElement(card, tc, running);
 
   const header = card.querySelector('.subagent-inline-header');
   if (!header) return;
@@ -2694,16 +2712,16 @@ function renderToolActivityLineHTML(tc, running = false) {
   const idAttr = tc.id ? ` id="tc-${tc.id}"` : '';
 
   if (!running && isFileMutationTool(tc.name)) {
-    const classes = isEditToolClickable(tc, running)
-      ? 'tool-activity-line done tool-file-edit-line tool-edit-clickable'
-      : 'tool-activity-line done tool-file-edit-line';
-    const attrs = isEditToolClickable(tc, running) ? ' role="button" tabindex="0"' : '';
-    return `<div class="${classes}"${idAttr}${attrs}>${renderFileMutationLineHTML(tc)}</div>`;
+    const clickClass = isToolDetailClickable(tc, running) ? ' tool-detail-clickable' : '';
+    const clickAttrs = isToolDetailClickable(tc, running) ? ' role="button" tabindex="0"' : '';
+    return `<div class="tool-activity-line done tool-file-edit-line${clickClass}"${idAttr}${clickAttrs}>${renderFileMutationLineHTML(tc)}</div>`;
   }
 
   const label = running ? getToolActivityLabel(tc) : (getToolActivityLabelDone(tc) || getToolActivityLabel(tc));
   const runClass = running ? ' running' : ' done';
-  return `<div class="tool-activity-line${runClass}"${idAttr}><span class="tool-activity-text">${escapeHtml(label)}</span></div>`;
+  const clickClass = isToolDetailClickable(tc, running) ? ' tool-detail-clickable' : '';
+  const clickAttrs = isToolDetailClickable(tc, running) ? ' role="button" tabindex="0"' : '';
+  return `<div class="tool-activity-line${runClass}${clickClass}"${idAttr}${clickAttrs}><span class="tool-activity-text">${escapeHtml(label)}</span></div>`;
 }
 
 function renderToolCallsHTML(toolCalls, msgId) {
@@ -2854,7 +2872,7 @@ function showToolActivityLine(tc, msgId) {
     line.id = `tc-${tc.id}`;
     container.appendChild(line);
   } else {
-    line.classList.remove('done', 'tool-file-edit-line', 'tool-edit-clickable');
+    line.classList.remove('done', 'tool-file-edit-line', 'tool-detail-clickable');
     line.classList.add('running');
     line.removeAttribute('role');
     line.removeAttribute('tabindex');
@@ -2906,7 +2924,7 @@ function showToolActivityLineInline(tc, msgId, chatId) {
       line.id = `tc-${tc.id}`;
       container.appendChild(line);
     } else {
-      line.classList.remove('done', 'tool-file-edit-line', 'tool-edit-clickable');
+      line.classList.remove('done', 'tool-file-edit-line', 'tool-detail-clickable');
       line.classList.add('running');
       line.removeAttribute('role');
       line.removeAttribute('tabindex');
@@ -2939,20 +2957,12 @@ function completeToolActivityLine(tcId, msgId) {
 
   if (isFileMutationTool(tc.name)) {
     line.classList.add('tool-file-edit-line');
-    if (isEditToolClickable(tc, false)) {
-      line.classList.add('tool-edit-clickable');
-      line.setAttribute('role', 'button');
-      line.setAttribute('tabindex', '0');
-    } else {
-      line.classList.remove('tool-edit-clickable');
-      line.removeAttribute('role');
-      line.removeAttribute('tabindex');
-    }
     line.innerHTML = renderFileMutationLineHTML(tc);
   } else {
     line.classList.remove('tool-file-edit-line');
     line.innerHTML = `<span class="tool-activity-text">${escapeHtml(getToolActivityLabelDone(tc))}</span>`;
   }
+  applyToolDetailClickableToElement(line, tc, false);
 }
 
 function renderMessageActionsHTML() {
@@ -3873,14 +3883,62 @@ function parseOpencodePatchForFile(patchText, targetPath = '') {
   return { path: filePath || targetPath, hunks };
 }
 
+function splitDiffLines(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
+function diffLineOps(oldLines, newLines) {
+  const n = oldLines.length;
+  const m = newLines.length;
+  const lcs = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+
+  for (let i = 1; i <= n; i += 1) {
+    for (let j = 1; j <= m; j += 1) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        lcs[i][j] = lcs[i - 1][j - 1] + 1;
+      } else {
+        lcs[i][j] = Math.max(lcs[i - 1][j], lcs[i][j - 1]);
+      }
+    }
+  }
+
+  const stack = [];
+  let i = n;
+  let j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      stack.push({ type: 'ctx', text: oldLines[i - 1] });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || lcs[i][j - 1] >= lcs[i - 1][j])) {
+      stack.push({ type: 'add', text: newLines[j - 1] });
+      j -= 1;
+    } else {
+      stack.push({ type: 'del', text: oldLines[i - 1] });
+      i -= 1;
+    }
+  }
+
+  stack.reverse();
+  return stack;
+}
+
+function countDiffHunkStats(diff) {
+  let adds = 0;
+  let dels = 0;
+  for (const hunk of diff?.hunks || []) {
+    for (const line of hunk.lines || []) {
+      if (line.type === 'add') adds += 1;
+      else if (line.type === 'del') dels += 1;
+    }
+  }
+  return { adds, dels };
+}
+
 function buildLineDiff(path, oldText, newText) {
-  const lines = [];
-  for (const line of String(oldText).split(/\r?\n/)) {
-    lines.push({ type: 'del', text: line });
-  }
-  for (const line of String(newText).split(/\r?\n/)) {
-    lines.push({ type: 'add', text: line });
-  }
+  const lines = diffLineOps(splitDiffLines(oldText), splitDiffLines(newText));
   if (!lines.length) return { path, hunks: [] };
   return { path, hunks: [{ lines }] };
 }
@@ -3930,33 +3988,294 @@ function getEditDiffForTool(tc) {
   return { path, hunks: [] };
 }
 
-function openEditDiffFromLine(lineEl) {
-  const tcId = lineEl.id?.startsWith('tc-') ? lineEl.id.slice(3) : '';
+function openToolDetailFromElement(el) {
+  const tcId = el.id?.startsWith('tc-')
+    ? el.id.slice(3)
+    : (el.dataset?.toolId || el.id?.replace(/^subagent-/, ''));
   if (!tcId) return;
   const tc = findToolCallById(tcId);
-  if (tc?.name === 'edit' || tc?.name === 'edit_file') openEditDiffPopup(tc);
+  if (!tc) return;
+  if (tc.name === 'edit' || tc.name === 'edit_file') {
+    openEditDiffPopup(tc);
+    return;
+  }
+  openToolDetailPopup(tc);
+}
+
+const TOOL_DETAIL_TRUNCATE_KEYS = new Set([
+  'content', 'old_string', 'new_string', 'oldString', 'newString',
+  'oldContent', 'newContent', 'patchText', 'text', 'body', 'prompt', 'description',
+]);
+
+function sanitizeToolDisplayValue(value, key = '', maxLen = 1200) {
+  if (value == null) return value;
+  const limit = TOOL_DETAIL_TRUNCATE_KEYS.has(key) ? Math.min(maxLen, 600) : maxLen;
+  if (typeof value === 'string') {
+    if (value.length <= limit) return value;
+    const lineCount = value.split(/\r?\n/).length;
+    return `${value.slice(0, limit)}\n… (${lineCount} lines, ${value.length.toLocaleString()} chars total)`;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeToolDisplayValue(item, key, maxLen));
+  }
+  if (typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = sanitizeToolDisplayValue(v, k, maxLen);
+    }
+    return out;
+  }
+  return value;
+}
+
+function buildToolDetailInputDisplay(tc) {
+  const args = { ...(tc.args || {}) };
+  const name = tc.name || '';
+  const omitKeys = new Set();
+  if (name === 'edit' || name === 'edit_file') {
+    ['old_string', 'new_string', 'oldString', 'newString', 'oldContent', 'newContent', 'patchText']
+      .forEach((k) => omitKeys.add(k));
+  }
+
+  const display = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (omitKeys.has(k)) continue;
+    display[k] = sanitizeToolDisplayValue(v, k);
+  }
+  if (omitKeys.size) {
+    display._note = 'Full before/after text is shown in the Changes section below.';
+  }
+  if (!Object.keys(display).length) return 'No input arguments recorded.';
+  try {
+    return JSON.stringify(display, null, 2);
+  } catch {
+    return String(display);
+  }
+}
+
+function formatToolResultForDisplay(result) {
+  if (result == null || result === '') return 'No output recorded.';
+  if (typeof result === 'string') return sanitizeToolDisplayValue(result, 'result', 12000);
+  try {
+    return JSON.stringify(sanitizeToolDisplayValue(result, 'result'), null, 2);
+  } catch {
+    return String(result);
+  }
+}
+
+function getToolDetailTitle(tc) {
+  const done = getToolActivityLabelDone(tc);
+  if (done) return done;
+  return (tc.name || 'Tool').replace(/_/g, ' ');
+}
+
+function getToolDetailMeta(tc) {
+  const parts = [];
+  if (tc.name) parts.push(tc.name.replace(/_/g, ' '));
+  if (tc.duration != null) parts.push(`${Math.round(tc.duration / 1000)}s`);
+  if (tc.additions > 0 || tc.deletions > 0) {
+    const stats = [];
+    if (tc.additions > 0) stats.push(`+${tc.additions}`);
+    if (tc.deletions > 0) stats.push(`-${tc.deletions}`);
+    parts.push(stats.join(' '));
+  }
+  return parts.join(' · ');
+}
+
+let toolPanelKeyHandler = null;
+
+function isToolPanelOpen() {
+  return dom.appBody?.classList.contains('tool-panel-open');
+}
+
+function bindToolPanelCloseButton() {
+  dom.toolPanelInner?.querySelector('.tool-panel-close-btn')
+    ?.addEventListener('click', () => closeToolPanel());
+}
+
+function resetToolPanelShellMotion() {
+  dom.toolPanelInner?.querySelectorAll(
+    '.diff-header, .tool-detail-section, .diff-body, .diff-footer, .diff-hunk',
+  ).forEach((el) => {
+    Physics.cancel(el);
+    el.style.opacity = '';
+    el.style.transform = '';
+  });
+  if (dom.toolPanelInner) {
+    Physics.cancel(dom.toolPanelInner);
+    dom.toolPanelInner.style.opacity = '';
+    dom.toolPanelInner.style.transform = '';
+  }
+}
+
+function mountToolPanelContent(html) {
+  dom.toolPanelInner.innerHTML = html;
+  const shell = dom.toolPanelInner.querySelector('.tool-panel-shell');
+  Physics.prepareToolPanelStagger(shell);
+  return shell;
+}
+
+function finishToolPanelOpen(ariaLabel) {
+  bindToolPanelCloseButton();
+  toolPanelKeyHandler = (e) => {
+    if (e.key === 'Escape') closeToolPanel();
+  };
+  document.addEventListener('keydown', toolPanelKeyHandler);
+  dom.toolPanelInner?.querySelector('.tool-panel-close-btn')?.focus();
+  if (ariaLabel) dom.toolPanel?.setAttribute('aria-label', ariaLabel);
+}
+
+function forceCloseToolPanel() {
+  if (toolPanelKeyHandler) {
+    document.removeEventListener('keydown', toolPanelKeyHandler);
+    toolPanelKeyHandler = null;
+  }
+  Physics.cancel(dom.toolPanel);
+  Physics.cancel(dom.toolPanelInner);
+  resetToolPanelShellMotion();
+  dom.appBody?.classList.remove('tool-panel-open', 'tool-panel-diff', 'tool-panel-closing');
+  if (dom.toolPanel) {
+    dom.toolPanel.hidden = true;
+    dom.toolPanel.setAttribute('aria-hidden', 'true');
+    dom.toolPanel.style.width = '';
+    dom.toolPanel.style.overflow = '';
+  }
+  if (dom.toolPanelInner) dom.toolPanelInner.innerHTML = '';
+}
+
+function closeToolPanel() {
+  if (!isToolPanelOpen() || dom.toolPanel?.dataset.closing === '1') return;
+  if (toolPanelKeyHandler) {
+    document.removeEventListener('keydown', toolPanelKeyHandler);
+    toolPanelKeyHandler = null;
+  }
+
+  dom.toolPanel.dataset.closing = '1';
+  dom.appBody?.classList.add('tool-panel-closing');
+
+  Physics.toolPanelClose(dom.toolPanel, dom.toolPanelInner, () => {
+    delete dom.toolPanel.dataset.closing;
+    dom.appBody?.classList.remove('tool-panel-open', 'tool-panel-diff', 'tool-panel-closing');
+    resetToolPanelShellMotion();
+    if (dom.toolPanel) {
+      dom.toolPanel.hidden = true;
+      dom.toolPanel.setAttribute('aria-hidden', 'true');
+      dom.toolPanel.style.width = '';
+      dom.toolPanel.style.overflow = '';
+    }
+    if (dom.toolPanelInner) dom.toolPanelInner.innerHTML = '';
+  });
+}
+
+function openToolPanel(html, { mode = 'detail', ariaLabel = 'Tool details' } = {}) {
+  if (!dom.toolPanel || !dom.toolPanelInner) return;
+
+  if (toolPanelKeyHandler) {
+    document.removeEventListener('keydown', toolPanelKeyHandler);
+    toolPanelKeyHandler = null;
+  }
+
+  const wasOpen = isToolPanelOpen();
+  const prevMode = dom.appBody?.classList.contains('tool-panel-diff') ? 'diff' : 'detail';
+  const modeChanged = wasOpen && prevMode !== mode;
+
+  if (wasOpen) {
+    Physics.toolPanelSwap(dom.toolPanelInner, () => {
+      resetToolPanelShellMotion();
+      const shell = mountToolPanelContent(html);
+      dom.appBody?.classList.toggle('tool-panel-diff', mode === 'diff');
+      Physics.toolPanelStaggerIn(shell);
+      if (modeChanged) {
+        Physics.toolPanelResize(dom.toolPanel, mode, () => finishToolPanelOpen(ariaLabel));
+      } else {
+        finishToolPanelOpen(ariaLabel);
+      }
+    });
+    return;
+  }
+
+  const shell = mountToolPanelContent(html);
+  dom.toolPanel.hidden = false;
+  dom.toolPanel.setAttribute('aria-hidden', 'false');
+  dom.toolPanel.style.width = '0px';
+  dom.toolPanel.style.overflow = 'hidden';
+  dom.appBody?.classList.add('tool-panel-open');
+  dom.appBody?.classList.toggle('tool-panel-diff', mode === 'diff');
+
+  Physics.toolPanelStaggerIn(shell);
+  Physics.toolPanelOpen(dom.toolPanel, dom.toolPanelInner, mode, () => finishToolPanelOpen(ariaLabel));
+}
+
+function forceCloseToolDetailPopup() {
+  forceCloseToolPanel();
+}
+
+function closeToolDetailPopup() {
+  closeToolPanel();
 }
 
 function forceCloseEditDiffPopup() {
-  const overlay = document.getElementById('diffOverlay');
-  if (!overlay) return;
-  document.removeEventListener('keydown', editDiffKeyHandler);
-  Physics.cancel(overlay);
-  const panel = overlay.querySelector('.diff-modal');
-  const codeEl = overlay.querySelector('.diff-code');
-  if (panel) Physics.cancel(panel);
-  if (codeEl) Physics.cancel(codeEl);
-  overlay.remove();
+  forceCloseToolPanel();
+}
+
+function closeEditDiffPopup() {
+  closeToolPanel();
+}
+
+function openToolDetailPopup(tc) {
+  const title = getToolDetailTitle(tc);
+  const meta = getToolDetailMeta(tc);
+  const inputText = buildToolDetailInputDisplay(tc);
+  const outputText = formatToolResultForDisplay(tc.result);
+
+  openToolPanel(`
+    <div class="tool-panel-shell" role="complementary">
+      <div class="diff-header">
+        <div class="diff-header-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="diff-header-text">
+          <div class="diff-header-title-row">
+            <span class="diff-header-label">Tool</span>
+            <span class="diff-header-file">${escapeHtml(title)}</span>
+          </div>
+          ${meta ? `<div class="diff-header-path">${escapeHtml(meta)}</div>` : ''}
+        </div>
+        <button type="button" class="diff-close-btn tool-panel-close-btn" aria-label="Close panel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="diff-body tool-detail-body">
+        <section class="tool-detail-section">
+          <h3 class="tool-detail-section-label">Input</h3>
+          <pre class="tool-detail-code">${escapeHtml(inputText)}</pre>
+        </section>
+        <section class="tool-detail-section">
+          <h3 class="tool-detail-section-label">Output</h3>
+          <pre class="tool-detail-code">${escapeHtml(outputText)}</pre>
+        </section>
+      </div>
+      <div class="diff-footer">
+        <span class="diff-footer-hint"><kbd>Esc</kbd> to close</span>
+      </div>
+    </div>
+  `, { mode: 'detail', ariaLabel: `Tool details for ${title}` });
 }
 
 function openEditDiffPopup(tc) {
-  forceCloseEditDiffPopup();
-
   const diff = getEditDiffForTool(tc);
   const fullPath = normalizeDiffPathHint(tc.args?.path || diff.path || '');
   const file = getFileBasename(fullPath);
   const showPath = fullPath && fullPath !== file;
-  const { adds, dels } = getToolLineStats(tc);
+  const diffStats = countDiffHunkStats(diff);
+  const metaStats = getToolLineStats(tc);
+  const hasRenderedChanges = diffStats.adds > 0 || diffStats.dels > 0;
+  const adds = hasRenderedChanges ? diffStats.adds : metaStats.adds;
+  const dels = hasRenderedChanges ? diffStats.dels : metaStats.dels;
 
   const badges = [];
   if (adds > 0) badges.push(`<span class="diff-header-badge diff-header-badge-add">+${adds}</span>`);
@@ -3970,11 +4289,8 @@ function openEditDiffPopup(tc) {
     ? `${changedLines} line${changedLines === 1 ? '' : 's'} changed`
     : '';
 
-  const overlay = document.createElement('div');
-  overlay.className = 'diff-overlay';
-  overlay.id = 'diffOverlay';
-  overlay.innerHTML = `
-    <div class="diff-modal" role="dialog" aria-modal="true" aria-label="Edit diff for ${escapeHtml(file)}">
+  openToolPanel(`
+    <div class="tool-panel-shell" role="complementary">
       <div class="diff-header">
         <div class="diff-header-icon" aria-hidden="true">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -3990,7 +4306,7 @@ function openEditDiffPopup(tc) {
           </div>
           ${showPath ? `<div class="diff-header-path">${escapeHtml(fullPath)}</div>` : ''}
         </div>
-        <button type="button" class="diff-close-btn" aria-label="Close">
+        <button type="button" class="diff-close-btn tool-panel-close-btn" aria-label="Close panel">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>
@@ -4004,20 +4320,7 @@ function openEditDiffPopup(tc) {
         ${footerMeta ? `<span class="diff-footer-meta">${escapeHtml(footerMeta)}</span>` : ''}
       </div>
     </div>
-  `;
-
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeEditDiffPopup();
-  });
-  overlay.querySelector('.diff-close-btn').addEventListener('click', () => closeEditDiffPopup());
-
-  document.body.appendChild(overlay);
-
-  const panel = overlay.querySelector('.diff-modal');
-  const codeEl = overlay.querySelector('.diff-code');
-  Physics.diffModalIn(overlay, panel, codeEl);
-  document.addEventListener('keydown', editDiffKeyHandler);
-  overlay.querySelector('.diff-close-btn').focus();
+  `, { mode: 'diff', ariaLabel: `Edit diff for ${file}` });
 }
 
 function renderDiffHTML(diff) {
@@ -4051,18 +4354,6 @@ function renderDiffHTML(diff) {
     }).join('');
     return `<div class="diff-hunk">${headerHtml}<div class="diff-hunk-lines">${lines}</div></div>`;
   }).join('');
-}
-
-function closeEditDiffPopup(overlay = document.getElementById('diffOverlay')) {
-  if (!overlay) return;
-  document.removeEventListener('keydown', editDiffKeyHandler);
-  const panel = overlay.querySelector('.diff-modal');
-  const codeEl = overlay.querySelector('.diff-code');
-  Physics.diffModalOut(overlay, panel, codeEl, () => overlay.remove());
-}
-
-function editDiffKeyHandler(e) {
-  if (e.key === 'Escape') closeEditDiffPopup();
 }
 
 function runResponsePhases(phases, msgId, chatId, msgEl, onDone) {
@@ -5099,8 +5390,8 @@ function bindEvents() {
   dom.messagesList.addEventListener('scroll', onMessagesScroll);
 
   dom.messagesList.addEventListener('click', (e) => {
-    const line = e.target.closest('.tool-edit-clickable');
-    if (line) openEditDiffFromLine(line);
+    const line = e.target.closest('.tool-detail-clickable');
+    if (line) openToolDetailFromElement(line);
 
     const option = e.target.closest('.question-option');
     if (option) {
@@ -5145,10 +5436,10 @@ function bindEvents() {
 
   dom.messagesList.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
-    const line = e.target.closest('.tool-edit-clickable');
+    const line = e.target.closest('.tool-detail-clickable');
     if (!line) return;
     e.preventDefault();
-    openEditDiffFromLine(line);
+    openToolDetailFromElement(line);
   });
 
   // Scroll to bottom button
@@ -5206,8 +5497,8 @@ function bindEvents() {
         SidebarContextMenu.closeConfirm();
       }
       if (typeof TitlebarMenu !== 'undefined') TitlebarMenu.closeAllMenus();
-      if (document.getElementById('diffOverlay')) {
-        closeEditDiffPopup();
+      if (isToolPanelOpen()) {
+        closeToolPanel();
         return;
       }
       if (SettingsStore.getIsOpen()) {

@@ -287,6 +287,166 @@ const Physics = (() => {
     });
   }
 
+  function readToolPanelWidth(mode = 'detail') {
+    const varName = mode === 'diff' ? '--tool-panel-diff-width' : '--tool-panel-width';
+    const raw = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    return parseFloat(raw) || 440;
+  }
+
+  function toolPanelStaggerTargets(shell) {
+    if (!shell) return [];
+    const sequence = [];
+    const header = shell.querySelector('.diff-header');
+    if (header) sequence.push(header);
+    shell.querySelectorAll('.tool-detail-section').forEach((section) => sequence.push(section));
+    const diffBody = shell.querySelector('.diff-body:not(.tool-detail-body)');
+    if (diffBody) sequence.push(diffBody);
+    const footer = shell.querySelector('.diff-footer');
+    if (footer) sequence.push(footer);
+    shell.querySelectorAll('.diff-hunk').forEach((hunk) => sequence.push(hunk));
+    return sequence;
+  }
+
+  function prepareToolPanelStagger(shell) {
+    toolPanelStaggerTargets(shell).forEach((el) => {
+      cancel(el);
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(10px)';
+    });
+  }
+
+  function toolPanelStaggerIn(shell) {
+    const sequence = toolPanelStaggerTargets(shell).filter((el) =>
+      !el.classList.contains('diff-hunk'),
+    );
+    const hunks = shell?.querySelectorAll('.diff-hunk') || [];
+
+    sequence.forEach((el, i) => {
+      cancel(el);
+      setTimeout(() => {
+        animate(el, { opacity: 1, y: 0 }, { from: { opacity: 0, y: 10 }, preset: 'gentle' });
+      }, i * 45);
+    });
+
+    hunks.forEach((hunk, i) => {
+      cancel(hunk);
+      setTimeout(() => {
+        animate(hunk, { opacity: 1, y: 0 }, { from: { opacity: 0, y: 8 }, preset: 'gentle' });
+      }, 80 + i * 40);
+    });
+  }
+
+  function toolPanelOpen(panel, inner, mode, onComplete) {
+    if (!panel) {
+      onComplete?.();
+      return;
+    }
+
+    const target = readToolPanelWidth(mode);
+    cancel(panel);
+    panel.style.overflow = 'hidden';
+    panel.style.width = '0px';
+
+    animate(panel, { width: target }, {
+      from: { width: 0 },
+      preset: 'snappy',
+      onComplete: () => {
+        panel.style.width = `${target}px`;
+        panel.style.overflow = '';
+        resetMotion(panel);
+        onComplete?.();
+      },
+    });
+  }
+
+  function toolPanelResize(panel, mode, onComplete) {
+    if (!panel) {
+      onComplete?.();
+      return;
+    }
+
+    const target = readToolPanelWidth(mode);
+    const start = panel.offsetWidth;
+    if (Math.abs(start - target) < 2) {
+      onComplete?.();
+      return;
+    }
+
+    cancel(panel);
+    panel.style.overflow = 'hidden';
+    panel.style.width = `${start}px`;
+    animate(panel, { width: target }, {
+      preset: 'snappy',
+      onComplete: () => {
+        panel.style.width = '';
+        panel.style.overflow = '';
+        resetMotion(panel);
+        onComplete?.();
+      },
+    });
+  }
+
+  function toolPanelSwap(inner, onSwap, onComplete) {
+    if (!inner) {
+      onSwap?.();
+      onComplete?.();
+      return;
+    }
+
+    cancel(inner);
+    animate(inner, { opacity: 0, x: 8 }, {
+      preset: 'stiff',
+      onComplete: () => {
+        onSwap?.();
+        inner.style.opacity = '0';
+        inner.style.transform = 'translateX(10px)';
+        resetMotion(inner);
+        animate(inner, { opacity: 1, x: 0 }, {
+          from: { opacity: 0, x: 10 },
+          preset: 'snappy',
+          onComplete,
+        });
+      },
+    });
+  }
+
+  function toolPanelClose(panel, inner, onComplete) {
+    if (!panel) {
+      onComplete?.();
+      return;
+    }
+
+    cancel(panel);
+    cancel(inner);
+
+    const shell = inner?.querySelector('.tool-panel-shell');
+    shell?.querySelectorAll('.diff-header, .tool-detail-section, .diff-body, .diff-footer, .diff-hunk')
+      .forEach((el) => animate(el, { opacity: 0, y: 6 }, { preset: 'stiff' }));
+
+    if (inner) {
+      animate(inner, { opacity: 0, x: 14 }, { preset: 'stiff' });
+    }
+
+    const start = panel.offsetWidth || readToolPanelWidth('detail');
+    panel.style.overflow = 'hidden';
+    panel.style.width = `${start}px`;
+
+    setTimeout(() => {
+      animate(panel, { width: 0 }, {
+        preset: 'stiff',
+        onComplete: () => {
+          panel.style.width = '0px';
+          panel.style.overflow = 'hidden';
+          resetMotion(panel);
+          if (inner) resetMotion(inner);
+          shell?.querySelectorAll('.diff-header, .tool-detail-section, .diff-body, .diff-footer, .diff-hunk')
+            .forEach((el) => resetMotion(el));
+          onComplete?.();
+        },
+      });
+    }, 90);
+  }
+
   function sidebarWidth() {
     const w = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width').trim();
     return parseFloat(w) || 240;
@@ -540,6 +700,12 @@ const Physics = (() => {
     modalOut,
     diffModalIn,
     diffModalOut,
+    toolPanelOpen,
+    toolPanelClose,
+    toolPanelSwap,
+    toolPanelResize,
+    toolPanelStaggerIn,
+    prepareToolPanelStagger,
     messageIn,
     lineIn,
     lineOut,
