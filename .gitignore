@@ -32,3 +32,4 @@ release/
 
 # Debug
 *.pem
+pnpm-workspace.yaml
