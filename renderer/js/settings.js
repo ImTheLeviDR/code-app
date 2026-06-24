@@ -883,12 +883,64 @@ const SettingsStore = (() => {
     `;
   }
 
+  function renderShortcutsContent() {
+    const groups = [
+      {
+        label: "General",
+        shortcuts: [
+          { keys: "Ctrl+N", action: "New Chat" },
+          { keys: "Ctrl+O", action: "Open Folder" },
+          { keys: "Ctrl+K", action: "Search Chats" },
+          { keys: "Ctrl+B", action: "Toggle Sidebar" },
+          { keys: "Ctrl+,", action: "Settings" },
+        ],
+      },
+      {
+        label: "Editing",
+        shortcuts: [
+          { keys: "Ctrl+Z", action: "Undo" },
+          { keys: "Ctrl+Y", action: "Redo" },
+          { keys: "Ctrl+X", action: "Cut" },
+          { keys: "Ctrl+C", action: "Copy" },
+          { keys: "Ctrl+V", action: "Paste" },
+          { keys: "Ctrl+A", action: "Select All" },
+        ],
+      },
+      {
+        label: "Navigation",
+        shortcuts: [
+          { keys: "Escape", action: "Close menus / Go back" },
+        ],
+      },
+    ];
+
+    return `
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <h2>Shortcuts</h2>
+          <p>Keyboard shortcuts to help you navigate and work faster.</p>
+        </div>
+        ${groups.map((group) => `
+          <div class="sett-shortcuts-group">
+            <div class="sett-shortcuts-group-label">${group.label}</div>
+            <div class="sett-shortcuts-list">
+              ${group.shortcuts.map((s) => `
+                <div class="sett-shortcut-row">
+                  <span class="sett-shortcut-action">${s.action}</span>
+                  <span class="sett-shortcut-keys">
+                    ${s.keys.split("+").map((k) => `<kbd>${k}</kbd>`).join("<span class=\"sett-shortcut-plus\">+</span>")}
+                  </span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
   function renderComingSoon(label) {
-    const icons = {
-      shortcuts: `<rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2"/><path d="M16 2l-4 5-4-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
-    };
     const icon =
-      icons[label] ||
       `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`;
     const title = label.charAt(0).toUpperCase() + label.slice(1);
     return `
@@ -1230,7 +1282,6 @@ const SettingsStore = (() => {
         {
           id: "shortcuts",
           label: "Shortcuts",
-          soon: true,
           icon: `<rect x="2" y="7" width="20" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 12h.01M12 12h.01M16 12h.01M8 16h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
         },
       ],
@@ -1280,6 +1331,8 @@ const SettingsStore = (() => {
         return renderNotificationsContent();
       case "appearance":
         return renderAppearanceContent();
+      case "shortcuts":
+        return renderShortcutsContent();
       case "about":
         return renderAboutContent();
       default:
