@@ -66,7 +66,7 @@ const MODELS = [
 
 const FREE_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
-const IMAGE_DESCRIPTION_MODEL = 'google/gemini-3.1-flash-lite-preview';
+const IMAGE_DESCRIPTION_MODEL = 'google/gemini-2.5-flash-lite-preview-09-2025';
 
 const PROVIDER_PRESETS = {
   openrouter: {

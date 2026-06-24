@@ -286,7 +286,7 @@ const IMAGE_MIME_TYPES = {
   bmp: 'image/bmp',
 };
 
-const IMAGE_DESCRIPTION_MODEL = 'google/gemini-3.1-flash-lite-preview';
+const IMAGE_DESCRIPTION_MODEL = 'google/gemini-2.5-flash-lite-preview-09-2025';
 
 function filePathToDataUrl(filePath) {
   const ext = path.extname(filePath).slice(1).toLowerCase();

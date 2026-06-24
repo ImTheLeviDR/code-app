@@ -715,12 +715,25 @@ let modelsLoading = typeof Backend !== 'undefined' && Backend.isAvailable();
 let backendReadyPromise = null;
 const chatsNeedingContextSync = new Set();
 const abortedChatIds = new Set();
+const interruptGuard = new Map();
+const chatRunGenerations = new Map();
 const aiRuns = new Map();
 const questionRequests = new Map();
 const permissionRequests = new Map();
 
 function isChatGenerating(chatId) {
   return Boolean(chatId && aiRuns.has(chatId));
+}
+
+function bumpChatRunGeneration(chatId) {
+  const next = (chatRunGenerations.get(chatId) || 0) + 1;
+  chatRunGenerations.set(chatId, next);
+  return next;
+}
+
+function isActiveRunGeneration(chatId, run) {
+  if (!run || run.generation == null) return false;
+  return run.generation === chatRunGenerations.get(chatId);
 }
 
 function isCurrentChatVisible(chatId) {
@@ -1606,14 +1619,16 @@ function setChatRunning(chatId, running, options = {}) {
 
   // Notify when a task finishes
   if (wasRunning && !running) {
+    saveChatState();
     if (!options.silent) {
       playTaskCompleteSound();
       if (chatId !== state.selectedChatId) {
         showToast(`Task finished: ${chat.title}`);
       }
+      syncContinueSuggestion();
+    } else {
+      hideContinueSuggestion(true);
     }
-    saveChatState();
-    syncContinueSuggestion();
   }
 
   if (chatId === state.selectedChatId) syncSendButtonState();
@@ -2964,7 +2979,7 @@ function renderMessageActionsHTML() {
    SEND MESSAGE + AI SIMULATION
    ============================================================ */
 
-function sendMessage(text, options = {}) {
+async function sendMessage(text, options = {}) {
   const trimmedText = text.trim();
   const context = options.context || (state.selectedChatId ? 'chat' : 'welcome');
   const images = options.images?.length
@@ -2972,9 +2987,21 @@ function sendMessage(text, options = {}) {
     : getPendingImages(context).map((img) => ({ ...img }));
 
   if (!trimmedText && !images.length) return;
-  if (state.selectedChatId && isChatGenerating(state.selectedChatId)) return;
+
+  let pendingAbort = null;
+
+  if (state.selectedChatId && isChatGenerating(state.selectedChatId)) {
+    const interruptChatId = state.selectedChatId;
+    interruptGuard.set(interruptChatId, true);
+    abortedChatIds.add(interruptChatId);
+    finishAIAborted(interruptChatId, { skipFocus: true });
+    hideContinueSuggestion(true);
+    pendingAbort = waitForBackendAbort(interruptChatId);
+  }
 
   if (images.length && !SettingsStore.canProcessImages()) {
+    if (state.selectedChatId) interruptGuard.delete(state.selectedChatId);
+    syncContinueSuggestion();
     showToast('Connect OpenRouter and enable image processing in Settings');
     return;
   }
@@ -3039,7 +3066,7 @@ function sendMessage(text, options = {}) {
   scrollToEnd(false);
   setChatRunning(chatId, true);
 
-  runAIResponse(chatId, userMsg);
+  runAIResponse(chatId, userMsg, { pendingAbort });
   syncSendButtonState();
   syncContinueSuggestion();
 }
@@ -3053,7 +3080,7 @@ function removeIncompleteAssistantTail(chatId) {
   }
 }
 
-async function runAIResponse(chatId, userMsg) {
+async function runAIResponse(chatId, userMsg, options = {}) {
   abortedChatIds.delete(chatId);
 
   const assistantMsgId = `msg-${state.nextMsgId++}`;
@@ -3085,6 +3112,7 @@ async function runAIResponse(chatId, userMsg) {
     content: '',
     started: false,
     sessionId: null,
+    generation: null,
   });
   syncContinueSuggestion();
 
@@ -3102,6 +3130,7 @@ async function runAIResponse(chatId, userMsg) {
       const idx = msgs.findIndex((m) => m.id === assistantMsgId);
       if (idx !== -1) msgs.splice(idx, 1);
       aiRuns.delete(chatId);
+      interruptGuard.delete(chatId);
       finishAIWithError(
         chatId,
         'This model needs an API key. Open Settings → Providers, add your key, click Sync - or pick a free OpenCode model.',
@@ -3116,6 +3145,7 @@ async function runAIResponse(chatId, userMsg) {
     const idx = msgs.findIndex((m) => m.id === assistantMsgId);
     if (idx !== -1) msgs.splice(idx, 1);
     aiRuns.delete(chatId);
+    interruptGuard.delete(chatId);
     finishAIWithError(chatId, 'AI backend is not running');
     return;
   }
@@ -3135,6 +3165,7 @@ async function runAIResponse(chatId, userMsg) {
       const idx = msgs.findIndex((m) => m.id === assistantMsgId);
       if (idx !== -1) msgs.splice(idx, 1);
       aiRuns.delete(chatId);
+      interruptGuard.delete(chatId);
       setChatRunning(chatId, false);
       saveChatState();
       if (isCurrentChatVisible(chatId)) {
@@ -3143,6 +3174,18 @@ async function runAIResponse(chatId, userMsg) {
       finishAIWithError(chatId, err.message || 'Failed to process images');
       return;
     }
+
+    const run = aiRuns.get(chatId);
+    if (run) run.generation = bumpChatRunGeneration(chatId);
+
+    if (options.pendingAbort) {
+      const abortResult = await options.pendingAbort;
+      if (!abortResult.ok) {
+        showToast('Previous task may still be stopping; sending your message…');
+      }
+    }
+
+    interruptGuard.delete(chatId);
 
     const result = await Backend.sendMessage({
       chatId,
@@ -3154,11 +3197,18 @@ async function runAIResponse(chatId, userMsg) {
       workspace: getChatWorkspace(chatId),
       forceHistory: chatsNeedingContextSync.has(chatId),
     });
-    if (abortedChatIds.has(chatId)) return;
+    if (abortedChatIds.has(chatId)) {
+      interruptGuard.delete(chatId);
+      return;
+    }
     if (result?.sessionId) setChatSessionId(chatId, result.sessionId);
     chatsNeedingContextSync.delete(chatId);
   } catch (err) {
-    if (abortedChatIds.has(chatId)) return;
+    if (abortedChatIds.has(chatId)) {
+      interruptGuard.delete(chatId);
+      return;
+    }
+    interruptGuard.delete(chatId);
     finishAIWithError(chatId, err.message || 'Failed to send message');
   }
 }
@@ -3312,7 +3362,14 @@ function applyLateToolUpdate(chatId, toolCall, sessionId = null) {
   const msgs = state.chatMessages[chatId];
   if (!msgs?.length) return;
 
-  const msg = [...msgs].reverse().find((m) => m.role === 'assistant');
+  let msg = [...msgs].reverse().find(
+    (m) => m.role === 'assistant' && m.toolCalls?.some((t) => t.id === toolCall.id),
+  );
+  if (!msg) {
+    msg = [...msgs].reverse().find(
+      (m) => m.role === 'assistant' && !isEmptyAssistantMessage(m) && m.finished,
+    );
+  }
   if (!msg) return;
 
   if (!msg.toolCalls) msg.toolCalls = [];
@@ -3442,7 +3499,7 @@ function finishAIRun(chatId) {
   if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
 }
 
-function finishAIAborted(chatId) {
+function finishAIAborted(chatId, options = {}) {
   const run = aiRuns.get(chatId);
   if (!run) return;
 
@@ -3455,8 +3512,38 @@ function finishAIAborted(chatId) {
   chatsNeedingContextSync.add(chatId);
   setChatRunning(chatId, false, { silent: true });
   saveChatState();
-  syncContinueSuggestion();
-  if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
+  if (!options.skipFocus && isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
+}
+
+async function requestBackendAbort(chatId) {
+  if (typeof Backend === 'undefined' || !Backend.isAvailable()) {
+    return { ok: false, error: 'AI backend is not running' };
+  }
+  try {
+    const ok = await Backend.abort(chatId);
+    return { ok: Boolean(ok) };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Abort failed' };
+  }
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Abort in background; retries once. Safe to await before sending a follow-up message. */
+async function waitForBackendAbort(chatId) {
+  const first = await requestBackendAbort(chatId);
+  if (first.ok) return first;
+
+  await sleepMs(300);
+  const retry = await requestBackendAbort(chatId);
+  if (retry.ok) return retry;
+
+  return {
+    ok: false,
+    error: retry.error || first.error || 'Abort failed',
+  };
 }
 
 async function abortAgentRun(chatId) {
@@ -3465,14 +3552,9 @@ async function abortAgentRun(chatId) {
   abortedChatIds.add(chatId);
   Physics.pulse(dom.chatSendBtn);
   finishAIAborted(chatId);
+  syncContinueSuggestion();
 
-  try {
-    if (typeof Backend !== 'undefined' && Backend.isAvailable()) {
-      await Backend.abort(chatId);
-    }
-  } catch (_) {
-    /* local UI already cleaned up */
-  }
+  await waitForBackendAbort(chatId);
 }
 
 function finishAIWithError(chatId, message) {
@@ -3511,6 +3593,8 @@ function isStaleAssistantError(error) {
 
 function shouldIgnoreBackendRunEvent(run, chatId, event) {
   if (!run) return true;
+  if (!isActiveRunGeneration(chatId, run)) return true;
+  if (interruptGuard.has(chatId)) return true;
   const msg = state.chatMessages[chatId]?.find((m) => m.id === run.assistantMsgId);
   if (event.type === 'assistant-message' && event.error && isStaleAssistantError(event.error) && !run.started) {
     return true;
@@ -3523,6 +3607,7 @@ function shouldIgnoreBackendRunEvent(run, chatId, event) {
 
 function handleBackendEvent(event) {
   if (!event?.chatId) return;
+  if (interruptGuard.has(event.chatId)) return;
 
   if (event.type === 'question-request') {
     const msgId = resolveQuestionMsgId(event);
@@ -3541,6 +3626,7 @@ function handleBackendEvent(event) {
       applyLateToolUpdate(event.chatId, event.toolCall, event.sessionId);
     } else {
       const run = aiRuns.get(event.chatId);
+      if (!isActiveRunGeneration(event.chatId, run)) return;
       if (event.sessionId) run.sessionId = event.sessionId;
       ensureAssistantVisible(run);
       upsertToolCall(run, event.toolCall);
@@ -4394,7 +4480,6 @@ function setupInput(textarea) {
       const isChatInput = textarea === dom.chatInput;
       const images = getPendingImages(context);
       if (!textarea.value.trim() && !images.length) return;
-      if (isChatInput && isChatGenerating(state.selectedChatId)) return;
       const text = textarea.value;
       textarea.value = '';
       textarea.style.height = 'auto';
@@ -4457,8 +4542,14 @@ function syncSendButtonState() {
   const chatReady = Boolean(dom.chatInput.value.trim()) || getPendingImages('chat').length > 0;
   applySendButtonState(dom.welcomeSendBtn, { stopping: false });
   dom.welcomeSendBtn.disabled = !welcomeReady;
-  applySendButtonState(dom.chatSendBtn, { stopping: chatGenerating });
-  dom.chatSendBtn.disabled = chatGenerating ? false : !chatReady;
+  if (chatGenerating) {
+    const hasContent = chatReady;
+    applySendButtonState(dom.chatSendBtn, { stopping: !hasContent });
+    dom.chatSendBtn.disabled = false;
+  } else {
+    applySendButtonState(dom.chatSendBtn, { stopping: false });
+    dom.chatSendBtn.disabled = !chatReady;
+  }
   syncContinueSuggestion();
 }
 
@@ -4515,12 +4606,21 @@ function syncContinueSuggestion() {
   const el = dom.continueSuggestion;
   if (!el) return;
   const chatId = state.selectedChatId;
-  const shouldShow = Boolean(chatId && isChatUnfinished(chatId) && !isChatGenerating(chatId));
+  const chat = chatId ? findChatById(chatId) : null;
+  const shouldShow = Boolean(
+    chatId
+    && !interruptGuard.has(chatId)
+    && isChatUnfinished(chatId)
+    && !isChatGenerating(chatId)
+    && !chat?.running,
+  );
 
   if (shouldShow) {
     showContinueSuggestion();
   } else {
-    hideContinueSuggestion(isChatGenerating(chatId));
+    hideContinueSuggestion(
+      isChatGenerating(chatId) || chat?.running || interruptGuard.has(chatId),
+    );
   }
 }
 
@@ -4952,13 +5052,15 @@ function bindEvents() {
   // Chat input
   setupInput(dom.chatInput);
   dom.chatSendBtn.addEventListener('click', () => {
-    if (isChatGenerating(state.selectedChatId)) {
+    const generating = isChatGenerating(state.selectedChatId);
+    const text = dom.chatInput.value;
+    const images = getPendingImages('chat');
+    const hasContent = Boolean(text.trim()) || images.length > 0;
+    if (generating && !hasContent) {
       void abortAgentRun(state.selectedChatId);
       return;
     }
-    const text = dom.chatInput.value;
-    const images = getPendingImages('chat');
-    if (!text.trim() && !images.length) return;
+    if (!hasContent) return;
     dom.chatInput.value = '';
     dom.chatInput.style.height = 'auto';
     syncSendButtonState();

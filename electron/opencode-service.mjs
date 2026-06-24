@@ -62,6 +62,8 @@ const sessionChats = new Map();
 const chatWorkspaces = new Map();
 const activeRuns = new Map();
 const activePolls = new Set();
+/** @type {Map<string, number>} sessionId → poll generation; bumped to supersede in-flight polls */
+const sessionPollGeneration = new Map();
 const messageRoles = new Map();
 const seenQuestionRequests = new Set();
 const seenPermissionRequests = new Set();
@@ -314,8 +316,21 @@ function isKnownAssistantMessage(messageId, knownAssistantIds) {
   return Boolean(messageId && knownAssistantIds?.has(messageId));
 }
 
+function supersedeSessionPoll(sessionId) {
+  if (!sessionId) return;
+  sessionPollGeneration.set(sessionId, (sessionPollGeneration.get(sessionId) || 0) + 1);
+}
+
+function isStaleBusMessage(chatId, messageId) {
+  if (!messageId) return false;
+  const run = activeRuns.get(chatId);
+  if (!run?.knownAssistantIds) return false;
+  return isKnownAssistantMessage(messageId, run.knownAssistantIds);
+}
+
 async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantIds = new Set()) {
-  if (activePolls.has(sessionId)) return;
+  const pollGen = (sessionPollGeneration.get(sessionId) || 0) + 1;
+  sessionPollGeneration.set(sessionId, pollGen);
   activePolls.add(sessionId);
 
   const ws = workspace || chatWorkspaces.get(chatId);
@@ -328,6 +343,7 @@ async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantI
     const IDLE_POLL_LIMIT = 16; // 8s of continuous idle with no response text
 
     for (let attempt = 0; ; attempt++) {
+      if (sessionPollGeneration.get(sessionId) !== pollGen) return;
       if (!client || !chatSessions.has(chatId)) return;
 
       const [statusRes, msgRes] = await Promise.all([
@@ -558,17 +574,21 @@ function mapToolStatus(state = {}) {
   return 'pending';
 }
 
-async function flushToolStates(chatId, sessionId) {
+async function flushToolStates(chatId, sessionId, knownAssistantIds = null) {
   if (!client || !emitEvent) return;
   const ws = chatWorkspaces.get(chatId);
+  const staleIds = knownAssistantIds ?? activeRuns.get(chatId)?.knownAssistantIds;
   try {
     const msgRes = await client.session.messages({
       path: { id: sessionId },
       ...directoryOptions(ws),
     });
     const latest = getLatestAssistantEntry(msgRes.data || []);
+    const latestId = latest?.info?.id;
+    if (latestId && isKnownAssistantMessage(latestId, staleIds)) return;
     for (const part of latest?.parts || []) {
       if (part.type !== 'tool') continue;
+      if (part.messageID && isKnownAssistantMessage(part.messageID, staleIds)) continue;
       const toolCall = mapToolToFrontend(part);
       await emitToolUpdate(chatId, sessionId, part.messageID, part, toolCall);
     }
@@ -999,6 +1019,7 @@ function handleBusEvent(event) {
 
       const role = messageRoles.get(part.messageID);
       if (role === 'user') break;
+      if (isStaleBusMessage(chatId, part.messageID)) break;
 
       if (part.type === 'text') {
         const delta = event.properties?.delta;
@@ -1087,6 +1108,8 @@ function handleBusEvent(event) {
       const sessionId = event.properties?.sessionID;
       const chatId = getChatIdForSession(sessionId);
       if (!chatId) break;
+      const run = activeRuns.get(chatId);
+      if (!run || run.sessionId !== sessionId) break;
       activeRuns.delete(chatId);
       void emitDone(chatId, sessionId);
       break;
@@ -1549,10 +1572,14 @@ export async function abortChat(chatId) {
   const sessionId = chatSessions.get(chatId);
   if (!sessionId) return false;
 
+  const staleAssistantIds = activeRuns.get(chatId)?.knownAssistantIds;
+  supersedeSessionPoll(sessionId);
   const result = await client.session.abort({ path: { id: sessionId } });
   activeRuns.delete(chatId);
   if (!result.error) {
-    await emitDone(chatId, sessionId);
+    await flushToolStates(chatId, sessionId, staleAssistantIds);
+    clearTaskChildSessionsForParent(sessionId);
+    if (emitEvent) emitEvent({ type: 'done', chatId, sessionId });
   }
   return !result.error;
 }
