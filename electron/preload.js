@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   quit: () => ipcRenderer.send('window-quit'),
   onWindowState: (cb) => ipcRenderer.on('window-state', (_, state) => cb(state)),
   openFolderDialog: () => ipcRenderer.invoke('dialog:open-folder'),
+  openAttachmentDialog: () => ipcRenderer.invoke('dialog:open-attachments'),
   openImageDialog: () => ipcRenderer.invoke('dialog:open-images'),
   saveFileDialog: (options) => ipcRenderer.invoke('dialog:save-file', options),
   writeTextFile: (payload) => ipcRenderer.invoke('fs:write-text-file', payload),

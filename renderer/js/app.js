@@ -121,7 +121,9 @@ function isEmptyAssistantMessage(msg) {
 }
 
 function isEmptyUserMessage(msg) {
-  return msg.role === 'user' && !msg.content?.trim() && !msg.images?.length;
+  return msg.role === 'user'
+    && !msg.content?.trim()
+    && !getMessageAttachments(msg).length;
 }
 
 function isContinuePromptUserMessage(msg) {
@@ -360,61 +362,116 @@ function createInitialState() {
 
 /* ---- State ---- */
 const state = createInitialState();
-const pendingImages = { welcome: [], chat: [] };
-let nextImageId = 1;
+
+function normalizeAttachment(att) {
+  if (!att || typeof att !== 'object') return null;
+  const kind = att.kind === 'file' ? 'file' : 'image';
+  const name = att.name || (kind === 'image' ? 'Image' : 'File');
+  const normalized = { ...att, kind, name };
+  if (kind === 'file') {
+    if (!normalized.filePath?.trim()) return null;
+    delete normalized.dataUrl;
+  }
+  return normalized;
+}
+
+function getMessageAttachments(msg) {
+  if (msg.attachments?.length) {
+    return msg.attachments.map(normalizeAttachment).filter(Boolean);
+  }
+  if (msg.images?.length) {
+    return msg.images.map((img) => normalizeAttachment({ ...img, kind: 'image' })).filter(Boolean);
+  }
+  return [];
+}
+
+const pendingAttachments = { welcome: [], chat: [] };
+let nextAttachmentId = 1;
 
 function getInputContext(textarea) {
   return textarea === dom.welcomeInput ? 'welcome' : 'chat';
 }
 
-function createPendingImage({ name, dataUrl }) {
-  return {
-    id: `img-${nextImageId++}`,
-    name: name || 'Image',
+function createPendingAttachment({ name, kind, dataUrl, filePath }) {
+  return normalizeAttachment({
+    id: `att-${nextAttachmentId++}`,
+    name,
+    kind,
     dataUrl,
-  };
+    filePath,
+  });
 }
 
-function getPendingImages(context) {
-  return pendingImages[context] || [];
+function getPendingAttachments(context) {
+  return pendingAttachments[context] || [];
 }
 
-function clearPendingImages(context) {
-  pendingImages[context] = [];
-  renderPendingImages(context);
+function clearPendingAttachments(context) {
+  pendingAttachments[context] = [];
+  renderPendingAttachments(context);
 }
 
-function addPendingImages(context, images) {
-  if (!images?.length) return;
-  pendingImages[context].push(...images.map(createPendingImage));
-  renderPendingImages(context);
+function addPendingAttachments(context, attachments) {
+  if (!attachments?.length) return;
+  pendingAttachments[context].push(
+    ...attachments.map((att) => createPendingAttachment(att)).filter(Boolean),
+  );
+  renderPendingAttachments(context);
   syncSendButtonState();
 }
 
-function removePendingImage(context, imageId) {
-  pendingImages[context] = pendingImages[context].filter((img) => img.id !== imageId);
-  renderPendingImages(context);
+function removePendingAttachment(context, attachmentId) {
+  pendingAttachments[context] = pendingAttachments[context]
+    .filter((att) => att.id !== attachmentId);
+  renderPendingAttachments(context);
   syncSendButtonState();
 }
 
-function renderPendingImages(context) {
+function renderAttachmentChip(att) {
+  const removeBtn = `
+    <button
+      class="input-attachment-remove"
+      type="button"
+      data-action="remove-pending-attachment"
+      data-attachment-id="${escapeHtml(att.id)}"
+      title="${escapeHtml(t('input.removeAttachment'))}"
+    >×</button>
+  `;
+
+  if (att.kind === 'file') {
+    return `
+      <div class="input-attachment input-attachment--file" data-attachment-id="${escapeHtml(att.id)}" title="${escapeHtml(att.filePath || att.name)}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M14 2v6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="input-attachment-name">${escapeHtml(att.name)}</span>
+        ${removeBtn}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="input-attachment input-attachment--image" data-attachment-id="${escapeHtml(att.id)}">
+      <img src="${att.dataUrl}" alt="${escapeHtml(att.name)}" />
+      ${removeBtn}
+    </div>
+  `;
+}
+
+function renderPendingAttachments(context) {
   const container = context === 'welcome' ? dom.welcomeAttachments : dom.chatAttachments;
   if (!container) return;
 
-  const images = getPendingImages(context);
-  if (!images.length) {
+  const attachments = getPendingAttachments(context);
+  if (!attachments.length) {
     container.innerHTML = '';
     container.hidden = true;
     return;
   }
 
   container.hidden = false;
-  container.innerHTML = images.map((img) => `
-    <div class="input-attachment" data-image-id="${escapeHtml(img.id)}">
-      <img src="${img.dataUrl}" alt="${escapeHtml(img.name)}" />
-      <button class="input-attachment-remove" type="button" data-action="remove-pending-image" data-image-id="${escapeHtml(img.id)}" title="Remove">×</button>
-    </div>
-  `).join('');
+  container.innerHTML = attachments.map(renderAttachmentChip).join('');
 }
 
 function readFileAsDataUrl(file) {
@@ -431,48 +488,74 @@ function isImageFile(file) {
   return /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif|heic|heif)$/i.test(file.name || '');
 }
 
-async function addImageFilesToContext(context, files) {
-  if (!files?.length) return;
-  if (context === 'chat' && isChatGenerating(state.selectedChatId)) {
-    showToast('Wait for the current response to finish');
-    return;
+async function fileToAttachment(file) {
+  if (isImageFile(file)) {
+    return createPendingAttachment({
+      kind: 'image',
+      name: file.name || 'Image',
+      dataUrl: await readFileAsDataUrl(file),
+      filePath: file.path || null,
+    });
   }
-  if (!SettingsStore.canProcessImages()) {
-    showToast('Connect OpenRouter and enable image processing in Settings');
-    return;
-  }
-
-  const imageFiles = files.filter(isImageFile);
-  if (!imageFiles.length) {
-    showToast('Only image files can be attached');
-    return;
-  }
-
-  const images = await Promise.all(imageFiles.map(async (file) => ({
-    name: file.name || 'Image',
-    dataUrl: await readFileAsDataUrl(file),
-  })));
-  addPendingImages(context, images);
+  if (!file.path) return null;
+  return createPendingAttachment({
+    kind: 'file',
+    name: file.name || 'File',
+    filePath: file.path,
+  });
 }
 
-async function pickImagesForContext(context) {
-  if (!SettingsStore.canProcessImages()) {
-    showToast('Connect OpenRouter and enable image processing in Settings');
+async function addFilesToContext(context, files) {
+  if (!files?.length) return;
+  if (context === 'chat' && isChatGenerating(state.selectedChatId)) {
+    showToast(t('toast.waitForResponse'));
     return;
   }
 
-  if (window.electronAPI?.openImageDialog) {
-    const picked = await window.electronAPI.openImageDialog();
-    addPendingImages(context, picked);
+  const attachments = [];
+  let skippedWithoutPath = false;
+
+  for (const file of files) {
+    const attachment = await fileToAttachment(file);
+    if (attachment) {
+      attachments.push(attachment);
+    } else if (!isImageFile(file)) {
+      skippedWithoutPath = true;
+    }
+  }
+
+  const hasImages = attachments.some((att) => att.kind === 'image');
+  if (hasImages && !SettingsStore.canProcessImages()) {
+    showToast(t('toast.connectOpenRouterImages'));
+    return;
+  }
+
+  if (!attachments.length) {
+    if (skippedWithoutPath) showToast(t('toast.filePathDesktopOnly'));
+    return;
+  }
+
+  if (skippedWithoutPath) showToast(t('toast.filePathDesktopOnly'));
+  addPendingAttachments(context, attachments);
+}
+
+async function pickAttachmentsForContext(context) {
+  if (window.electronAPI?.openAttachmentDialog) {
+    const picked = await window.electronAPI.openAttachmentDialog();
+    const hasImages = picked.some((att) => att.kind === 'image');
+    if (hasImages && !SettingsStore.canProcessImages()) {
+      showToast(t('toast.connectOpenRouterImages'));
+      return;
+    }
+    addPendingAttachments(context, picked);
     return;
   }
 
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = 'image/*';
   input.multiple = true;
   input.onchange = async () => {
-    await addImageFilesToContext(context, [...(input.files || [])]);
+    await addFilesToContext(context, [...(input.files || [])]);
   };
   input.click();
 }
@@ -484,37 +567,30 @@ async function addPastedImages(context, items) {
     const file = item.getAsFile();
     if (file) files.push(file);
   }
-  await addImageFilesToContext(context, files);
+  await addFilesToContext(context, files);
 }
 
-function transferHasImageFiles(dataTransfer) {
+function transferHasAttachableFiles(dataTransfer) {
   if (!dataTransfer) return false;
-  if ([...(dataTransfer.types || [])].includes('Files')) return true;
-  return [...(dataTransfer.items || [])].some(
-    (item) => item.kind === 'file' && item.type.startsWith('image/'),
-  );
+  return [...(dataTransfer.types || [])].includes('Files');
 }
 
-function collectImageFilesFromTransfer(dataTransfer) {
-  const files = [];
-  const seen = new Set();
-  for (const file of dataTransfer?.files || []) {
-    if (!isImageFile(file)) continue;
-    const key = `${file.name}:${file.size}:${file.lastModified}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    files.push(file);
-  }
-  return files;
+function collectFilesFromTransfer(dataTransfer) {
+  return [...(dataTransfer?.files || [])];
 }
 
-function formatMessageWithImageDescriptions(text, images) {
-  const parts = (images || [])
-    .filter((img) => img.description?.trim())
-    .map((img, index) => {
-      const label = img.name || `Image ${index + 1}`;
-      return `[${label}]\n${img.description.trim()}`;
-    });
+function formatMessageWithAttachments(text, attachments) {
+  const parts = (attachments || []).map((att, index) => {
+    if (att.kind === 'file' && att.filePath) {
+      const label = att.name || `Attachment ${index + 1}`;
+      return `[Attachment: ${label}]\n${att.filePath}`;
+    }
+    if (att.kind === 'image' && att.description?.trim()) {
+      const label = att.name || `Image ${index + 1}`;
+      return `[${label}]\n${att.description.trim()}`;
+    }
+    return null;
+  }).filter(Boolean);
 
   const body = text?.trim() || '';
   if (!parts.length) return body;
@@ -524,7 +600,8 @@ function formatMessageWithImageDescriptions(text, images) {
 
 function getUserMessageModelContent(msg) {
   if (msg.modelContent?.trim()) return msg.modelContent.trim();
-  if (msg.images?.length) return formatMessageWithImageDescriptions(msg.content || '', msg.images);
+  const attachments = getMessageAttachments(msg);
+  if (attachments.length) return formatMessageWithAttachments(msg.content || '', attachments);
   return msg.content?.trim() || '';
 }
 
@@ -554,45 +631,68 @@ async function describeImagesForMessage(images) {
 
 async function prepareUserMessageForModel(userMsg) {
   const text = userMsg.content?.trim() || '';
-  const images = userMsg.images?.length ? userMsg.images.map((img) => ({ ...img })) : [];
+  const attachments = getMessageAttachments(userMsg).map((att) => ({ ...att }));
+  const imageAttachments = attachments.filter((att) => att.kind === 'image');
 
-  if (!images.length) {
+  if (!attachments.length) {
     userMsg.modelContent = text;
     return text;
   }
 
-  if (!SettingsStore.canProcessImages()) {
+  if (imageAttachments.length && !SettingsStore.canProcessImages()) {
     throw new Error('Connect OpenRouter and enable image processing to send images');
   }
 
-  await describeImagesForMessage(images);
-  userMsg.images = images;
-  const modelContent = formatMessageWithImageDescriptions(text, images);
+  if (imageAttachments.length) {
+    await describeImagesForMessage(imageAttachments);
+  }
+
+  userMsg.attachments = attachments;
+  delete userMsg.images;
+  const modelContent = formatMessageWithAttachments(text, attachments);
   userMsg.modelContent = modelContent;
   return modelContent;
 }
 
-function renderUserMessageImagesHTML(images) {
-  if (!images?.length) return '';
+function renderUserMessageAttachmentsHTML(msgOrAttachments) {
+  const items = Array.isArray(msgOrAttachments)
+    ? msgOrAttachments.map(normalizeAttachment).filter(Boolean)
+    : getMessageAttachments(msgOrAttachments);
+  if (!items.length) return '';
+
   return `
     <div class="user-message-attachments">
-      ${images.map((img) => `
-        <figure class="user-message-attachment">
-          <img
-            src="${img.dataUrl}"
-            alt="${escapeHtml(img.name || 'Attached image')}"
-            title="${escapeHtml(img.name || 'Attached image')}"
-            loading="lazy"
-          />
-        </figure>
-      `).join('')}
+      ${items.map((att) => {
+        if (att.kind === 'file') {
+          return `
+            <figure class="user-message-attachment user-message-attachment--file" title="${escapeHtml(att.filePath || att.name)}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M14 2v6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="user-message-file-name">${escapeHtml(att.name)}</span>
+              <span class="user-message-file-path">${escapeHtml(att.filePath || '')}</span>
+            </figure>
+          `;
+        }
+        return `
+          <figure class="user-message-attachment user-message-attachment--image">
+            <img
+              src="${att.dataUrl}"
+              alt="${escapeHtml(att.name || 'Attached image')}"
+              title="${escapeHtml(att.name || 'Attached image')}"
+              loading="lazy"
+            />
+          </figure>
+        `;
+      }).join('')}
     </div>
   `;
 }
 
 function renderUserMessageHTML(msg) {
   const text = msg.content?.trim() || '';
-  const imagesHtml = renderUserMessageImagesHTML(msg.images);
+  const attachmentsHtml = renderUserMessageAttachmentsHTML(msg);
   const textHtml = text
     ? `<div class="user-bubble">${escapeHtml(text)}</div>`
     : '';
@@ -600,7 +700,7 @@ function renderUserMessageHTML(msg) {
   return `
     <div class="message-wrapper">
       <div class="user-message-stack">
-        ${imagesHtml}
+        ${attachmentsHtml}
         ${textHtml}
         <div class="message-actions">
           <button class="msg-action-btn" onclick="copyMessageContent(this)">
@@ -1444,7 +1544,7 @@ function buildHistoryForBackend(chatId, excludeMsgId = null) {
   const filtered = msgs
     .filter((m) => {
       if (m.id === excludeMsgId) return false;
-      if (m.role === 'user') return Boolean(m.content?.trim()) || Boolean(m.images?.length);
+      if (m.role === 'user') return Boolean(m.content?.trim()) || getMessageAttachments(m).length > 0;
       if (m.role === 'assistant') return Boolean(m.content?.trim());
       return false;
     })
@@ -3059,11 +3159,11 @@ function renderMessageActionsHTML(includeRegenerate = false) {
 async function sendMessage(text, options = {}) {
   const trimmedText = text.trim();
   const context = options.context || (state.selectedChatId ? 'chat' : 'welcome');
-  const images = options.images?.length
-    ? options.images.map((img) => ({ ...img }))
-    : getPendingImages(context).map((img) => ({ ...img }));
+  const attachments = options.attachments?.length
+    ? options.attachments.map((att) => normalizeAttachment({ ...att })).filter(Boolean)
+    : getPendingAttachments(context).map((att) => ({ ...att }));
 
-  if (!trimmedText && !images.length) return;
+  if (!trimmedText && !attachments.length) return;
 
   let pendingAbort = null;
 
@@ -3076,10 +3176,11 @@ async function sendMessage(text, options = {}) {
     pendingAbort = waitForBackendAbort(interruptChatId);
   }
 
-  if (images.length && !SettingsStore.canProcessImages()) {
+  const hasImages = attachments.some((att) => att.kind === 'image');
+  if (hasImages && !SettingsStore.canProcessImages()) {
     if (state.selectedChatId) interruptGuard.delete(state.selectedChatId);
     syncContinueSuggestion();
-    showToast('Connect OpenRouter and enable image processing in Settings');
+    showToast(t('toast.connectOpenRouterImages'));
     return;
   }
 
@@ -3088,9 +3189,13 @@ async function sendMessage(text, options = {}) {
   let newChatFromWelcome = false;
   let project = getSelectedProject();
 
+  const attachmentOnlyTitle = attachments.some((att) => att.kind === 'file')
+    ? t('chat.attachmentMessage')
+    : t('chat.imageMessage');
+
   if (!state.selectedChatId) {
     if (!project) {
-      showToast('Open a folder first');
+      showToast(t('toast.openFolderFirst'));
       openProjectFolder();
       return;
     }
@@ -3099,7 +3204,7 @@ async function sendMessage(text, options = {}) {
     const newChatId = `new-${Date.now()}`;
     const newChat = {
       id: newChatId,
-      title: trimmedText.length > 40 ? trimmedText.slice(0, 40) + '...' : (trimmedText || 'Image message'),
+      title: trimmedText.length > 40 ? trimmedText.slice(0, 40) + '...' : (trimmedText || attachmentOnlyTitle),
       time: 'now',
       unfinished: true,
     };
@@ -3122,17 +3227,17 @@ async function sendMessage(text, options = {}) {
     id: `msg-${state.nextMsgId++}`,
     role: 'user',
     content: trimmedText,
-    ...(images.length ? { images } : {}),
+    ...(attachments.length ? { attachments } : {}),
     ...(fromContinue ? { hidden: true } : {}),
   };
   if (fromContinue) markContinuePromptUserMessage(userMsg);
   state.chatMessages[chatId].push(userMsg);
   saveChatState();
-  clearPendingImages(context);
+  clearPendingAttachments(context);
 
   if (newChatFromWelcome) {
     renderSidebar();
-    showChatScreen(chatId, findChatById(chatId)?.title || trimmedText || 'Image message', project.id);
+    showChatScreen(chatId, findChatById(chatId)?.title || trimmedText || attachmentOnlyTitle, project.id);
   } else if (!userMsg.hidden) {
     renderMessage(userMsg, true);
   }
@@ -4906,13 +5011,13 @@ function setupInput(textarea) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const isChatInput = textarea === dom.chatInput;
-      const images = getPendingImages(context);
-      if (!textarea.value.trim() && !images.length) return;
+      const attachments = getPendingAttachments(context);
+      if (!textarea.value.trim() && !attachments.length) return;
       const text = textarea.value;
       textarea.value = '';
       textarea.style.height = 'auto';
       syncSendButtonState();
-      sendMessage(text, { context, images });
+      sendMessage(text, { context, attachments });
     }
   });
 }
@@ -4921,14 +5026,14 @@ function setupInputDropZone(inputBox, context) {
   let dragDepth = 0;
 
   inputBox.addEventListener('dragenter', (e) => {
-    if (!transferHasImageFiles(e.dataTransfer)) return;
+    if (!transferHasAttachableFiles(e.dataTransfer)) return;
     e.preventDefault();
     dragDepth += 1;
     inputBox.classList.add('is-drag-over');
   });
 
   inputBox.addEventListener('dragover', (e) => {
-    if (!transferHasImageFiles(e.dataTransfer)) return;
+    if (!transferHasAttachableFiles(e.dataTransfer)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
   });
@@ -4944,12 +5049,12 @@ function setupInputDropZone(inputBox, context) {
     e.preventDefault();
     dragDepth = 0;
     inputBox.classList.remove('is-drag-over');
-    const files = collectImageFilesFromTransfer(e.dataTransfer);
+    const files = collectFilesFromTransfer(e.dataTransfer);
     if (!files.length) {
-      showToast('Drop image files to attach');
+      showToast(t('toast.dropFilesToAttach'));
       return;
     }
-    void addImageFilesToContext(context, files);
+    void addFilesToContext(context, files);
   });
 }
 
@@ -4966,8 +5071,8 @@ function applySendButtonState(btn, { stopping }) {
 
 function syncSendButtonState() {
   const chatGenerating = isChatGenerating(state.selectedChatId);
-  const welcomeReady = Boolean(dom.welcomeInput.value.trim()) || getPendingImages('welcome').length > 0;
-  const chatReady = Boolean(dom.chatInput.value.trim()) || getPendingImages('chat').length > 0;
+  const welcomeReady = Boolean(dom.welcomeInput.value.trim()) || getPendingAttachments('welcome').length > 0;
+  const chatReady = Boolean(dom.chatInput.value.trim()) || getPendingAttachments('chat').length > 0;
   applySendButtonState(dom.welcomeSendBtn, { stopping: false });
   dom.welcomeSendBtn.disabled = !welcomeReady;
   if (chatGenerating) {
@@ -5476,20 +5581,20 @@ function bindEvents() {
   setupInput(dom.welcomeInput);
   dom.welcomeSendBtn.addEventListener('click', () => {
     const text = dom.welcomeInput.value;
-    const images = getPendingImages('welcome');
-    if (!text.trim() && !images.length) return;
+    const attachments = getPendingAttachments('welcome');
+    if (!text.trim() && !attachments.length) return;
     dom.welcomeInput.value = '';
     dom.welcomeInput.style.height = 'auto';
     syncSendButtonState();
-    sendMessage(text, { context: 'welcome', images });
+    sendMessage(text, { context: 'welcome', attachments });
   });
   dom.welcomeAttachBtn?.addEventListener('click', () => {
-    void pickImagesForContext('welcome');
+    void pickAttachmentsForContext('welcome');
   });
   dom.welcomeAttachments?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-action="remove-pending-image"]');
+    const btn = e.target.closest('[data-action="remove-pending-attachment"]');
     if (!btn) return;
-    removePendingImage('welcome', btn.dataset.imageId);
+    removePendingAttachment('welcome', btn.dataset.attachmentId);
   });
 
   // Chat input
@@ -5497,8 +5602,8 @@ function bindEvents() {
   dom.chatSendBtn.addEventListener('click', () => {
     const generating = isChatGenerating(state.selectedChatId);
     const text = dom.chatInput.value;
-    const images = getPendingImages('chat');
-    const hasContent = Boolean(text.trim()) || images.length > 0;
+    const attachments = getPendingAttachments('chat');
+    const hasContent = Boolean(text.trim()) || attachments.length > 0;
     if (generating && !hasContent) {
       void abortAgentRun(state.selectedChatId);
       return;
@@ -5507,15 +5612,15 @@ function bindEvents() {
     dom.chatInput.value = '';
     dom.chatInput.style.height = 'auto';
     syncSendButtonState();
-    sendMessage(text, { context: 'chat', images });
+    sendMessage(text, { context: 'chat', attachments });
   });
   dom.chatAttachBtn?.addEventListener('click', () => {
-    void pickImagesForContext('chat');
+    void pickAttachmentsForContext('chat');
   });
   dom.chatAttachments?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-action="remove-pending-image"]');
+    const btn = e.target.closest('[data-action="remove-pending-attachment"]');
     if (!btn) return;
-    removePendingImage('chat', btn.dataset.imageId);
+    removePendingAttachment('chat', btn.dataset.attachmentId);
   });
 
   dom.continueSuggestionBtn?.addEventListener('click', () => {

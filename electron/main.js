@@ -299,16 +299,37 @@ function filePathToDataUrl(filePath) {
   };
 }
 
-ipcMain.handle('dialog:open-images', async () => {
+function isImagePath(filePath) {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  return Boolean(IMAGE_MIME_TYPES[ext]);
+}
+
+function filePathToAttachment(filePath) {
+  const name = path.basename(filePath);
+  if (isImagePath(filePath)) {
+    const { dataUrl } = filePathToDataUrl(filePath);
+    return { kind: 'image', name, dataUrl, filePath };
+  }
+  return { kind: 'file', name, filePath };
+}
+
+async function pickAttachmentFiles({ title, filters } = {}) {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
   const result = await dialog.showOpenDialog(win, {
     properties: ['openFile', 'multiSelections'],
-    title: 'Attach images',
-    filters: [{ name: 'Images', extensions: Object.keys(IMAGE_MIME_TYPES) }],
+    title: title || 'Attach files',
+    filters: filters || [{ name: 'All Files', extensions: ['*'] }],
   });
   if (result.canceled || !result.filePaths.length) return [];
-  return result.filePaths.map(filePathToDataUrl);
-});
+  return result.filePaths.map(filePathToAttachment);
+}
+
+ipcMain.handle('dialog:open-attachments', async () => pickAttachmentFiles());
+
+ipcMain.handle('dialog:open-images', async () => pickAttachmentFiles({
+  title: 'Attach images',
+  filters: [{ name: 'Images', extensions: Object.keys(IMAGE_MIME_TYPES) }],
+}));
 
 ipcMain.handle('dialog:save-file', async (_evt, options = {}) => {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
