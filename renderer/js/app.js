@@ -2094,6 +2094,7 @@ function showWelcomeScreen(options = {}) {
   updateProjectSelection();
   setRandomWelcomeSubtitle();
 
+  SettingsStore.syncClosed();
   dom.settingsScreen.style.display = 'none';
   dom.appBody.classList.remove('settings-open');
   Physics.switchScreens(dom.welcomeScreen, dom.chatScreen);
@@ -2113,6 +2114,7 @@ function showWelcomeScreen(options = {}) {
 function showChatScreen(chatId, chatTitle, projectId, options = {}) {
   dom.chatTitle.textContent = chatTitle;
   updateNavActive();
+  SettingsStore.syncClosed();
   dom.settingsScreen.style.display = 'none';
   dom.appBody.classList.remove('settings-open');
   Physics.switchScreens(dom.chatScreen, dom.welcomeScreen);

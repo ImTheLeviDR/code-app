@@ -1912,10 +1912,15 @@ const SettingsStore = (() => {
   }
 
   function open() {
-    if (isOpen) return;
-    settings = loadSettingsFromStorage();
     pageEl = document.getElementById('settingsScreen');
     if (!pageEl) return;
+
+    if (isOpen) {
+      showSettingsScreen();
+      return;
+    }
+
+    settings = loadSettingsFromStorage();
     isOpen = true;
     staggerProviders = true;
     render();
@@ -1927,6 +1932,11 @@ const SettingsStore = (() => {
     if (!isOpen) return;
     isOpen = false;
     hideSettingsScreen();
+  }
+
+  /** Keep open flag in sync when another screen hides settings without close(). */
+  function syncClosed() {
+    isOpen = false;
   }
 
   function getIsOpen() { return isOpen; }
@@ -1963,6 +1973,7 @@ const SettingsStore = (() => {
   return {
     open,
     close,
+    syncClosed,
     getIsOpen,
     getNotificationSettings,
     getPersonalizationSystemPrompt,

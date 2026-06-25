@@ -109,7 +109,7 @@ const TitlebarMenu = (() => {
         if (typeof openSearch === 'function') openSearch();
         break;
       case 'settings':
-        if (typeof showSettingsScreen === 'function') showSettingsScreen();
+        if (typeof openSettings === 'function') openSettings();
         break;
       case 'exit':
         quitApp();
