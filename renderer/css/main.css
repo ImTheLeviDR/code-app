@@ -31,8 +31,26 @@
   --accent:        #7c3aed;
   --accent-hover:  #6d28d9;
   --accent-text:   #c4b5fd;
-  --accent-glow:   rgba(124, 45, 237, 0.14);
-  --accent-glow2:  rgba(124, 45, 237, 0.10);
+  --accent-glow:   color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-glow2:  color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-a05:    color-mix(in srgb, var(--accent) 5%, transparent);
+  --accent-a07:    color-mix(in srgb, var(--accent) 7%, transparent);
+  --accent-a08:    color-mix(in srgb, var(--accent) 8%, transparent);
+  --accent-a12:    color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-a16:    color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-a18:    color-mix(in srgb, var(--accent) 18%, transparent);
+  --accent-a20:    color-mix(in srgb, var(--accent) 20%, transparent);
+  --accent-a22:    color-mix(in srgb, var(--accent) 22%, transparent);
+  --accent-a25:    color-mix(in srgb, var(--accent) 25%, transparent);
+  --accent-a28:    color-mix(in srgb, var(--accent) 28%, transparent);
+  --accent-a30:    color-mix(in srgb, var(--accent) 30%, transparent);
+  --accent-a35:    color-mix(in srgb, var(--accent) 35%, transparent);
+  --accent-a40:    color-mix(in srgb, var(--accent) 40%, transparent);
+  --accent-a45:    color-mix(in srgb, var(--accent) 45%, transparent);
+  --accent-a50:    color-mix(in srgb, var(--accent) 50%, transparent);
+  --accent-a55:    color-mix(in srgb, var(--accent) 55%, transparent);
+  --accent-a85:    color-mix(in srgb, var(--accent) 85%, transparent);
+  --accent-text-a95: color-mix(in srgb, var(--accent-text) 95%, transparent);
 
   --success:       #22c55e;
   --success-dim:   rgba(34, 197, 94, 0.15);
@@ -40,6 +58,8 @@
   --error:         #ef4444;
   --error-dim:     rgba(239, 68, 68, 0.12);
   --info:          #60a5fa;
+
+  --btn-text:      #fff;
 
   --sidebar-width:    240px;
   --tool-panel-width: 440px;
@@ -208,8 +228,8 @@ body.update-installing .app {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(145deg, rgba(124, 45, 237, 0.22), rgba(124, 45, 237, 0.08));
-  border: 1px solid rgba(124, 45, 237, 0.28);
+  background: linear-gradient(145deg, var(--accent-a22), var(--accent-a08));
+  border: 1px solid var(--accent-a28);
   color: var(--accent-text);
   margin-bottom: 4px;
 }
@@ -240,7 +260,7 @@ body.update-installing .app {
   width: 0%;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, rgba(124, 45, 237, 0.85), rgba(167, 139, 250, 0.95));
+  background: linear-gradient(90deg, var(--accent-a85), var(--accent-text-a95));
   transition: width 0.18s ease;
 }
 
@@ -434,7 +454,7 @@ textarea {
 
 .menubar-option:hover,
 .menubar-option:focus-visible {
-  background: rgba(124, 45, 237, 0.14);
+  background: var(--accent-glow);
   outline: none;
 }
 
@@ -754,7 +774,7 @@ body.sidebar-resizing {
   width: 14px;
   height: 14px;
   border-radius: 2px;
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -838,7 +858,7 @@ body.sidebar-resizing {
   width: 12px;
   height: 12px;
   flex-shrink: 0;
-  border: 1.5px solid rgba(124, 45, 237, 0.22);
+  border: 1.5px solid var(--accent-a22);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: chat-item-spin 0.7s linear infinite;
@@ -935,7 +955,7 @@ body.sidebar-resizing {
 
 .context-menu-option:hover,
 .context-menu-option:focus-visible {
-  background: rgba(124, 45, 237, 0.14);
+  background: var(--accent-glow);
   outline: none;
 }
 
@@ -1026,7 +1046,7 @@ body.sidebar-resizing {
 }
 
 .confirm-input:focus {
-  border-color: rgba(124, 45, 237, 0.5);
+  border-color: var(--accent-a50);
 }
 
 .confirm-actions {
@@ -1057,13 +1077,13 @@ body.sidebar-resizing {
 
 .confirm-btn-primary {
   background: var(--accent-glow);
-  border-color: rgba(124, 45, 237, 0.35);
+  border-color: var(--accent-a35);
   color: var(--accent-text);
 }
 
 .confirm-btn-primary:hover {
-  background: rgba(124, 45, 237, 0.16);
-  border-color: rgba(124, 45, 237, 0.5);
+  background: var(--accent-a16);
+  border-color: var(--accent-a50);
 }
 
 .confirm-btn-danger {
@@ -1235,7 +1255,7 @@ body.sidebar-resizing {
   height: 64px;
   border-radius: var(--radius-xl);
   background: var(--accent-glow);
-  border: 1px solid rgba(124, 45, 237, 0.2);
+  border: 1px solid var(--accent-a20);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1300,7 +1320,7 @@ body.sidebar-resizing {
 }
 
 .project-dropdown--title.open .project-picker-trigger {
-  border-color: rgba(124, 45, 237, 0.35);
+  border-color: var(--accent-a35);
   box-shadow: 0 0 0 2px var(--accent-glow2);
 }
 
@@ -1404,7 +1424,7 @@ body.sidebar-resizing {
 }
 
 .project-dropdown.open .project-picker-trigger {
-  border-color: rgba(124, 45, 237, 0.35);
+  border-color: var(--accent-a35);
   box-shadow: 0 0 0 2px var(--accent-glow2);
 }
 
@@ -1558,14 +1578,14 @@ body.sidebar-resizing {
 }
 
 .input-box:focus-within {
-  border-color: rgba(124, 45, 237, 0.4);
+  border-color: var(--accent-a40);
   box-shadow: 0 0 0 3px var(--accent-glow2);
 }
 
 .input-box.is-drag-over {
-  border-color: rgba(124, 45, 237, 0.55);
+  border-color: var(--accent-a55);
   box-shadow: 0 0 0 3px var(--accent-glow2);
-  background: rgba(124, 45, 237, 0.05);
+  background: var(--accent-a05);
 }
 
 .message-input {
@@ -1792,7 +1812,7 @@ body.sidebar-resizing {
 }
 
 .model-dropdown.open .model-selector-trigger {
-  border-color: rgba(124, 45, 237, 0.35);
+  border-color: var(--accent-a35);
   box-shadow: 0 0 0 2px var(--accent-glow2);
 }
 
@@ -1815,7 +1835,7 @@ body.sidebar-resizing {
   width: 12px;
   height: 12px;
   flex-shrink: 0;
-  border: 1.5px solid rgba(124, 45, 237, 0.22);
+  border: 1.5px solid var(--accent-a22);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: chat-item-spin 0.7s linear infinite;
@@ -1988,7 +2008,7 @@ body.sidebar-resizing {
   justify-content: center;
   border-radius: var(--radius-md);
   background: var(--accent);
-  color: white;
+  color: var(--btn-text);
   transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
   flex-shrink: 0;
 }
@@ -2283,7 +2303,7 @@ body.sidebar-resizing {
   width: 28px;
   height: 28px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, #5b21b6, #7c3aed);
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2457,7 +2477,7 @@ body.sidebar-resizing {
   width: 12px;
   height: 12px;
   flex-shrink: 0;
-  border: 1.5px solid rgba(124, 45, 237, 0.22);
+  border: 1.5px solid var(--accent-a22);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: chat-item-spin 0.7s linear infinite;
@@ -2493,7 +2513,7 @@ body.sidebar-resizing {
     var(--text-muted) 0%,
     var(--text-muted) 35%,
     var(--accent) 50%,
-    #c4b5fd 55%,
+    var(--accent-text) 55%,
     var(--text-muted) 65%,
     var(--text-muted) 100%
   );
@@ -2820,7 +2840,7 @@ body.sidebar-resizing {
   justify-content: center;
   border-radius: var(--radius-md);
   background: var(--accent-glow);
-  border: 1px solid rgba(124, 45, 237, 0.28);
+  border: 1px solid var(--accent-a28);
   color: var(--accent-text);
 }
 
@@ -2951,8 +2971,8 @@ body.sidebar-resizing {
   font-size: 11px;
   line-height: 1.4;
   color: var(--accent-text);
-  background: rgba(124, 45, 237, 0.07);
-  border-bottom: 1px solid rgba(124, 45, 237, 0.12);
+  background: var(--accent-a07);
+  border-bottom: 1px solid var(--accent-a12);
   user-select: none;
 }
 
@@ -3212,7 +3232,7 @@ body.sidebar-resizing {
   flex-shrink: 0;
   padding: 5px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(124, 45, 237, 0.35);
+  border: 1px solid var(--accent-a35);
   background: var(--accent-glow);
   color: var(--accent-text);
   font-size: 11.5px;
@@ -3225,8 +3245,8 @@ body.sidebar-resizing {
 }
 
 .toast-action-btn:hover:not(:disabled) {
-  background: rgba(124, 45, 237, 0.16);
-  border-color: rgba(124, 45, 237, 0.5);
+  background: var(--accent-a16);
+  border-color: var(--accent-a50);
 }
 
 .toast-action-btn:disabled {
@@ -3406,7 +3426,7 @@ body.sidebar-resizing {
 }
 
 .settings-section-header a {
-  color: var(--accent-text, #c4b5fd);
+  color: var(--accent-text);
   text-decoration: none;
 }
 
@@ -3463,7 +3483,7 @@ body.sidebar-resizing {
 }
 
 .settings-provider-card.enabled {
-  border-color: rgba(124, 45, 237, 0.18);
+  border-color: var(--accent-a18);
 }
 
 .settings-provider-header {
@@ -3619,7 +3639,7 @@ body.sidebar-resizing {
 }
 
 .settings-input:focus {
-  border-color: rgba(124, 45, 237, 0.4);
+  border-color: var(--accent-a40);
   box-shadow: 0 0 0 2px var(--accent-glow2);
   outline: none;
 }
@@ -3730,7 +3750,7 @@ body.sidebar-resizing {
   border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
-  color: white;
+  color: var(--btn-text);
   background: var(--accent);
   transition: background var(--transition-fast);
   white-space: nowrap;
@@ -3769,7 +3789,7 @@ body.sidebar-resizing {
 }
 
 .settings-select:focus {
-  border-color: rgba(124, 45, 237, 0.4);
+  border-color: var(--accent-a40);
 }
 
 .settings-icon-btn {
@@ -3825,13 +3845,13 @@ body.sidebar-resizing {
 }
 
 .settings-toggle:hover .settings-toggle-track {
-  border-color: rgba(124, 45, 237, 0.28);
+  border-color: var(--accent-a28);
   box-shadow: 0 0 0 2px var(--accent-glow2);
 }
 
 .settings-toggle:hover .settings-toggle-input:checked + .settings-toggle-track {
-  background: rgba(124, 45, 237, 0.16);
-  border-color: rgba(124, 45, 237, 0.45);
+  background: var(--accent-a16);
+  border-color: var(--accent-a45);
   box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
@@ -3865,7 +3885,7 @@ body.sidebar-resizing {
 
 .settings-toggle-input:checked + .settings-toggle-track {
   background: var(--accent-glow);
-  border-color: rgba(124, 45, 237, 0.35);
+  border-color: var(--accent-a35);
 }
 
 /* ============================================================
@@ -3929,7 +3949,7 @@ body.sidebar-resizing {
 }
 
 .settings-pers-style-option.active {
-  border-color: var(--accent-text, rgba(124, 45, 237, 0.45));
+  border-color: var(--accent-a45);
   background: var(--accent-glow2);
   box-shadow: 0 0 0 1px var(--accent-glow);
 }
@@ -3996,7 +4016,7 @@ body.sidebar-resizing {
 }
 
 .sett-appe-card.active {
-  border-color: var(--accent-text, rgba(124, 45, 237, 0.45));
+  border-color: var(--accent-a45);
   box-shadow: 0 0 0 1px var(--accent-glow);
   background: var(--accent-glow2);
 }
@@ -4093,7 +4113,7 @@ body.sidebar-resizing {
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid var(--bg-elevated);
-  box-shadow: 0 0 0 1px rgba(124, 45, 237, 0.35);
+  box-shadow: 0 0 0 1px var(--accent-a35);
   cursor: pointer;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -4116,7 +4136,7 @@ body.sidebar-resizing {
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid var(--bg-elevated);
-  box-shadow: 0 0 0 1px rgba(124, 45, 237, 0.35);
+  box-shadow: 0 0 0 1px var(--accent-a35);
   cursor: pointer;
 }
 
@@ -4147,7 +4167,7 @@ body.sidebar-resizing {
   height: 52px;
   border-radius: var(--radius-xl);
   background: var(--accent-glow);
-  border: 1px solid rgba(124, 45, 237, 0.2);
+  border: 1px solid var(--accent-a20);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4264,8 +4284,8 @@ body.sidebar-resizing {
   width: 72px;
   height: 72px;
   border-radius: 18px;
-  background: linear-gradient(145deg, rgba(124, 45, 237, 0.22), rgba(124, 45, 237, 0.08));
-  border: 1px solid rgba(124, 45, 237, 0.28);
+  background: linear-gradient(145deg, var(--accent-a22), var(--accent-a08));
+  border: 1px solid var(--accent-a28);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
   margin-bottom: 16px;
 }
@@ -4322,7 +4342,7 @@ body.sidebar-resizing {
 .settings-about-btn {
   padding: 7px 14px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(124, 45, 237, 0.35);
+  border: 1px solid var(--accent-a35);
   background: var(--accent-glow);
   color: var(--accent-text);
   font-size: 12px;
@@ -4331,8 +4351,8 @@ body.sidebar-resizing {
 }
 
 .settings-about-btn:hover {
-  background: rgba(124, 45, 237, 0.16);
-  border-color: rgba(124, 45, 237, 0.5);
+  background: var(--accent-a16);
+  border-color: var(--accent-a50);
 }
 
 .settings-about-btn--secondary {
@@ -4476,7 +4496,7 @@ body.sidebar-resizing {
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid var(--bg-elevated);
-  box-shadow: 0 0 0 1px rgba(124, 45, 237, 0.35);
+  box-shadow: 0 0 0 1px var(--accent-a35);
   cursor: pointer;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -4499,7 +4519,7 @@ body.sidebar-resizing {
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid var(--bg-elevated);
-  box-shadow: 0 0 0 1px rgba(124, 45, 237, 0.35);
+  box-shadow: 0 0 0 1px var(--accent-a35);
   cursor: pointer;
 }
 
@@ -4541,7 +4561,7 @@ body.sidebar-resizing {
 }
 
 .settings-sound-option.active {
-  border-color: rgba(124, 45, 237, 0.45);
+  border-color: var(--accent-a45);
   background: var(--accent-glow);
   box-shadow: inset 2px 0 0 var(--accent);
 }
@@ -4582,7 +4602,7 @@ body.sidebar-resizing {
 }
 
 .settings-sound-option.active .settings-sound-preview-btn {
-  border-color: rgba(124, 45, 237, 0.25);
+  border-color: var(--accent-a25);
 }
 
 /* ============================================================
@@ -4632,12 +4652,12 @@ body.sidebar-resizing {
 
 .permission-action-btn--primary {
   color: var(--text-primary);
-  border-color: rgba(124, 45, 237, 0.35);
+  border-color: var(--accent-a35);
 }
 
 .permission-action-btn--primary:hover:not(:disabled) {
-  background: rgba(124, 45, 237, 0.12);
-  border-color: rgba(124, 45, 237, 0.5);
+  background: var(--accent-a12);
+  border-color: var(--accent-a50);
 }
 
 .permission-action-btn:disabled {
@@ -4678,7 +4698,7 @@ body.sidebar-resizing {
   width: 12px;
   height: 12px;
   flex-shrink: 0;
-  border: 1.5px solid rgba(124, 45, 237, 0.22);
+  border: 1.5px solid var(--accent-a22);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: chat-item-spin 0.7s linear infinite;
@@ -4720,7 +4740,7 @@ body.sidebar-resizing {
     var(--text-muted) 0%,
     var(--text-muted) 35%,
     var(--accent) 50%,
-    #c4b5fd 55%,
+    var(--accent-text) 55%,
     var(--text-muted) 65%,
     var(--text-muted) 100%
   );
@@ -4812,7 +4832,7 @@ body.sidebar-resizing {
 }
 
 .question-option.is-selected {
-  background: rgba(124, 45, 237, 0.16);
+  background: var(--accent-a16);
   box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.24);
 }
 
@@ -4909,13 +4929,13 @@ body.sidebar-resizing {
 }
 
 .question-submit-btn:not(:disabled) {
-  border-color: rgba(124, 45, 237, 0.35);
+  border-color: var(--accent-a35);
   background: var(--accent-glow2);
   color: var(--text-primary);
 }
 
 .question-submit-btn:not(:disabled):hover {
-  border-color: rgba(124, 45, 237, 0.5);
+  border-color: var(--accent-a50);
   background: var(--accent-glow);
 }
 
@@ -4932,6 +4952,6 @@ body.sidebar-resizing {
    ============================================================ */
 
 ::selection {
-  background: rgba(124, 45, 237, 0.3);
+  background: var(--accent-a30);
   color: var(--text-primary);
 }
