@@ -3301,26 +3301,24 @@ async function runAIResponse(chatId, userMsg, options = {}) {
   syncContinueSuggestion();
 
   const modelId = state.selectedModelId;
-  if (!modelId.startsWith('opencode/')) {
-    const providerPrefix = modelId.split('/')[0];
-    const hasKey = SettingsStore.getProviders().some(
-      (p) => p.enabled
-        && p.apiKey?.trim()
-        && resolveOpencodeProviderId(p) === providerPrefix,
+  const providerPrefix = modelId.split('/')[0];
+  const hasKey = SettingsStore.getProviders().some(
+    (p) => p.enabled
+      && p.apiKey?.trim()
+      && resolveOpencodeProviderId(p) === providerPrefix,
+  );
+  if (!hasKey) {
+    stopThinkingIndicator(thinkingEl);
+    const msgs = state.chatMessages[chatId];
+    const idx = msgs.findIndex((m) => m.id === assistantMsgId);
+    if (idx !== -1) msgs.splice(idx, 1);
+    aiRuns.delete(chatId);
+    interruptGuard.delete(chatId);
+    finishAIWithError(
+      chatId,
+      formatModelErrorMessage({ code: 'missing_api_key', details: { provider: providerPrefix } }),
     );
-    if (!hasKey) {
-      stopThinkingIndicator(thinkingEl);
-      const msgs = state.chatMessages[chatId];
-      const idx = msgs.findIndex((m) => m.id === assistantMsgId);
-      if (idx !== -1) msgs.splice(idx, 1);
-      aiRuns.delete(chatId);
-      interruptGuard.delete(chatId);
-      finishAIWithError(
-        chatId,
-        formatModelErrorMessage({ code: 'missing_api_key', details: { provider: providerPrefix } }),
-      );
-      return;
-    }
+    return;
   }
 
   if (typeof Backend === 'undefined' || !Backend.isAvailable()) {

@@ -350,7 +350,7 @@ function classifyModelError({ modelId, rawMessage = '', reason, sessionStatus })
     return {
       code: 'no_response',
       message: isOpencodeModel
-        ? 'The model did not respond. Check your internet connection, try another free model, or add an OpenCode Zen API key if you hit the free quota.'
+        ? 'The model did not respond. Check your internet connection, verify your OpenCode Zen API key in Settings → Providers, or try another model.'
         : 'The model did not respond. Make sure the provider is connected in Settings → Providers.',
     };
   }
@@ -1322,27 +1322,6 @@ export async function syncProviders(providers = []) {
       continue;
     }
 
-    if (provider.type === 'opencode' && !provider.apiKey?.trim()) {
-      try {
-        const list = await client.provider.list();
-        const connected = list.data?.connected || [];
-        results.push({
-          id: provider.id,
-          providerId: 'opencode',
-          ok: connected.includes('opencode'),
-          optionalKey: true,
-        });
-      } catch (err) {
-        results.push({
-          id: provider.id,
-          providerId: 'opencode',
-          ok: false,
-          error: err.message || 'Failed to check OpenCode provider',
-        });
-      }
-      continue;
-    }
-
     if (!provider.apiKey?.trim()) {
       results.push({
         id: provider.id,
@@ -1387,17 +1366,6 @@ export async function syncProviders(providers = []) {
 
 export async function testProvider(provider) {
   if (!client) throw new Error('OpenCode server is not running');
-
-  if (provider.type === 'opencode' && !provider.apiKey?.trim()) {
-    const list = await client.provider.list();
-    const connected = list.data?.connected || [];
-    return {
-      ok: connected.includes('opencode'),
-      providerId: 'opencode',
-      connected,
-    };
-  }
-
   const applied = await applyProviderAuth(provider);
   const list = await client.provider.list();
   const connected = list.data?.connected || [];
@@ -1445,7 +1413,7 @@ export async function getAvailableModels(providers = []) {
     if (isBuiltin || isCustom) {
       if (!userConfigured || !isConnected) continue;
     } else if (isFree) {
-      if (!isConnected) continue;
+      if (!userConfigured || !isConnected) continue;
     } else if (isGateway) {
       if (!isConnected) continue;
       if (!userConfigured) continue;

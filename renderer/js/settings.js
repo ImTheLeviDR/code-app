@@ -450,10 +450,22 @@ const SettingsStore = (() => {
   function getProviders()  { return settings.providers; }
   function getProvider(id) { return settings.providers.find((p) => p.id === id); }
 
+  function isProviderConfiguredForModel(modelId) {
+    const prefix = modelId?.split('/')[0];
+    if (!prefix) return false;
+    return settings.providers.some(
+      (p) => p.enabled && p.apiKey?.trim() && resolveOpencodeProviderId(p) === prefix,
+    );
+  }
+
+  function filterConfiguredModels(models) {
+    return models.filter((model) => isProviderConfiguredForModel(model.id));
+  }
+
   function getChatModels() {
     const cached = typeof Backend !== 'undefined' ? Backend.getCachedModels() : null;
-    if (cached?.length) return cached;
-    return MODELS;
+    const source = cached?.length ? cached : MODELS;
+    return filterConfiguredModels(source);
   }
 
   async function refreshModelsFromBackend() {
@@ -505,9 +517,7 @@ const SettingsStore = (() => {
         const keyed = results.filter((r) => {
           if (r.skipped) return false;
           const provider = settings.providers.find((p) => p.id === r.id);
-          if (!provider?.enabled) return false;
-          if (provider.type === 'opencode') return true;
-          return Boolean(provider.apiKey?.trim());
+          return Boolean(provider?.apiKey?.trim());
         });
         if (showFeedback && keyed.length > 0) {
           const connected = keyed.filter((r) => r.ok).length;
@@ -615,13 +625,6 @@ const SettingsStore = (() => {
   function renderRowStatus(provider) {
     if (!provider.enabled) {
       return `<span class="prov-row-status">${t('settings.providers.status.disabled')}</span>`;
-    }
-    if (provider.type === 'opencode' && !provider.apiKey?.trim()) {
-      const sync = providerSyncState[provider.id];
-      if (sync?.ok) {
-        return `<span class="prov-row-status is-set">${t('settings.providers.status.connectedFree')}</span>`;
-      }
-      return `<span class="prov-row-status">${t('settings.providers.status.optionalKey')}</span>`;
     }
     if (!provider.apiKey?.trim()) {
       return `<span class="prov-row-status is-missing">${t('settings.providers.status.noKey')}</span>`;
@@ -812,9 +815,6 @@ const SettingsStore = (() => {
                 </button>
                 <button class="prov-text-btn prov-test-btn" type="button" data-action="test-provider">${t('settings.providers.test')}</button>
               </div>
-              ${provider.type === 'opencode' ? `
-              <p class="prov-form-note">${t('settings.providers.opencodeKeyNoteBefore')} <a href="https://opencode.ai/auth" target="_blank" rel="noopener noreferrer">${t('settings.providers.openCodeZenLink')}</a>${t('settings.providers.opencodeKeyNoteAfter')}</p>
-              ` : ''}
             </div>
 
             ${provider.type === 'custom' ? `
@@ -1736,7 +1736,7 @@ const SettingsStore = (() => {
       row.querySelector('[data-action="test-provider"]')?.addEventListener('click', async (e) => {
         e.stopPropagation();
         const provider = getProvider(id);
-        if (!provider?.apiKey?.trim() && provider?.type !== 'opencode') {
+        if (!provider?.apiKey?.trim()) {
           showToast(t('toast.addApiKeyFirst'));
           return;
         }
