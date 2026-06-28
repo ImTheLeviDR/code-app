@@ -24,7 +24,7 @@ const Backend = (() => {
       }
       return started;
     } catch (err) {
-      console.error('Backend start failed:', err);
+      Logger.error('backend', 'Backend start failed', err);
       return { running: false, error: err.message };
     }
   }

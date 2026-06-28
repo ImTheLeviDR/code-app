@@ -36,6 +36,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('updates:begin-install', listener);
     return () => ipcRenderer.removeListener('updates:begin-install', listener);
   },
+  logAppend: (entry) => ipcRenderer.invoke('logs:append', entry),
+  getRecentLogs: (options) => ipcRenderer.invoke('logs:get-recent', options),
+  getLogDir: () => ipcRenderer.invoke('logs:get-dir'),
+  clearLogs: () => ipcRenderer.invoke('logs:clear'),
+  openLogFolder: () => ipcRenderer.invoke('logs:open-folder'),
+  exportLogsText: (options) => ipcRenderer.invoke('logs:export-text', options),
 });
 
 contextBridge.exposeInMainWorld('backendAPI', {

@@ -4955,3 +4955,117 @@ body.sidebar-resizing {
   background: var(--accent-a30);
   color: var(--text-primary);
 }
+
+/* ============================================================
+   SETTINGS — LOGS
+   ============================================================ */
+
+.settings-logs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.settings-logs-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings-logs-list {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.settings-logs-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.settings-log-entry {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.settings-log-entry:last-child {
+  border-bottom: none;
+}
+
+.settings-log-entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.settings-log-level {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settings-log-entry--error .settings-log-level {
+  color: #f87171;
+}
+
+.settings-log-entry--warn .settings-log-level {
+  color: #fbbf24;
+}
+
+.settings-log-entry--info .settings-log-level {
+  color: #60a5fa;
+}
+
+.settings-log-entry--debug .settings-log-level {
+  color: var(--text-muted);
+}
+
+.settings-log-source {
+  color: var(--text-secondary);
+}
+
+.settings-log-time {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+.settings-log-message {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.settings-log-stack {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fca5a5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.settings-log-meta {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

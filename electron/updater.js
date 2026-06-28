@@ -2,6 +2,7 @@ const { app, Notification, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { logError } = require('./log-service');
 
 const UPDATE_CONFIG = {
   owner: 'ImTheLeviDR',
@@ -337,6 +338,7 @@ async function checkForUpdates(getMainWindow, { notify = true } = {}) {
   } catch (err) {
     state.error = err.message || 'Update check failed';
     state.upToDate = null;
+    logError('updater', 'Update check failed', err);
   } finally {
     state.checking = false;
   }
@@ -375,6 +377,7 @@ function beginInstallFlow(getMainWindow, helpers = {}) {
     state.installPhase = 'error';
     state.downloading = false;
     notifyRenderer(getMainWindow);
+    logError('updater', 'Background update install failed', err);
   });
 }
 
@@ -433,6 +436,7 @@ async function downloadAndInstall(getMainWindow, helpers = {}) {
     state.error = err.message || 'Update install failed';
     state.installPhase = 'error';
     notifyRenderer(getMainWindow);
+    logError('updater', 'Update install failed', err);
     throw err;
   } finally {
     state.downloading = false;

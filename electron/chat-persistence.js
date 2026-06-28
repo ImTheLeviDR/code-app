@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
+const { logError } = require('./log-service');
 
 function getChatStatePath() {
   return path.join(app.getPath('userData'), 'chat-state.json');
@@ -14,7 +15,7 @@ function loadChatState() {
     if (!raw.trim()) return null;
     return JSON.parse(raw);
   } catch (err) {
-    console.error('Failed to read chat state file:', err);
+    logError('chat-persistence', 'Failed to read chat state file', err);
     return null;
   }
 }
@@ -34,7 +35,7 @@ function deleteChatState() {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     return true;
   } catch (err) {
-    console.error('Failed to delete chat state file:', err);
+    logError('chat-persistence', 'Failed to delete chat state file', err);
     return false;
   }
 }
@@ -45,7 +46,7 @@ function registerChatPersistenceHandlers(ipcMain) {
       saveChatState(data);
       event.returnValue = true;
     } catch (err) {
-      console.error('Failed to save chat state file:', err);
+      logError('chat-persistence', 'Failed to save chat state file', err);
       event.returnValue = false;
     }
   });
@@ -54,7 +55,7 @@ function registerChatPersistenceHandlers(ipcMain) {
     try {
       event.returnValue = loadChatState();
     } catch (err) {
-      console.error('Failed to load chat state file:', err);
+      logError('chat-persistence', 'Failed to load chat state file', err);
       event.returnValue = null;
     }
   });
@@ -62,7 +63,7 @@ function registerChatPersistenceHandlers(ipcMain) {
     try {
       event.returnValue = deleteChatState();
     } catch (err) {
-      console.error('Failed to delete chat state file:', err);
+      logError('chat-persistence', 'Failed to delete chat state file', err);
       event.returnValue = false;
     }
   });

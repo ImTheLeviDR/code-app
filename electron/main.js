@@ -6,6 +6,7 @@ const pkg = require('../package.json');
 const { registerBackendHandlers, shutdownBackend, ensureStarted } = require('./backend-bridge');
 const { registerChatPersistenceHandlers } = require('./chat-persistence');
 const { registerUpdateHandlers } = require('./updater');
+const { registerLogHandlers, installProcessErrorHandlers, logError } = require('./log-service');
 
 let mainWindow;
 let tray = null;
@@ -171,10 +172,13 @@ function getWorkspacePath() {
   return path.join(app.getPath('userData'), 'workspace');
 }
 
+installProcessErrorHandlers();
+
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
   createWindow();
   createTray();
+  registerLogHandlers(ipcMain);
   registerChatPersistenceHandlers(ipcMain);
 
   registerBackendHandlers({
@@ -198,7 +202,7 @@ app.whenReady().then(async () => {
   try {
     await ensureStarted(() => mainWindow, getWorkspacePath());
   } catch (err) {
-    console.error('OpenCode backend:', err.message);
+    logError('main', 'OpenCode backend failed to start', err);
   }
 });
 
@@ -345,54 +349,86 @@ ipcMain.handle('dialog:save-file', async (_evt, options = {}) => {
 });
 
 ipcMain.handle('fs:write-text-file', async (_evt, { filePath, content }) => {
-  if (typeof filePath !== 'string' || !filePath.trim()) {
-    throw new Error('Invalid file path');
+  try {
+    if (typeof filePath !== 'string' || !filePath.trim()) {
+      throw new Error('Invalid file path');
+    }
+    fs.writeFileSync(filePath, typeof content === 'string' ? content : String(content ?? ''), 'utf8');
+    return true;
+  } catch (err) {
+    logError('main', 'Failed to write text file', { filePath, error: err });
+    throw err;
   }
-  fs.writeFileSync(filePath, typeof content === 'string' ? content : String(content ?? ''), 'utf8');
-  return true;
 });
 
 ipcMain.handle('openrouter:describe-images', async (_evt, { apiKey, images }) => {
-  if (!apiKey?.trim()) throw new Error('OpenRouter API key is required');
-  if (!Array.isArray(images) || !images.length) return [];
+  try {
+    if (!apiKey?.trim()) throw new Error('OpenRouter API key is required');
+    if (!Array.isArray(images) || !images.length) return [];
 
-  const results = [];
-  for (const image of images) {
-    if (!image?.dataUrl) continue;
+    const results = [];
+    for (const image of images) {
+      if (!image?.dataUrl) continue;
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey.trim()}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: IMAGE_DESCRIPTION_MODEL,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'Describe this image in detail for a coding assistant. Include any visible text, code, UI elements, diagrams, error messages, and overall context.',
-            },
-            {
-              type: 'image_url',
-              image_url: { url: image.dataUrl },
-            },
-          ],
-        }],
-      }),
-    });
+      let response;
+      try {
+        response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: IMAGE_DESCRIPTION_MODEL,
+            messages: [{
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: 'Describe this image in detail for a coding assistant. Include any visible text, code, UI elements, diagrams, error messages, and overall context.',
+                },
+                {
+                  type: 'image_url',
+                  image_url: { url: image.dataUrl },
+                },
+              ],
+            }],
+          }),
+        });
+      } catch (networkErr) {
+        const err = new Error(`OpenRouter network error: ${networkErr.message || 'Could not reach OpenRouter'}`);
+        err.cause = networkErr;
+        err.code = networkErr.code;
+        err.provider = 'openrouter';
+        err.imageId = image.id;
+        throw err;
+      }
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      throw new Error(`OpenRouter request failed (${response.status}): ${errText.slice(0, 200)}`);
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        const err = new Error(`OpenRouter request failed (${response.status}): ${errText.slice(0, 2000)}`);
+        err.status = response.status;
+        err.responseBody = errText.slice(0, 4000);
+        err.provider = 'openrouter';
+        err.imageId = image.id;
+        throw err;
+      }
+
+      const data = await response.json();
+      const description = data?.choices?.[0]?.message?.content?.trim() || 'Unable to describe image.';
+      results.push({ id: image.id, description });
     }
 
-    const data = await response.json();
-    const description = data?.choices?.[0]?.message?.content?.trim() || 'Unable to describe image.';
-    results.push({ id: image.id, description });
+    return results;
+  } catch (err) {
+    logError('openrouter', err.message || 'OpenRouter image description failed', {
+      provider: 'openrouter',
+      imageCount: Array.isArray(images) ? images.length : 0,
+      imageId: err.imageId || null,
+      status: err.status || null,
+      responseBody: err.responseBody || null,
+      error: err,
+    });
+    throw err;
   }
-
-  return results;
 });

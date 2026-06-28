@@ -481,7 +481,7 @@ const SettingsStore = (() => {
         return models;
       }
     } catch (err) {
-      console.error('Failed to load models from backend:', err);
+      Logger.error('settings', 'Failed to load models from backend', err);
     } finally {
       window.dispatchEvent(new CustomEvent('models-loading', { detail: { loading: false } }));
     }
@@ -513,6 +513,16 @@ const SettingsStore = (() => {
       if (Array.isArray(results)) {
         for (const result of results) {
           if (result?.id) providerSyncState[result.id] = result;
+          const provider = settings.providers.find((p) => p.id === result.id);
+          if (provider && !result.ok && !result.skipped && provider.apiKey?.trim()) {
+            Logger.error('settings', `Provider sync failed: ${provider.name}`, {
+              providerType: provider.type,
+              providerId: result.providerId,
+              isOpenRouter: provider.type === 'openrouter',
+              error: result.error || 'Provider is not connected',
+              connectedProviders: result.connected,
+            });
+          }
         }
         const keyed = results.filter((r) => {
           if (r.skipped) return false;
@@ -528,7 +538,7 @@ const SettingsStore = (() => {
       await refreshModelsFromBackend();
       if (isOpen && activeCategory === 'providers') renderContent();
     } catch (err) {
-      console.error('Failed to sync providers:', err);
+      Logger.error('settings', 'Failed to sync providers', err);
       showToast(t('toast.syncProvidersFailed'));
     }
   }
@@ -1439,6 +1449,174 @@ const SettingsStore = (() => {
     `;
   }
 
+  let logsFilterLevel = 'all';
+
+  function formatLogTimestamp(timestamp) {
+    try {
+      return new Date(timestamp).toLocaleString();
+    } catch {
+      return '';
+    }
+  }
+
+  function extractLogStack(meta) {
+    if (!meta || typeof meta !== 'object') return '';
+    const stacks = [];
+    const candidates = [
+      meta.error,
+      meta.backendError,
+      meta.rawError,
+      meta.error?.cause,
+    ];
+    for (const candidate of candidates) {
+      if (candidate?.stack && !stacks.includes(candidate.stack)) {
+        stacks.push(candidate.stack);
+      }
+    }
+    return stacks.join('\n\n');
+  }
+
+  function renderLogEntry(entry) {
+    const stack = extractLogStack(entry.meta);
+    const stackBlock = stack
+      ? `<pre class="settings-log-stack">${escapeHtml(stack)}</pre>`
+      : '';
+    const meta = entry.meta
+      ? `<pre class="settings-log-meta">${escapeHtml(JSON.stringify(entry.meta, null, 2))}</pre>`
+      : '';
+    return `
+      <div class="settings-log-entry settings-log-entry--${escapeHtml(entry.level)}">
+        <div class="settings-log-entry-head">
+          <span class="settings-log-level">${escapeHtml(entry.level)}</span>
+          <span class="settings-log-source">${escapeHtml(entry.source)}</span>
+          <span class="settings-log-time">${escapeHtml(formatLogTimestamp(entry.timestamp))}</span>
+        </div>
+        <div class="settings-log-message">${escapeHtml(entry.message)}</div>
+        ${stackBlock}
+        ${meta}
+      </div>
+    `;
+  }
+
+  async function refreshLogsList(container, level = logsFilterLevel) {
+    const listEl = container.querySelector('[data-logs-list]');
+    if (!listEl) return;
+
+    if (!window.electronAPI?.getRecentLogs) {
+      listEl.innerHTML = `<div class="settings-logs-empty">${t('settings.logs.unavailable')}</div>`;
+      return;
+    }
+
+    listEl.innerHTML = `<div class="settings-logs-empty">${t('settings.logs.loading')}</div>`;
+
+    try {
+      const options = { limit: 200 };
+      if (level !== 'all') options.level = level;
+      const entries = await window.electronAPI.getRecentLogs(options);
+      if (!entries.length) {
+        listEl.innerHTML = `<div class="settings-logs-empty">${t('settings.logs.empty')}</div>`;
+        return;
+      }
+      listEl.innerHTML = entries.map(renderLogEntry).join('');
+    } catch (err) {
+      Logger.error('settings', 'Failed to load logs', err);
+      listEl.innerHTML = `<div class="settings-logs-empty">${t('settings.logs.loadFailed')}</div>`;
+    }
+  }
+
+  function renderLogsContent() {
+    return `
+      <div class="settings-section settings-logs">
+        <div class="settings-section-header">
+          <h2>${t('settings.logs.title')}</h2>
+          <p>${t('settings.logs.subtitle')}</p>
+        </div>
+
+        <div class="settings-logs-toolbar">
+          <select class="settings-select" data-logs-field="level" aria-label="${t('settings.logs.filterLabel')}">
+            <option value="all">${t('settings.logs.filterAll')}</option>
+            <option value="error">${t('settings.logs.filterError')}</option>
+            <option value="warn">${t('settings.logs.filterWarn')}</option>
+            <option value="info">${t('settings.logs.filterInfo')}</option>
+          </select>
+          <button type="button" class="settings-about-btn settings-about-btn--secondary" data-action="refresh-logs">${t('settings.logs.refresh')}</button>
+          <button type="button" class="settings-about-btn settings-about-btn--secondary" data-action="copy-logs">${t('settings.logs.copy')}</button>
+          <button type="button" class="settings-about-btn settings-about-btn--secondary" data-action="open-log-folder">${t('settings.logs.openFolder')}</button>
+          <button type="button" class="settings-about-btn settings-about-btn--danger" data-action="clear-logs">${t('settings.logs.clear')}</button>
+        </div>
+
+        <div class="prov-group">
+          <div class="prov-group-label">${t('settings.logs.recent')}</div>
+          <div class="prov-group-panel settings-logs-panel">
+            <div class="settings-logs-list" data-logs-list>
+              <div class="settings-logs-empty">${t('settings.logs.loading')}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindLogsEvents(container) {
+    const levelSelect = container.querySelector('[data-logs-field="level"]');
+    if (levelSelect) {
+      levelSelect.value = logsFilterLevel;
+      levelSelect.addEventListener('change', () => {
+        logsFilterLevel = levelSelect.value;
+        void refreshLogsList(container, logsFilterLevel);
+      });
+    }
+
+    container.querySelector('[data-action="refresh-logs"]')?.addEventListener('click', () => {
+      void refreshLogsList(container, logsFilterLevel);
+    });
+
+    container.querySelector('[data-action="copy-logs"]')?.addEventListener('click', async () => {
+      try {
+        const text = window.electronAPI?.exportLogsText
+          ? await window.electronAPI.exportLogsText({ limit: 500 })
+          : '';
+        if (!text) {
+          showToast(t('settings.logs.empty'));
+          return;
+        }
+        await navigator.clipboard.writeText(text);
+        showToast(t('toast.logsCopied'));
+      } catch (err) {
+        Logger.error('settings', 'Failed to copy logs', err);
+        showToast(t('toast.couldNotCopyClipboard'));
+      }
+    });
+
+    container.querySelector('[data-action="open-log-folder"]')?.addEventListener('click', async () => {
+      try {
+        await window.electronAPI?.openLogFolder?.();
+      } catch (err) {
+        Logger.error('settings', 'Failed to open log folder', err);
+        showToast(t('toast.logsOpenFolderFailed'));
+      }
+    });
+
+    container.querySelector('[data-action="clear-logs"]')?.addEventListener('click', () => {
+      showActionToast({
+        message: t('settings.logs.clearConfirm'),
+        actionLabel: t('settings.logs.clearAction'),
+        onAction: async () => {
+          try {
+            await window.electronAPI?.clearLogs?.();
+            await refreshLogsList(container, logsFilterLevel);
+            showToast(t('toast.logsCleared'));
+          } catch (err) {
+            Logger.error('settings', 'Failed to clear logs', err);
+            showToast(t('toast.logsClearFailed'));
+          }
+        },
+      });
+    });
+
+    void refreshLogsList(container, logsFilterLevel);
+  }
+
   function renderAboutContent() {
     return `
       <div class="settings-section settings-about">
@@ -1576,6 +1754,11 @@ const SettingsStore = (() => {
       sectionKey: 'settings.section.app',
       items: [
         {
+          id: "logs",
+          labelKey: "settings.nav.logs",
+          icon: `<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
+        },
+        {
           id: "about",
           labelKey: "settings.nav.about",
           icon: `<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
@@ -1621,6 +1804,8 @@ const SettingsStore = (() => {
         return renderAppearanceContent();
       case "shortcuts":
         return renderShortcutsContent();
+      case "logs":
+        return renderLogsContent();
       case "about":
         return renderAboutContent();
       default:
@@ -1656,6 +1841,11 @@ const SettingsStore = (() => {
 
     if (activeCategory === "personalization") {
       bindPersonalizationEvents(contentEl);
+      Physics.bindPressTargets(contentEl);
+    }
+
+    if (activeCategory === "logs") {
+      bindLogsEvents(contentEl);
       Physics.bindPressTargets(contentEl);
     }
 
@@ -1758,8 +1948,17 @@ const SettingsStore = (() => {
           showToast(result.ok
             ? t('toast.providerConnected', { name: provider.name })
             : t('toast.providerConnectFailed', { name: provider.name }));
+          if (!result.ok) {
+            Logger.error('settings', `Provider test failed: ${provider.name}`, {
+              providerType: provider.type,
+              providerId: result.providerId,
+              isOpenRouter: provider.type === 'openrouter',
+              connectedProviders: result.connected,
+            });
+          }
           if (result.ok) await refreshModelsFromBackend();
         } catch (err) {
+          Logger.error('settings', 'Provider test failed', err);
           showToast(t('toast.testFailed', { error: err.message || t('toast.unknownError') }));
         } finally {
           btn.disabled = false;

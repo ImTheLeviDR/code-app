@@ -85,7 +85,7 @@ function loadPersistedChatState() {
       parsed = window.electronAPI.loadChatsSync();
     }
   } catch (err) {
-    console.error('Failed to load chat state file:', err);
+    Logger.error('app', 'Failed to load chat state file', err);
   }
 
   if (!parsed) {
@@ -263,7 +263,7 @@ function saveChatState() {
 
     if (window.electronAPI?.saveChatsSync) {
       const saved = window.electronAPI.saveChatsSync(payload);
-      if (!saved) console.error('Failed to save chats to disk');
+      if (!saved) Logger.error('app', 'Failed to save chats to disk');
     }
 
     try {
@@ -297,7 +297,7 @@ function saveChatState() {
       }
     }
   } catch (err) {
-    console.error('Failed to save chats:', err);
+    Logger.error('app', 'Failed to save chats', err);
   }
 }
 
@@ -321,7 +321,7 @@ function saveSelectedModelId(modelId) {
   try {
     localStorage.setItem(SELECTED_MODEL_KEY, modelId);
   } catch (err) {
-    console.error('Failed to save model preference:', err);
+    Logger.error('app', 'Failed to save model preference', err);
   }
 }
 
@@ -616,17 +616,26 @@ async function describeImagesForMessage(images) {
     throw new Error('Image processing is unavailable in this environment');
   }
 
-  const described = await window.electronAPI.describeImages({
-    apiKey,
-    images: toDescribe.map(({ id, dataUrl }) => ({ id, dataUrl })),
-  });
+  try {
+    const described = await window.electronAPI.describeImages({
+      apiKey,
+      images: toDescribe.map(({ id, dataUrl }) => ({ id, dataUrl })),
+    });
 
-  for (const result of described) {
-    const image = images.find((img) => img.id === result.id);
-    if (image) image.description = result.description;
+    for (const result of described) {
+      const image = images.find((img) => img.id === result.id);
+      if (image) image.description = result.description;
+    }
+
+    return images;
+  } catch (err) {
+    Logger.error('openrouter', 'OpenRouter image description failed', {
+      error: err,
+      imageCount: toDescribe.length,
+      isOpenRouter: true,
+    });
+    throw err;
   }
-
-  return images;
 }
 
 async function prepareUserMessageForModel(userMsg) {
@@ -752,7 +761,7 @@ async function setActiveProjectWorkspace(projectId) {
     try {
       await Backend.setWorkspace(project.folderPath);
     } catch (err) {
-      console.error('Failed to set workspace:', err);
+      Logger.error('app', 'Failed to set workspace', err);
     }
   }
 }
@@ -944,6 +953,13 @@ async function init() {
   if (typeof I18n !== 'undefined') await I18n.init();
   if (typeof TitlebarMenu !== 'undefined') TitlebarMenu.init();
 
+  Logger.setContextProvider(() => ({
+    process: 'renderer',
+    chatId: state.selectedChatId || null,
+    projectId: state.selectedProjectId || null,
+    modelId: state.selectedModelId || null,
+  }));
+
   signalShellReady();
 
   if (state.migrateChatStateToFile) {
@@ -1003,6 +1019,7 @@ async function init() {
 function initBackend() {
   if (typeof Backend === 'undefined' || !Backend.isAvailable()) {
     modelsLoading = false;
+    Logger.error('app', 'AI backend unavailable');
     showToast('AI backend unavailable - restart the app');
     syncModelDropdownLabels();
     return Promise.resolve();
@@ -1016,6 +1033,7 @@ function initBackend() {
   backendReadyPromise = Backend.ensureReady()
     .then((status) => {
       if (!status?.running) {
+        Logger.error('app', 'Failed to start AI backend', { error: status?.error });
         showToast(status?.error || 'Failed to start AI backend');
         return;
       }
@@ -1027,7 +1045,7 @@ function initBackend() {
     .then(() => SettingsStore.refreshModelsFromBackend())
     .then(() => refreshModelDropdowns())
     .catch((err) => {
-      console.error('Backend init failed:', err);
+      Logger.error('app', 'Backend init failed', err);
       showToast('AI backend failed to start');
     })
     .finally(() => {
@@ -1615,7 +1633,7 @@ async function recoverChatsFromBackend() {
           changed = true;
         }
       } catch (err) {
-        console.error(`Failed to recover chat ${chat.id}:`, err);
+        Logger.error('app', `Failed to recover chat ${chat.id}`, err);
       }
     }
   }
@@ -1664,7 +1682,7 @@ async function syncChatSessionsToBackend() {
           sessionsChanged = true;
         }
       } catch (err) {
-        console.error(`Failed to validate session for chat ${chat.id}:`, err);
+        Logger.error('app', `Failed to validate session for chat ${chat.id}`, err);
         delete chat.sessionId;
         sessionsChanged = true;
       }
@@ -1676,7 +1694,7 @@ async function syncChatSessionsToBackend() {
     try {
       await Backend.restoreChatSessions(mappings);
     } catch (err) {
-      console.error('Failed to restore chat sessions:', err);
+      Logger.error('app', 'Failed to restore chat sessions', err);
     }
   }
 
@@ -3353,7 +3371,7 @@ async function runAIResponse(chatId, userMsg, options = {}) {
       if (isCurrentChatVisible(chatId)) {
         document.getElementById(`msg-${userMsg.id}`)?.remove();
       }
-      finishAIWithError(chatId, err.message || 'Failed to process images');
+      finishAIWithError(chatId, err.message || 'Failed to process images', { error: err, stage: 'prepare-message' });
       return;
     }
 
@@ -3393,7 +3411,7 @@ async function runAIResponse(chatId, userMsg, options = {}) {
       return;
     }
     interruptGuard.delete(chatId);
-    finishAIWithError(chatId, err.message || 'Failed to send message');
+    finishAIWithError(chatId, err.message || 'Failed to send message', { error: err, stage: 'send-message' });
   }
 }
 
@@ -3710,6 +3728,7 @@ async function requestBackendAbort(chatId) {
     const ok = await Backend.abort(chatId);
     return { ok: Boolean(ok) };
   } catch (err) {
+    Logger.error('app', 'Backend abort failed', err);
     return { ok: false, error: err.message || 'Abort failed' };
   }
 }
@@ -3755,7 +3774,7 @@ function formatModelErrorMessage({ code, message, details } = {}) {
   return message || (typeof I18n !== 'undefined' ? t('error.model.unknown') : 'The AI request failed.');
 }
 
-function finishAIWithError(chatId, message) {
+function finishAIWithError(chatId, message, details = {}) {
   const run = aiRuns.get(chatId);
   if (run) {
     hideInlineThinking(run.assistantMsgId);
@@ -3780,6 +3799,12 @@ function finishAIWithError(chatId, message) {
   saveChatState();
   syncContinueSuggestion();
   showToast(message);
+  Logger.error('ai', message, {
+    chatId,
+    modelId: state.selectedModelId,
+    sessionId: getChatSessionId(chatId),
+    ...details,
+  });
   if (isCurrentChatVisible(chatId)) focusInput(dom.chatInput);
 }
 
@@ -3854,6 +3879,12 @@ function handleBackendEvent(event) {
             message: event.message || event.error?.data?.message || event.error?.name,
             details: event.details,
           }),
+          {
+            code: event.code,
+            eventType: event.type,
+            details: event.details,
+            backendError: event.error,
+          },
         );
       }
       break;
@@ -3869,6 +3900,12 @@ function handleBackendEvent(event) {
           message: event.message,
           details: event.details,
         }),
+        {
+          code: event.code,
+          eventType: event.type,
+          details: event.details,
+          backendError: event.error,
+        },
       );
       break;
     default:
@@ -5944,6 +5981,7 @@ async function submitInlinePermission(msgId, response) {
       response,
     });
     if (!result?.ok) {
+      Logger.error('app', 'Could not respond to permission request', { response, permissionId: req.permissionId });
       showToast('Could not respond to permission request');
       req.submitting = false;
       card?.querySelectorAll('[data-permission-action]').forEach((btn) => {
@@ -5951,7 +5989,8 @@ async function submitInlinePermission(msgId, response) {
       });
       return;
     }
-  } catch (_) {
+  } catch (err) {
+    Logger.error('app', 'Permission response failed', err);
     showToast('Could not respond to permission request');
     req.submitting = false;
     card?.querySelectorAll('[data-permission-action]').forEach((btn) => {
@@ -6189,6 +6228,7 @@ async function submitInlineQuestion(msgId) {
   } catch (err) {
     req.submitting = false;
     updateQuestionSubmitState(msgId);
+    Logger.error('app', 'Failed to submit question answers', err);
     showToast(err.message || 'Failed to submit answers');
   }
 }
@@ -6862,6 +6902,7 @@ async function installAppUpdate() {
     if (status) handleUpdateStatus(status);
   } catch (err) {
     updateInstallActive = true;
+    Logger.error('app', 'Update install failed', err);
     renderUpdateInstallProgress({
       installPhase: 'error',
       latestVersion: pendingUpdateStatus?.latestVersion,
@@ -6911,7 +6952,7 @@ function resetApp() {
       window.electronAPI.deleteChatsSync();
     }
   } catch (err) {
-    console.error('Failed to reset app:', err);
+    Logger.error('app', 'Failed to reset app', err);
     showToast('Could not reset app');
     suppressChatPersistence = false;
     return;

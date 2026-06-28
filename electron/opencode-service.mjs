@@ -2,9 +2,13 @@ import path from 'node:path';
 import fs from 'node:fs';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { createOpencodeClient } from '@opencode-ai/sdk/client';
 import { createOpencodeServer } from '@opencode-ai/sdk/server';
 import { resolveAppRoot } from './ensure-opencode.mjs';
+
+const require = createRequire(import.meta.url);
+const { logError } = require('./log-service.js');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolveAppRoot();
@@ -328,6 +332,20 @@ function classifyModelError({ modelId, rawMessage = '', reason, sessionStatus })
   const isOpencodeModel = modelId?.startsWith('opencode/');
   const providerId = modelId?.includes('/') ? modelId.split('/')[0] : '';
 
+  if (
+    reason === 'connection'
+    || /econnrefused|enotfound|etimedout|econnreset|enetunreach|network error|network request failed|networkerror|connection refused|connection reset|failed to fetch|fetch failed|socket hang up|socket disconnected|dns|unreachable|could not connect|could not reach|provider unreachable|\b502\b|\b503\b|\b504\b|bad gateway|service unavailable|gateway timeout|temporarily unavailable|upstream/i.test(msg)
+  ) {
+    return {
+      code: 'provider_connection',
+      message: providerId === 'openrouter'
+        ? 'Could not reach OpenRouter. Check your internet connection, OpenRouter status, and your API key in Settings → Providers.'
+        : isOpencodeModel
+          ? 'Could not reach the model provider. Check your internet connection and OpenCode Zen settings in Settings → Providers.'
+          : `Could not reach ${providerId || 'the provider'}. Check your internet connection and provider settings in Settings → Providers.`,
+    };
+  }
+
   if (/free usage exceeded|usage exceeded|rate limit|too many requests|\b429\b/.test(msg)) {
     return {
       code: 'free_quota_exceeded',
@@ -387,9 +405,31 @@ function classifyModelError({ modelId, rawMessage = '', reason, sessionStatus })
   };
 }
 
+function logModelFailure(chatId, options = {}) {
+  const rawMessage = options.rawMessage || extractErrorMessage(options.error) || '';
+  const { code, message } = classifyModelError({ ...options, rawMessage });
+  const providerId = options.modelId?.includes('/')
+    ? options.modelId.split('/')[0]
+    : (options.providerId || null);
+
+  logError('opencode', message, {
+    chatId: chatId || null,
+    code,
+    providerId,
+    isOpenRouter: providerId === 'openrouter',
+    modelId: options.modelId || null,
+    rawMessage: rawMessage || null,
+    reason: options.reason || null,
+    sessionStatus: options.sessionStatus || null,
+    backendError: options.error || options.backendError || null,
+  });
+
+  return { code, message };
+}
+
 function emitModelError(chatId, options) {
+  const { code, message } = logModelFailure(chatId, options);
   if (!emitEvent) return;
-  const { code, message } = classifyModelError(options);
   emitEvent({
     type: 'error',
     chatId,
@@ -446,7 +486,11 @@ async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantI
       if (latest?.info?.error && !isStaleAssistant && emitEvent) {
         const modelId = activeRuns.get(chatId)?.modelId || '';
         const rawMessage = extractErrorMessage(latest.info.error);
-        const { code, message } = classifyModelError({ modelId, rawMessage });
+        const { code, message } = logModelFailure(chatId, {
+          modelId,
+          rawMessage,
+          error: latest.info.error,
+        });
         emitEvent({
           type: 'assistant-message',
           chatId,
@@ -1166,9 +1210,10 @@ function handleBusEvent(event) {
         const run = activeRuns.get(chatId);
         if (isKnownAssistantMessage(info.id, run?.knownAssistantIds)) break;
         const rawMessage = extractErrorMessage(info.error);
-        const { code, message } = classifyModelError({
+        const { code, message } = logModelFailure(chatId, {
           modelId: run?.modelId || '',
           rawMessage,
+          error: info.error,
         });
         emitEvent({
           type: 'assistant-message',
@@ -1307,6 +1352,15 @@ export function getStatus() {
   };
 }
 
+function logProviderSyncFailure(provider, errOrDetails) {
+  logError('opencode', `Provider sync failed: ${provider.name || provider.type}`, {
+    providerType: provider.type,
+    providerId: resolveProviderId(provider),
+    isOpenRouter: provider.type === 'openrouter',
+    ...(errOrDetails instanceof Error ? { error: errOrDetails } : errOrDetails),
+  });
+}
+
 export async function syncProviders(providers = []) {
   if (!client) throw new Error('OpenCode server is not running');
 
@@ -1346,12 +1400,21 @@ export async function syncProviders(providers = []) {
       const applied = await applyProviderAuth(provider);
       const list = await client.provider.list();
       const connected = list.data?.connected || [];
+      const ok = connected.includes(applied.providerId);
+      if (!ok) {
+        logProviderSyncFailure(provider, {
+          error: 'Provider auth succeeded but provider is not connected',
+          connectedProviders: connected,
+          providerId: applied.providerId,
+        });
+      }
       results.push({
         id: provider.id,
         providerId: applied.providerId,
-        ok: connected.includes(applied.providerId),
+        ok,
       });
     } catch (err) {
+      logProviderSyncFailure(provider, err);
       results.push({
         id: provider.id,
         providerId: resolveProviderId(provider),
@@ -1366,14 +1429,27 @@ export async function syncProviders(providers = []) {
 
 export async function testProvider(provider) {
   if (!client) throw new Error('OpenCode server is not running');
-  const applied = await applyProviderAuth(provider);
-  const list = await client.provider.list();
-  const connected = list.data?.connected || [];
-  return {
-    ok: connected.includes(applied.providerId),
-    providerId: applied.providerId,
-    connected,
-  };
+  try {
+    const applied = await applyProviderAuth(provider);
+    const list = await client.provider.list();
+    const connected = list.data?.connected || [];
+    const ok = connected.includes(applied.providerId);
+    if (!ok) {
+      logProviderSyncFailure(provider, {
+        error: 'Provider test failed: provider is not connected',
+        connectedProviders: connected,
+        providerId: applied.providerId,
+      });
+    }
+    return {
+      ok,
+      providerId: applied.providerId,
+      connected,
+    };
+  } catch (err) {
+    logProviderSyncFailure(provider, err);
+    throw err;
+  }
 }
 
 export async function getProviderStatus() {
@@ -1638,11 +1714,21 @@ export async function sendChatMessage({ chatId, text, modelId, title, sessionId,
   });
 
   pollSessionResponse(chatId, resolvedSessionId, workspace, knownAssistantIds).catch((err) => {
+    const { code, message } = logModelFailure(chatId, {
+      modelId,
+      rawMessage: err.message,
+      error: err,
+      reason: /fetch failed|network|econn|enotfound|etimedout|socket/i.test(String(err.message || ''))
+        ? 'connection'
+        : null,
+    });
     if (emitEvent) {
       emitEvent({
         type: 'error',
         chatId,
-        message: err.message || 'Failed to get AI response',
+        code,
+        message,
+        details: { modelId, providerID, modelID },
       });
     }
   });
