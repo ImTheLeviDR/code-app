@@ -1,0 +1,36 @@
+---
+description: Always add English and Hungarian translations for new user-facing strings
+alwaysApply: true
+---
+
+# Internationalization (i18n)
+
+This app supports **English (`en`)** and **Hungarian (`hu`)**. Never ship new user-facing text in a single language.
+
+## Where strings live
+
+| Kind | File |
+|------|------|
+| UI copy, toasts, settings, errors | `renderer/js/i18n.js` — both `en` and `hu` objects |
+| HTML with `data-i18n` | Same keys in `i18n.js`; run `I18n.applyToDOM()` after render |
+
+Use `t('some.key', { param: value })` in JS. Do not hardcode English (or Hungarian) in renderer code except as a last-resort fallback when `I18n` is unavailable.
+
+## Required workflow for new copy
+
+1. Pick a namespaced key (e.g. `settings.providers.foo`, `error.model.bar`, `toast.baz`).
+2. Add the **same key** to the **`en`** block in `i18n.js`.
+3. Add the **same key** to the **`hu`** block in `i18n.js`.
+4. Wire the UI/backend event to use `t(...)` or an error `code` mapped through `formatModelErrorMessage` / `error.model.*` keys.
+
+## Do not
+
+- Add a string to only `en` or only `hu`.
+- Leave new toast, settings, or error messages as inline English in `app.js`, `settings.js`, or `opencode-service.mjs` without i18n keys (backend may emit English `message` + `code`; frontend must translate via `error.model.*` when possible).
+- Rename or remove keys without updating both locales and all call sites.
+
+## Checklist before finishing UI work
+
+- [ ] Every new `t('...')` key exists in **both** `en` and `hu`.
+- [ ] Placeholders like `{name}`, `{connected}` match in both locales.
+- [ ] Hungarian copy reads naturally (not literal word-for-word if it sounds wrong).
