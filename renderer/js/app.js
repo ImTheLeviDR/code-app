@@ -3317,7 +3317,7 @@ async function runAIResponse(chatId, userMsg, options = {}) {
       interruptGuard.delete(chatId);
       finishAIWithError(
         chatId,
-        'This model needs an API key. Open Settings → Providers, add your key, click Sync - or pick a free OpenCode model.',
+        formatModelErrorMessage({ code: 'missing_api_key', details: { provider: providerPrefix } }),
       );
       return;
     }
@@ -3746,6 +3746,17 @@ async function abortAgentRun(chatId) {
   await waitForBackendAbort(chatId);
 }
 
+function formatModelErrorMessage({ code, message, details } = {}) {
+  if (code && typeof I18n !== 'undefined') {
+    const key = `error.model.${code}`;
+    const params = { ...(details || {}) };
+    if (code === 'model_error' && message) params.message = message;
+    const translated = t(key, params);
+    if (translated !== key) return translated;
+  }
+  return message || (typeof I18n !== 'undefined' ? t('error.model.unknown') : 'The AI request failed.');
+}
+
 function finishAIWithError(chatId, message) {
   const run = aiRuns.get(chatId);
   if (run) {
@@ -3838,8 +3849,14 @@ function handleBackendEvent(event) {
       break;
     case 'assistant-message':
       if (event.error) {
-        const errMsg = event.error.data?.message || event.error.name || 'Model error';
-        finishAIWithError(event.chatId, errMsg);
+        finishAIWithError(
+          event.chatId,
+          formatModelErrorMessage({
+            code: event.code,
+            message: event.message || event.error?.data?.message || event.error?.name,
+            details: event.details,
+          }),
+        );
       }
       break;
     case 'done':
@@ -3847,7 +3864,14 @@ function handleBackendEvent(event) {
       finishAIRun(event.chatId);
       break;
     case 'error':
-      finishAIWithError(event.chatId, event.message || 'AI request failed');
+      finishAIWithError(
+        event.chatId,
+        formatModelErrorMessage({
+          code: event.code,
+          message: event.message,
+          details: event.details,
+        }),
+      );
       break;
     default:
       break;

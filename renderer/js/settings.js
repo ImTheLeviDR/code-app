@@ -282,6 +282,16 @@ const SettingsStore = (() => {
 
   function migrateSettings(settings) {
     const next = { ...settings, providers: [...settings.providers] };
+    if (!next.providers.some((p) => p.type === 'opencode')) {
+      next.providers.unshift({
+        id: 'prov-opencode',
+        type: 'opencode',
+        name: 'OpenCode Zen',
+        baseUrl: PROVIDER_PRESETS.opencode.baseUrl,
+        apiKey: '',
+        enabled: true,
+      });
+    }
     if (!next.providers.some((p) => p.type === 'openrouter')) {
       next.providers.unshift({
         id: 'prov-openrouter',
@@ -495,7 +505,9 @@ const SettingsStore = (() => {
         const keyed = results.filter((r) => {
           if (r.skipped) return false;
           const provider = settings.providers.find((p) => p.id === r.id);
-          return Boolean(provider?.apiKey?.trim());
+          if (!provider?.enabled) return false;
+          if (provider.type === 'opencode') return true;
+          return Boolean(provider.apiKey?.trim());
         });
         if (showFeedback && keyed.length > 0) {
           const connected = keyed.filter((r) => r.ok).length;
@@ -603,6 +615,13 @@ const SettingsStore = (() => {
   function renderRowStatus(provider) {
     if (!provider.enabled) {
       return `<span class="prov-row-status">${t('settings.providers.status.disabled')}</span>`;
+    }
+    if (provider.type === 'opencode' && !provider.apiKey?.trim()) {
+      const sync = providerSyncState[provider.id];
+      if (sync?.ok) {
+        return `<span class="prov-row-status is-set">${t('settings.providers.status.connectedFree')}</span>`;
+      }
+      return `<span class="prov-row-status">${t('settings.providers.status.optionalKey')}</span>`;
     }
     if (!provider.apiKey?.trim()) {
       return `<span class="prov-row-status is-missing">${t('settings.providers.status.noKey')}</span>`;
@@ -793,6 +812,9 @@ const SettingsStore = (() => {
                 </button>
                 <button class="prov-text-btn prov-test-btn" type="button" data-action="test-provider">${t('settings.providers.test')}</button>
               </div>
+              ${provider.type === 'opencode' ? `
+              <p class="prov-form-note">${t('settings.providers.opencodeKeyNoteBefore')} <a href="https://opencode.ai/auth" target="_blank" rel="noopener noreferrer">${t('settings.providers.openCodeZenLink')}</a>${t('settings.providers.opencodeKeyNoteAfter')}</p>
+              ` : ''}
             </div>
 
             ${provider.type === 'custom' ? `
@@ -821,6 +843,7 @@ const SettingsStore = (() => {
   }
 
   const POPULAR_PROVIDERS = [
+    { type: 'opencode', name: 'OpenCode Zen' },
     { type: 'openrouter', name: 'OpenRouter' },
     { type: 'openai', name: 'OpenAI' },
     { type: 'anthropic', name: 'Anthropic' },
@@ -896,7 +919,7 @@ const SettingsStore = (() => {
       <div class="settings-section">
         <div class="settings-section-header">
           <h2>${t('settings.providers.title')}</h2>
-          <p>${t('settings.providers.subtitleBefore')} <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">${t('settings.providers.openRouterLink')}</a> ${t('settings.providers.subtitleAfter')}</p>
+          <p>${t('settings.providers.subtitleBefore')} <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">${t('settings.providers.openRouterLink')}</a>${t('settings.providers.subtitleMiddle')}<a href="https://opencode.ai/auth" target="_blank" rel="noopener noreferrer">${t('settings.providers.openCodeZenLink')}</a>${t('settings.providers.subtitleAfter')}</p>
           <div class="prov-sync-row">
             <button class="prov-sync-btn" type="button" data-action="sync-providers">${t('settings.providers.syncButton')}</button>
             <span class="prov-sync-meta">${t('settings.providers.syncMeta', { connected: connectedCount })}</span>
@@ -1713,7 +1736,7 @@ const SettingsStore = (() => {
       row.querySelector('[data-action="test-provider"]')?.addEventListener('click', async (e) => {
         e.stopPropagation();
         const provider = getProvider(id);
-        if (!provider?.apiKey?.trim()) {
+        if (!provider?.apiKey?.trim() && provider?.type !== 'opencode') {
           showToast(t('toast.addApiKeyFirst'));
           return;
         }

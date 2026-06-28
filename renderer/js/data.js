@@ -36,6 +36,10 @@ const FREE_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 const IMAGE_DESCRIPTION_MODEL = 'google/gemini-2.5-flash-lite-preview-09-2025';
 
 const PROVIDER_PRESETS = {
+  opencode: {
+    name: 'OpenCode Zen',
+    baseUrl: 'https://opencode.ai/zen/v1',
+  },
   openrouter: {
     name: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
@@ -63,6 +67,7 @@ function resolveOpencodeProviderId(provider) {
     return `custom-${provider.id.replace(/^prov-/, '')}`;
   }
   const builtins = {
+    opencode: 'opencode',
     openrouter: 'openrouter',
     openai: 'openai',
     anthropic: 'anthropic',
@@ -73,6 +78,14 @@ function resolveOpencodeProviderId(provider) {
 
 const DEFAULT_SETTINGS = {
   providers: [
+    {
+      id: 'prov-opencode',
+      type: 'opencode',
+      name: 'OpenCode Zen',
+      baseUrl: PROVIDER_PRESETS.opencode.baseUrl,
+      apiKey: '',
+      enabled: true,
+    },
     {
       id: 'prov-openrouter',
       type: 'openrouter',

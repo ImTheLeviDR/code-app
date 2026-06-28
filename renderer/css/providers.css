@@ -284,3 +284,19 @@
   color: var(--text-muted);
   line-height: 1.45;
 }
+
+.prov-form-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.prov-form-note a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.prov-form-note a:hover {
+  text-decoration: underline;
+}

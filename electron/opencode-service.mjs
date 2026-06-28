@@ -10,6 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolveAppRoot();
 
 const BUILTIN_PROVIDER_TYPES = {
+  opencode: 'opencode',
   openai: 'openai',
   anthropic: 'anthropic',
   google: 'google',
@@ -316,6 +317,88 @@ function isKnownAssistantMessage(messageId, knownAssistantIds) {
   return Boolean(messageId && knownAssistantIds?.has(messageId));
 }
 
+function extractErrorMessage(error) {
+  if (!error) return '';
+  if (typeof error === 'string') return error.trim();
+  return String(error.data?.message || error.message || error.name || '').trim();
+}
+
+function classifyModelError({ modelId, rawMessage = '', reason, sessionStatus }) {
+  const msg = rawMessage.toLowerCase();
+  const isOpencodeModel = modelId?.startsWith('opencode/');
+  const providerId = modelId?.includes('/') ? modelId.split('/')[0] : '';
+
+  if (/free usage exceeded|usage exceeded|rate limit|too many requests|\b429\b/.test(msg)) {
+    return {
+      code: 'free_quota_exceeded',
+      message: isOpencodeModel
+        ? 'Free model quota reached. Wait and try again, add an OpenCode Zen API key in Settings → Providers, or switch to another model.'
+        : 'Rate limit reached. Wait and try again or check your provider quota in Settings → Providers.',
+    };
+  }
+
+  if (/api key|unauthorized|authentication|invalid.*key|\b401\b|\b403\b/.test(msg)) {
+    return {
+      code: 'auth_failed',
+      message: isOpencodeModel
+        ? 'OpenCode authentication failed. Add your OpenCode Zen API key in Settings → Providers and click Sync.'
+        : `Authentication failed for ${providerId}. Check your API key in Settings → Providers and click Sync.`,
+    };
+  }
+
+  if (reason === 'no_response') {
+    return {
+      code: 'no_response',
+      message: isOpencodeModel
+        ? 'The model did not respond. Check your internet connection, try another free model, or add an OpenCode Zen API key if you hit the free quota.'
+        : 'The model did not respond. Make sure the provider is connected in Settings → Providers.',
+    };
+  }
+
+  if (reason === 'stale_session') {
+    return {
+      code: 'stale_session',
+      message: 'The model did not start a new response. Send your message again or start a new chat.',
+    };
+  }
+
+  if (reason === 'timeout') {
+    if (sessionStatus?.type === 'retry') {
+      return {
+        code: 'response_timeout',
+        message: 'The model is retrying after a rate limit. Wait a moment, then try again or add an OpenCode Zen API key in Settings → Providers.',
+      };
+    }
+    return {
+      code: 'response_timeout',
+      message: isOpencodeModel
+        ? 'Response timed out. The free model may be busy — try again, switch models, or add an OpenCode Zen API key in Settings → Providers.'
+        : 'Response timed out. Check your model and provider connection in Settings → Providers.',
+    };
+  }
+
+  if (rawMessage) {
+    return { code: 'model_error', message: rawMessage };
+  }
+
+  return {
+    code: 'unknown',
+    message: 'The AI request failed. Check Settings → Providers and try again.',
+  };
+}
+
+function emitModelError(chatId, options) {
+  if (!emitEvent) return;
+  const { code, message } = classifyModelError(options);
+  emitEvent({
+    type: 'error',
+    chatId,
+    code,
+    message,
+    details: { modelId: options.modelId || null },
+  });
+}
+
 function supersedeSessionPoll(sessionId) {
   if (!sessionId) return;
   sessionPollGeneration.set(sessionId, (sessionPollGeneration.get(sessionId) || 0) + 1);
@@ -361,12 +444,17 @@ async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantI
       const isStaleAssistant = isKnownAssistantMessage(latestAssistantId, knownAssistantIds);
 
       if (latest?.info?.error && !isStaleAssistant && emitEvent) {
+        const modelId = activeRuns.get(chatId)?.modelId || '';
+        const rawMessage = extractErrorMessage(latest.info.error);
+        const { code, message } = classifyModelError({ modelId, rawMessage });
         emitEvent({
           type: 'assistant-message',
           chatId,
           sessionId,
           messageId: latest.info.id,
           error: latest.info.error,
+          code,
+          message,
           completed: true,
         });
         await emitDone(chatId, sessionId);
@@ -438,13 +526,8 @@ async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantI
 
       // Not busy and no recent activity - check exit conditions
       if (!lastText && attempt >= 8 && !isStaleAssistant) {
-        if (emitEvent) {
-          emitEvent({
-            type: 'error',
-            chatId,
-            message: 'No response from the model. Pick a free OpenCode model or add an API key in Settings → Providers.',
-          });
-        }
+        const modelId = activeRuns.get(chatId)?.modelId || '';
+        emitModelError(chatId, { modelId, reason: 'no_response' });
         activeRuns.delete(chatId);
         return;
       }
@@ -452,13 +535,8 @@ async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantI
       if (isStaleAssistant) {
         idlePolls = 0;
         if (attempt >= 120) {
-          if (emitEvent) {
-            emitEvent({
-              type: 'error',
-              chatId,
-              message: 'No response from the model. Pick a free OpenCode model or add an API key in Settings → Providers.',
-            });
-          }
+          const modelId = activeRuns.get(chatId)?.modelId || '';
+          emitModelError(chatId, { modelId, reason: 'stale_session' });
           activeRuns.delete(chatId);
           return;
         }
@@ -468,13 +546,8 @@ async function pollSessionResponse(chatId, sessionId, workspace, knownAssistantI
 
       idlePolls++;
       if (idlePolls >= IDLE_POLL_LIMIT && !isStaleAssistant) {
-        if (emitEvent) {
-          emitEvent({
-            type: 'error',
-            chatId,
-            message: 'Response timed out. Check your model and provider API key in Settings.',
-          });
-        }
+        const modelId = activeRuns.get(chatId)?.modelId || '';
+        emitModelError(chatId, { modelId, reason: 'timeout', sessionStatus });
         activeRuns.delete(chatId);
         return;
       }
@@ -1092,12 +1165,19 @@ function handleBusEvent(event) {
       if (info.role === 'assistant' && info.error) {
         const run = activeRuns.get(chatId);
         if (isKnownAssistantMessage(info.id, run?.knownAssistantIds)) break;
+        const rawMessage = extractErrorMessage(info.error);
+        const { code, message } = classifyModelError({
+          modelId: run?.modelId || '',
+          rawMessage,
+        });
         emitEvent({
           type: 'assistant-message',
           chatId,
           sessionId: info.sessionID,
           messageId: info.id,
           error: info.error,
+          code,
+          message,
           completed: true,
         });
       }
@@ -1242,6 +1322,27 @@ export async function syncProviders(providers = []) {
       continue;
     }
 
+    if (provider.type === 'opencode' && !provider.apiKey?.trim()) {
+      try {
+        const list = await client.provider.list();
+        const connected = list.data?.connected || [];
+        results.push({
+          id: provider.id,
+          providerId: 'opencode',
+          ok: connected.includes('opencode'),
+          optionalKey: true,
+        });
+      } catch (err) {
+        results.push({
+          id: provider.id,
+          providerId: 'opencode',
+          ok: false,
+          error: err.message || 'Failed to check OpenCode provider',
+        });
+      }
+      continue;
+    }
+
     if (!provider.apiKey?.trim()) {
       results.push({
         id: provider.id,
@@ -1286,6 +1387,17 @@ export async function syncProviders(providers = []) {
 
 export async function testProvider(provider) {
   if (!client) throw new Error('OpenCode server is not running');
+
+  if (provider.type === 'opencode' && !provider.apiKey?.trim()) {
+    const list = await client.provider.list();
+    const connected = list.data?.connected || [];
+    return {
+      ok: connected.includes('opencode'),
+      providerId: 'opencode',
+      connected,
+    };
+  }
+
   const applied = await applyProviderAuth(provider);
   const list = await client.provider.list();
   const connected = list.data?.connected || [];
